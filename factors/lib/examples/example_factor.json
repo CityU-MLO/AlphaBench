@@ -1,0 +1,13 @@
+{
+    "name": "meanreversion_short_term",
+    "expression": {
+        "template": "($close - MEAN($close, {window_1})) / STD($close, {window_2}) + {a}",
+        "parameters": {
+            "window_1": {"type": "int", "range": [3, 60], "default": 10},
+            "window_2": {"type": "int", "range": [3, 60], "default": 15},
+            "a": {"type": "float", "range": [-5, 5], "default": 3.0}
+        }
+    },
+    "description": "This factor captures short-term mean-reversion by measuring how far today's price deviates from its short-term average, normalized by volatility.",
+    "keywords": ["mean_reversion", "price_based", "short_term"]
+}

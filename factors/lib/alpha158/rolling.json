@@ -1,0 +1,437 @@
+[
+  {
+    "name": "ROC",
+    "expression": {
+      "template": "REF($close, {window}) / $close",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor measures the rate of change of the close price over N days relative to the latest close price.",
+    "keywords": ["price_based", "momentum", "cross_sectional"]
+  },
+  {
+    "name": "MA",
+    "expression": {
+      "template": "MEAN($close, {window}) / $close",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor represents the simple moving average of the close price over N days, normalized by the latest close price.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "STD",
+    "expression": {
+      "template": "STD($close, {window}) / $close",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor represents the standard deviation of the close price over N days, normalized by the latest close price.",
+    "keywords": ["price_based", "volatility", "cross_sectional"]
+  },
+  {
+    "name": "BETA",
+    "expression": {
+      "template": "SLOPE($close, {window}) / $close",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor represents the slope of the close price over N days, normalized by the latest close price.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "RSQR",
+    "expression": {
+      "template": "RSQUARE($close, {window})",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor represents the R-squared of the close price linear regression over N days.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "RESI",
+    "expression": {
+      "template": "RESI($close, {window}) / $close",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor represents the residual of the close price linear regression over N days, normalized by the latest close price.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "MAX",
+    "expression": {
+      "template": "MAX($high, {window}) / $close",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor represents the maximum high price over N days, normalized by the latest close price.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "LOW",
+    "expression": {
+      "template": "MIN($low, {window}) / $close",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor represents the minimum low price over N days, normalized by the latest close price.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "QTLU",
+    "expression": {
+      "template": "QUANTILE($close, {window}, 0.8) / $close",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor represents the 80% quantile of the close price over N days, normalized by the latest close price.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "QTLD",
+    "expression": {
+      "template": "QUANTILE($close, {window}, 0.2) / $close",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor represents the 20% quantile of the close price over N days, normalized by the latest close price.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "RANK_CLOSE",
+    "expression": {
+      "template": "RANK($close, {window})",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor represents the percentile rank of the current close price over the past N days.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "RSV",
+    "expression": {
+      "template": "($close - MIN($low, {window})) / (MAX($high, {window}) - MIN($low, {window}) + 1e-12)",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor represents the relative position of the current close price within the high-low range over N days.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "IMAX",
+    "expression": {
+      "template": "IDXMAX($high, {window}) / {window}",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor measures how long ago by IdxMax the highest high price occurred over N days, normalized by N.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "IMIN",
+    "expression": {
+      "template": "IDXMIN($low, {window}) / {window}",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor measures how long ago the lowest low price occurred over N days by IdxMin, normalized by N.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "IMXD",
+    "expression": {
+      "template": "(IDXMAX($high, {window}) - IDXMIN($low, {window})) / {window}",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor measures the time difference between the most recent high (by IdxMax) and low (by IdxMin) over N days.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "CORR",
+    "expression": {
+      "template": "CORR($close, LOG($volume + 1), {window})",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor represents the correlation between the close price and log-transformed volume over N days.",
+    "keywords": ["price_based", "volume_based", "technical"]
+  },
+  {
+    "name": "CORD",
+    "expression": {
+      "template": "CORR($close / REF($close, 1), LOG($volume / REF($volume, 1) + 1), {window})",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor represents the correlation between daily price changes and volume changes over N days.",
+    "keywords": ["price_based", "volume_based", "technical"]
+  },
+  {
+    "name": "CNTP",
+    "expression": {
+      "template": "MEAN($close > REF($close, 1), {window})",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor represents the proportion of up days over N days.",
+    "keywords": ["price_based", "momentum", "cross_sectional"]
+  },
+  {
+    "name": "CNTN",
+    "expression": {
+      "template": "MEAN($close < REF($close, 1), {window})",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor represents the proportion of down days over N days.",
+    "keywords": ["price_based", "momentum", "cross_sectional"]
+  },
+  {
+    "name": "CNTD",
+    "expression": {
+      "template": "MEAN($close > REF($close, 1), {window}) - MEAN($close < REF($close, 1), {window})",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor represents the difference between up-day and down-day proportions over N days.",
+    "keywords": ["price_based", "momentum", "cross_sectional"]
+  },
+  {
+    "name": "SUMP",
+    "expression": {
+      "template": "SUM(GREATER($close - REF($close, 1), 0), {window}) / (SUM(ABS($close - REF($close, 1)), {window}) + 1e-12)",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "This factor measures the proportion of total gain relative to total absolute price changes over N days.",
+    "keywords": ["price_based", "momentum", "cross_sectional"]
+  },
+  {
+    "name": "SUMN",
+    "expression": {
+      "template": "SUM(GREATER(REF($close, 1) - $close, 0), {window}) / (SUM(ABS($close - REF($close, 1)), {window}) + 1e-12)",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "The ratio of cumulative daily price decreases to the cumulative absolute daily price changes over a {window}-day period.",
+    "keywords": ["price_based", "momentum", "cross_sectional"]
+  },
+  {
+    "name": "SUMD",
+    "expression": {
+      "template": "(SUM(GREATER($close - REF($close, 1), 0), {window}) - SUM(GREATER(REF($close, 1) - $close, 0), {window})) / (SUM(ABS($close - REF($close, 1)), {window}) + 1e-12)",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "The difference between cumulative daily price increases and decreases, normalized by the cumulative absolute daily price changes over a {window}-day period.",
+    "keywords": ["price_based", "momentum", "cross_sectional"]
+  },
+  {
+    "name": "VMA",
+    "expression": {
+      "template": "MEAN($volume, {window}) / ($volume + 1e-12)",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "The mean trading volume over a {window}-day period divided by the current day’s volume.",
+    "keywords": ["volume_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "VSTD",
+    "expression": {
+      "template": "STD($volume, {window}) / ($volume + 1e-12)",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "The standard deviation of trading volume over a {window}-day period divided by the current day’s volume.",
+    "keywords": ["volume_based", "volatility", "cross_sectional"]
+  },
+  {
+    "name": "WVMA",
+    "expression": {
+      "template": "STD(ABS($close / REF($close, 1) - 1) * $volume, {window}) / (MEAN(ABS($close / REF($close, 1) - 1) * $volume, {window}) + 1e-12)",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "The standard deviation of daily absolute return weighted by volume over a {window}-day period divided by its mean.",
+    "keywords": ["price_based", "volume_based", "volatility"]
+  },
+  {
+    "name": "VSUMP",
+    "expression": {
+      "template": "SUM(GREATER($volume - REF($volume, 1), 0), {window}) / (SUM(ABS($volume - REF($volume, 1)), {window}) + 1e-12)",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "The ratio of cumulative daily volume increases to the cumulative absolute daily volume changes over a {window}-day period.",
+    "keywords": ["volume_based", "momentum", "cross_sectional"]
+  },
+  {
+    "name": "VSUMN",
+    "expression": {
+      "template": "SUM(GREATER(REF($volume, 1) - $volume, 0), {window}) / (SUM(ABS($volume - REF($volume, 1)), {window}) + 1e-12)",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "The ratio of cumulative daily volume decreases to the cumulative absolute daily volume changes over a {window}-day period.",
+    "keywords": ["volume_based", "momentum", "cross_sectional"]
+  },
+  {
+    "name": "VSUMD",
+    "expression": {
+      "template": "(SUM(GREATER($volume - REF($volume, 1), 0), {window}) - SUM(GREATER(REF($volume, 1) - $volume, 0), {window})) / (SUM(ABS($volume - REF($volume, 1)), {window}) + 1e-12)",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [5, 60],
+          "default": 5
+        }
+      }
+    },
+    "description": "The difference between cumulative daily volume increases and decreases, normalized by the cumulative absolute daily volume changes over a {window}-day period.",
+    "keywords": ["volume_based", "momentum", "cross_sectional"]
+  }
+]

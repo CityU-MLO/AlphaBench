@@ -1,0 +1,83 @@
+[
+  {
+    "name": "KMID",
+    "expression": {
+      "template": "($close - $open) / $open",
+      "parameters": {}
+    },
+    "description": "This factor measures the relative difference between close and open price within a day, indicating intraday price movement direction.",
+    "keywords": ["price_based", "candlestick", "cross_sectional"]
+  },
+  {
+    "name": "KLEN",
+    "expression": {
+      "template": "($high - $low) / $open",
+      "parameters": {}
+    },
+    "description": "This factor measures the intraday trading range (high and low) relative to the open price, capturing volatility within a day.",
+    "keywords": ["price_based", "candlestick", "cross_sectional"]
+  },
+  {
+    "name": "KMID2",
+    "expression": {
+      "template": "($close - $open) / ($high - $low + 1e-12)",
+      "parameters": {}
+    },
+    "description": "This factor measures the position of the close price within the day's high-low range relative to the open price. (Handle high=low case)",
+    "keywords": ["price_based", "candlestick", "cross_sectional"]
+  },
+  {
+    "name": "KUP",
+    "expression": {
+      "template": "($high - GREATER($open, $close)) / $open",
+      "parameters": {}
+    },
+    "description": "This factor captures the distance from the higher value by Greater(open, close) to the high price, relative to the open price.",
+    "keywords": ["price_based", "candlestick", "cross_sectional"]
+  },
+  {
+    "name": "KUP2",
+    "expression": {
+      "template": "($high - GREATER($open, $close)) / ($high - $low + 1e-12)",
+      "parameters": {}
+    },
+    "description": "This factor measures the upper shadow length relative to the day's range, based on the higher value of Greater(open, close). (Handle high=low case)",
+    "keywords": ["price_based", "candlestick", "cross_sectional"]
+  },
+  {
+    "name": "KLOW",
+    "expression": {
+      "template": "(LESS($open, $close) - $low) / $open",
+      "parameters": {}
+    },
+    "description": "This factor captures the distance from the smaller value by Less(open, close) to the low price, relative to the open price.",
+    "keywords": ["price_based", "candlestick", "cross_sectional"]
+  },
+  {
+    "name": "KLOW2",
+    "expression": {
+      "template": "(LESS($open, $close) - $low) / ($high - $low + 1e-12)",
+      "parameters": {}
+    },
+    "description": "This factor measures the lower shadow length by Less(open, close) relative to the day's range, based on the lower of open or close. (Handle high=low case)",
+    "keywords": ["price_based", "candlestick", "cross_sectional"]
+  },
+  {
+    "name": "KSFT",
+    "expression": {
+      "template": "(2 * $close - $high - $low) / $open",
+      "parameters": {}
+    },
+    "description": "This factor reflects the relative position of the close price between the high and low, normalized by the open price.",
+    "keywords": ["price_based", "candlestick", "cross_sectional"]
+  },
+  {
+    "name": "KSFT2",
+    "expression": {
+      "template": "(2 * $close - $high - $low) / ($high - $low + 1e-12)",
+      "parameters": {}
+    },
+    "description": "This factor represents the symmetry of the close price within the high-low range of the day. (Handle high=low case)",
+    "keywords": ["price_based", "candlestick", "cross_sectional"]
+  }
+]

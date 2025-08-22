@@ -1,0 +1,211 @@
+{
+  "taxonomy": {
+    "Trend": {
+      "description": "Factors based on price direction, persistence, and slope.",
+      "children": {
+        "TrendFollowing": {
+          "description": "General momentum/trend signals.",
+          "children": {
+            "UpTrend": {"description": "Sustained upward price trends."},
+            "DownTrend": {"description": "Sustained downward price trends."},
+            "TrendStrength": {"description": "Quantifies robustness of a trend."},
+            "TrendAcceleration": {"description": "Speed-up or slow-down in trend."},
+            "TrendSlope": {"description": "Slope of regression or MA line."},
+            "RelativePricePosition": {"description": "Close relative to past high/low range."},
+            "CloseOpenGapBias": {"description": "Bias between close and open price within a bar."},
+            "HighLowRatio": {"description": "Intraday high-to-low ratio capturing volatility intensity."}
+          }
+        },
+        "Momentum": {
+          "description": "Price continuation signals over horizons.",
+          "children": {
+            "MomentumPositive": {"description": "Positive price momentum."},
+            "MomentumNegative": {"description": "Negative price momentum."},
+            "ShortTermMomentum": {"description": "Momentum over 5–20 days."},
+            "LongTermMomentum": {"description": "Momentum over 60–250 days."},
+            "MomentumAcceleration": {"description": "Momentum gaining speed."},
+            "MomentumDeceleration": {"description": "Momentum losing speed."},
+            "VolatilityAdjustedMomentum": {"description": "Momentum normalized by contemporaneous volatility."},
+            "VolumeWeightedMomentum": {"description": "Momentum scaled by contemporaneous volume."}
+          }
+        },
+        "MeanReversion": {
+          "description": "Factors expecting pull-backs or reversals.",
+          "children": {
+            "MeanReversionShort": {"description": "Short-horizon mean reversion."},
+            "MeanReversionLong": {"description": "Long-horizon mean reversion."},
+            "OversoldBounce": {"description": "Bounce after oversold condition."},
+            "OverboughtDrop": {"description": "Pull-back after overbought condition."},
+            "Reversal": {"description": "Generic reversal expectation."}
+          }
+        }
+      }
+    },
+
+    "Volume": {
+      "description": "Factors using volume, flow, or liquidity signals.",
+      "children": {
+        "VolumeActivity": {
+          "description": "Signals from absolute or relative volume.",
+          "children": {
+            "VolumeSpike": {"description": "One-bar extreme volume burst."},
+            "VolumeSurge": {"description": "Multi-bar volume expansion."},
+            "VolumeDryUp": {"description": "Low-volume contraction period."},
+            "RelativeVolumeStrength": {"description": "Volume percentile rank."}
+          }
+        },
+        "VolumeFlow": {
+          "description": "Cumulative flow-based volume indicators.",
+          "children": {
+            "OBV": {"description": "On-Balance Volume."},
+            "AccumDist": {"description": "Accumulation/Distribution line."},
+            "ChaikinOscillator": {"description": "Derived from AccumDist."},
+            "MoneyFlowIndex": {"description": "Oscillator combining price & volume."},
+            "PriceVolumeTrend": {"description": "Cumulative price-volume trend indicator."}
+          }
+        },
+        "VolumeDivergence": {
+          "description": "Price-volume relationship mismatches.",
+          "children": {
+            "PriceVolumeDivergence": {"description": "Price vs volume trend conflict."},
+            "PriceVolumeCorrelation": {"description": "Rolling correlation of price & volume."}
+          }
+        }
+      }
+    },
+
+    "Volatility": {
+      "description": "Factors capturing price variability or stability.",
+      "children": {
+        "Dispersion": {
+          "description": "Volatility computed from returns or price ranges.",
+          "children": {
+            "RealizedVol": {"description": "Rolling std of log returns."},
+            "HistoricalVol": {"description": "Longer-horizon volatility estimate."},
+            "TrueRange": {"description": "Intraday high-low-close range."},
+            "ATR": {"description": "Average True Range."}
+          }
+        },
+        "BandBased": {
+          "description": "Volatility bands and width measures.",
+          "children": {
+            "BollingerWidth": {"description": "Width of Bollinger Bands."}
+          }
+        },
+        "VolatilityDynamics": {
+          "description": "Volatility changes and states.",
+          "children": {
+            "Expansion": {"description": "Steadily increasing volatility."},
+            "Contraction": {"description": "Steadily decreasing volatility."},
+            "Spike": {"description": "Sudden isolated jump."},
+            "Crush": {"description": "Sharp volatility fall."},
+            "VolatilityBreakout": {"description": "Breakout with volatility surge."}
+          }
+        },
+        "Statistical": {
+          "description": "Rolling statistical descriptors of OHLC series.",
+          "children": {
+            "RollingMean": {"description": "Rolling average over a fixed window."},
+            "RollingStd": {"description": "Rolling standard deviation over a fixed window."},
+            "Skewness": {"description": "Rolling skewness of return distribution."},
+            "Kurtosis": {"description": "Rolling kurtosis of return distribution."},
+            "ZScoreNormalized": {"description": "Factor values standardized into rolling z-scores."}
+          }
+        }
+      }
+    },
+
+    "Pattern": {
+      "description": "OHLC formations, candlestick signals, and breakouts.",
+      "children": {
+        "Breakout": {
+          "description": "Price escaping consolidation or channels.",
+          "children": {
+            "BreakoutHigh": {"description": "Breakout above resistance."},
+            "BreakoutLow": {"description": "Breakdown below support."},
+            "ChannelBreakout": {"description": "Channel range break."},
+            "RangeBreakout": {"description": "Static high/low range break."}
+          }
+        },
+        "Gap": {
+          "description": "Open-to-prior-close gaps.",
+          "children": {
+            "GapUp": {"description": "Upward opening gap."},
+            "GapDown": {"description": "Downward opening gap."},
+            "IslandGap": {"description": "Gap island reversal."}
+          }
+        },
+        "Candlestick": {
+          "description": "Standard candlestick reversals or continuations.",
+          "children": {
+            "Doji": {"description": "Indecision candle."},
+            "ReversalHammer": {"description": "Bullish hammer."},
+            "ReversalShootingStar": {"description": "Bearish shooting star."},
+            "EngulfingBull": {"description": "Bullish engulfing."},
+            "EngulfingBear": {"description": "Bearish engulfing."},
+            "HangingMan": {"description": "Bearish hanging man."},
+            "PiercingLine": {"description": "Bullish two-bar reversal."},
+            "DarkCloudCover": {"description": "Bearish two-bar reversal."},
+            "Marubozu": {"description": "Long-bodied candle without shadows."},
+            "ThreeWhiteSoldiers": {"description": "Bullish three-bar reversal pattern."},
+            "ThreeBlackCrows": {"description": "Bearish three-bar reversal pattern."},
+            "MorningStar": {"description": "Three-bar bullish reversal combination."},
+            "EveningStar": {"description": "Three-bar bearish reversal combination."},
+            "Harami": {"description": "Inside two-bar pattern (bullish or bearish)."},
+            "HaramiCross": {"description": "Inside two-bar pattern with doji."},
+            "PinBar": {"description": "Sharp reversal pin-bar candle."}
+          }
+        },
+        "ClassicalPatterns": {
+          "description": "Multi-bar classical chart patterns.",
+          "children": {
+            "DoubleTop": {"description": "M-shaped bearish reversal."},
+            "DoubleBottom": {"description": "W-shaped bullish reversal."},
+            "HeadAndShoulders": {"description": "Classic reversal formation."},
+            "TrianglePattern": {"description": "Symmetric/ascending/descending triangles."}
+          }
+        }
+      }
+    },
+
+    "RelativePerformance": {
+      "description": "Cross-sectional or benchmark-relative signals.",
+      "children": {
+        "RelativeStrength": {"description": "Performance vs index or peers."},
+        "Weakness": {"description": "Persistent under-performance."},
+        "RSI": {"description": "Relative Strength Index oscillator."},
+        "StochasticOscillator": {"description": "Momentum oscillator on range."},
+        "MACD": {"description": "Moving Average Convergence Divergence."}
+      }
+    },
+
+    "Seasonality": {
+      "description": "Calendar or cycle-driven regularities.",
+      "children": {
+        "DayOfWeekEffect": {"description": "Consistent weekday return bias."},
+        "MonthEndEffect": {"description": "Turn-of-month behaviour."},
+        "HolidayEffect": {"description": "Pre/post-holiday anomalies."}
+      }
+    },
+
+    "Risk": {
+      "description": "Factors tied to drawdown or crash risk.",
+      "children": {
+        "CrashRisk": {"description": "Signals of sudden drawdowns."},
+        "DrawdownAlert": {"description": "Flags when drawdown threshold breached."},
+        "Stability": {"description": "Degree of price smoothness."},
+        "StableTrend": {"description": "Low-noise persistent trend."},
+        "UnstablePrice": {"description": "Erratic jumpy behaviour."}
+      }
+    },
+
+    "MicrostructureProxy": {
+      "description": "Pseudo-microstructure factors derived from OHLCV.",
+      "children": {
+        "IntradayRangeBias": {"description": "Close position within intraday high-low range."},
+        "OpenCloseBias": {"description": "Open relative to intraday high/low."},
+        "RangeSkew": {"description": "Asymmetry between up and down intraday moves."}
+      }
+    }
+  }
+}

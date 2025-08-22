@@ -1,0 +1,77 @@
+[
+  {
+    "name": "OPEN_REF",
+    "expression": {
+      "template": "REF($open, {window}) / $close",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [1, 5],
+          "default": 1
+        }
+      }
+    },
+    "description": "This factor represents the ratio of the open price from N days ago to the latest close price.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "HIGH_REF",
+    "expression": {
+      "template": "REF($high, {window}) / $close",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [1, 5],
+          "default": 1
+        }
+      }
+    },
+    "description": "This factor represents the ratio of the high price from N days ago to the latest close price.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "LOW_REF",
+    "expression": {
+      "template": "REF($low, {window}) / $close",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [1, 5],
+          "default": 1
+        }
+      }
+    },
+    "description": "This factor represents the ratio of the low price from N days ago to the latest close price.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "VWAP_REF",
+    "expression": {
+      "template": "REF($vwap, {window}) / $close",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [1, 5],
+          "default": 1
+        }
+      }
+    },
+    "description": "This factor represents the ratio of the VWAP from N days ago to the latest close price.",
+    "keywords": ["price_based", "technical", "cross_sectional"]
+  },
+  {
+    "name": "VOLUME_REF",
+    "expression": {
+      "template": "REF($volume, {window}) / ($volume + 1e-12)",
+      "parameters": {
+        "window": {
+          "type": "int",
+          "range": [1, 5],
+          "default": 1
+        }
+      }
+    },
+    "description": "This factor represents the ratio of volume from N days ago to today's volume.",
+    "keywords": ["volume_based", "technical", "cross_sectional"]
+  }
+]

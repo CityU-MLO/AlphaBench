@@ -1,0 +1,1884 @@
+[
+    {
+      "name": "Alpha#1",
+      "expression": {
+        "template": "Rank(Ts_ArgMax(SignedPower(((returns < 0) ? StdDev(returns, {stddev_window}) : $close), 2), {argmax_window})) - 0.5",
+        "parameters": {
+          "stddev_window": {
+            "type": "int",
+            "range": [10, 40],
+            "default": 20
+          },
+          "argmax_window": {
+            "type": "int",
+            "range": [3, 10],
+            "default": 5
+          }
+        }
+      },
+      "description": "Ranks the argmax of squared close price or volatility depending on return sign; a mean-reversion alpha.",
+      "keywords": ["mean_reversion", "returns_based", "momentum"]
+    },
+    {
+      "name": "Alpha#2",
+      "expression": {
+        "template": "-1 * Corr(Rank(Delta(Log($volume), {lag_delta})), Rank((($close - $open) / $open)), {corr_window})",
+        "parameters": {
+          "lag_delta": {
+            "type": "int",
+            "range": [1, 5],
+            "default": 2
+          },
+          "corr_window": {
+            "type": "int",
+            "range": [3, 10],
+            "default": 6
+          }
+        }
+      },
+      "description": "Negative correlation between rank of log volume change and rank of daily return over a window.",
+      "keywords": ["volume_based", "momentum", "cross_sectional"]
+    },
+    {
+      "name": "Alpha#3",
+      "expression": {
+        "template": "-1 * Corr(Rank($open), Rank($volume), {corr_window})",
+        "parameters": {
+          "corr_window": {
+            "type": "int",
+            "range": [5, 15],
+            "default": 10
+          }
+        }
+      },
+      "description": "Negative correlation between rank of open price and rank of volume over a window.",
+      "keywords": ["price_based", "volume_based", "cross_sectional"]
+    },
+    {
+      "name": "Alpha#4",
+      "expression": {
+        "template": "-1 * Ts_Rank(Rank($low), {ts_rank_window})",
+        "parameters": {
+          "ts_rank_window": {
+            "type": "int",
+            "range": [5, 15],
+            "default": 9
+          }
+        }
+      },
+      "description": "Negative time-series rank of the rank of low price; a mean-reversion indicator.",
+      "keywords": ["price_based", "mean_reversion", "time_series"]
+    },
+    {
+      "name": "Alpha#5",
+      "expression": {
+        "template": "Rank(($open - (Sum($vwap, {vwap_window}) / {vwap_window}))) * (-1 * Abs(Rank(($close - $vwap))))",
+        "parameters": {
+          "vwap_window": {
+            "type": "int",
+            "range": [5, 15],
+            "default": 10
+          }
+        }
+      },
+      "description": "Rank of open minus moving average VWAP times negative rank of close minus VWAP.",
+      "keywords": ["price_based", "volume_based", "mean_reversion"]
+    },
+    {
+      "name": "Alpha#6",
+      "expression": {
+        "template": "-1 * Corr($open, $volume, {corr_window})",
+        "parameters": {
+          "corr_window": {
+            "type": "int",
+            "range": [5, 15],
+            "default": 10
+          }
+        }
+      },
+      "description": "Negative correlation between open price and volume over a window.",
+      "keywords": ["price_based", "volume_based", "cross_sectional"]
+    },
+    {
+      "name": "Alpha#7",
+      "expression": {
+        "template": "((AvgDailyVol{avg_vol_window} < $volume) ? ((-1 * Ts_Rank(Abs(Delta($close, {delta_lag})), {ts_rank_window})) * Sign(Delta($close, {delta_lag}))) : (-1))",
+        "parameters": {
+          "avg_vol_window": {
+            "type": "int",
+            "range": [10, 30],
+            "default": 20
+          },
+          "delta_lag": {
+            "type": "int",
+            "range": [3, 10],
+            "default": 7
+          },
+          "ts_rank_window": {
+            "type": "int",
+            "range": [30, 90],
+            "default": 60
+          }
+        }
+      },
+      "description": "Volume threshold triggers mean-reversion on recent close changes; else constant -1.",
+      "keywords": ["volume_based", "momentum", "mean_reversion"]
+    },
+    {
+      "name": "Alpha#8",
+      "expression": {
+        "template": "-1 * Rank(((Sum($open, {sum_window}) * Sum(returns, {sum_window})) - Delay((Sum($open, {sum_window}) * Sum(returns, {sum_window})), {delay_lag})))",
+        "parameters": {
+          "sum_window": {
+            "type": "int",
+            "range": [3, 10],
+            "default": 5
+          },
+          "delay_lag": {
+            "type": "int",
+            "range": [5, 15],
+            "default": 10
+          }
+        }
+      },
+      "description": "Negative rank of difference between sum of open*returns and its delayed version.",
+      "keywords": ["price_based", "momentum", "cross_sectional"]
+    },
+    {
+      "name": "Alpha#9",
+      "expression": {
+        "template": "((0 < Ts_Min(Delta($close, 1), {min_window})) ? Delta($close, 1) : ((Ts_Max(Delta($close, 1), {max_window}) < 0) ? Delta($close, 1) : (-1 * Delta($close, 1))))",
+        "parameters": {
+          "min_window": {
+            "type": "int",
+            "range": [3, 7],
+            "default": 5
+          },
+          "max_window": {
+            "type": "int",
+            "range": [3, 7],
+            "default": 5
+          }
+        }
+      },
+      "description": "Conditional alpha based on recent close price changes; blends mean-reversion and momentum.",
+      "keywords": ["price_based", "mean_reversion", "momentum"]
+    },
+    {
+      "name": "Alpha#10",
+      "expression": {
+        "template": "Rank(((0 < Ts_Min(Delta($close, 1), {min_window})) ? Delta($close, 1) : ((Ts_Max(Delta($close, 1), {max_window}) < 0) ? Delta($close, 1) : (-1 * Delta($close, 1)))))",
+        "parameters": {
+          "min_window": {
+            "type": "int",
+            "range": [3, 7],
+            "default": 4
+          },
+          "max_window": {
+            "type": "int",
+            "range": [3, 7],
+            "default": 4
+          }
+        }
+      },
+      "description": "Ranked version of conditional close price change alpha; momentum and mean-reversion blend.",
+      "keywords": ["price_based", "mean_reversion", "momentum"]
+    },
+    {
+      "name": "Alpha#11",
+      "expression": {
+        "template": "(Rank(Ts_Max(($vwap - $close), {max_window})) + Rank(Ts_Min(($vwap - $close), {min_window}))) * Rank(Delta($volume, {delta_lag}))",
+        "parameters": {
+          "max_window": {
+            "type": "int",
+            "range": [2, 5],
+            "default": 3
+          },
+          "min_window": {
+            "type": "int",
+            "range": [2, 5],
+            "default": 3
+          },
+          "delta_lag": {
+            "type": "int",
+            "range": [1, 5],
+            "default": 3
+          }
+        }
+      },
+      "description": "Combines ranks of short-term max and min of VWAP minus close with volume changes.",
+      "keywords": ["price_based", "volume_based", "momentum"]
+    },
+    {
+      "name": "Alpha#12",
+      "expression": {
+        "template": "Sign(Delta($volume, 1)) * (-1 * Delta($close, 1))",
+        "parameters": {}
+      },
+      "description": "Product of sign of volume change and negative close price change; a simple contrarian indicator.",
+      "keywords": ["price_based", "volume_based", "mean_reversion"]
+    },
+    {
+      "name": "Alpha#13",
+      "expression": {
+        "template": "-1 * Rank(Covariance(Rank($close), Rank($volume), {cov_window}))",
+        "parameters": {
+          "cov_window": {
+            "type": "int",
+            "range": [3, 10],
+            "default": 5
+          }
+        }
+      },
+      "description": "Negative rank of covariance between ranks of close price and volume.",
+      "keywords": ["price_based", "volume_based", "cross_sectional"]
+    },
+    {
+      "name": "Alpha#14",
+      "expression": {
+        "template": "-1 * Rank(Delta(returns, {delta_window})) * Corr($open, $volume, {corr_window})",
+        "parameters": {
+          "delta_window": {
+            "type": "int",
+            "range": [1, 7],
+            "default": 3
+          },
+          "corr_window": {
+            "type": "int",
+            "range": [5, 15],
+            "default": 10
+          }
+        }
+      },
+      "description": "Negative product of rank of returns change and correlation of open price and volume.",
+      "keywords": ["returns_based", "price_based", "volume_based"]
+    },
+    {
+      "name": "Alpha#15",
+      "expression": {
+        "template": "-1 * Sum(Rank(Corr(Rank($high), Rank($volume), {corr_window})), {sum_window})",
+        "parameters": {
+          "corr_window": {
+            "type": "int",
+            "range": [2, 5],
+            "default": 3
+          },
+          "sum_window": {
+            "type": "int",
+            "range": [2, 5],
+            "default": 3
+          }
+        }
+      },
+      "description": "Negative sum of ranks of correlation between high price and volume ranks.",
+      "keywords": ["price_based", "volume_based"]
+    },
+    {
+    "name": "Alpha#16",
+    "expression": {
+      "template": "-1 * Rank(Covariance(Rank($high), Rank($volume), {cov_window}))",
+      "parameters": {
+        "cov_window": {
+          "type": "int",
+          "range": [3, 10],
+          "default": 5
+        }
+      }
+    },
+    "description": "Negative rank of covariance between ranks of high price and volume.",
+    "keywords": ["price_based", "volume_based"]
+  },
+  {
+    "name": "Alpha#17",
+    "expression": {
+      "template": "-1 * Rank(Ts_Rank($close, {ts_rank_window})) * Rank(Delta(Delta($close, 1), 1)) * Rank(Ts_Rank(($volume / $adv20), {vol_ts_rank_window}))",
+      "parameters": {
+        "ts_rank_window": {
+          "type": "int",
+          "range": [5, 20],
+          "default": 10
+        },
+        "vol_ts_rank_window": {
+          "type": "int",
+          "range": [3, 10],
+          "default": 5
+        }
+      }
+    },
+    "description": "Product of negative rank of close ts_rank, rank of second difference of close, and volume relative to 20-day avg ts_rank.",
+    "keywords": ["price_based", "volume_based", "momentum"]
+  },
+  {
+    "name": "Alpha#18",
+    "expression": {
+      "template": "-1 * Rank((StdDev(Abs($close - $open), {stddev_window}) + ($close - $open)) + Corr($close, $open, {corr_window}))",
+      "parameters": {
+        "stddev_window": {
+          "type": "int",
+          "range": [3, 10],
+          "default": 5
+        },
+        "corr_window": {
+          "type": "int",
+          "range": [5, 15],
+          "default": 10
+        }
+      }
+    },
+    "description": "Negative rank of sum of intraday volatility, intraday return, and correlation of close and open prices.",
+    "keywords": ["price_based", "volatility_based"]
+  },
+  {
+    "name": "Alpha#19",
+    "expression": {
+      "template": "-1 * Sign(($close - Delay($close, {delay_lag})) + Delta($close, {delta_lag})) * (1 + Rank(1 + Sum(returns, {sum_window})))",
+      "parameters": {
+        "delay_lag": {
+          "type": "int",
+          "range": [5, 10],
+          "default": 7
+        },
+        "delta_lag": {
+          "type": "int",
+          "range": [5, 10],
+          "default": 7
+        },
+        "sum_window": {
+          "type": "int",
+          "range": [100, 300],
+          "default": 250
+        }
+      }
+    },
+    "description": "Negative sign of 7-day price change times rank of cumulative returns over 250 days; a momentum signal.",
+    "keywords": ["returns_based", "momentum"]
+  },
+  {
+    "name": "Alpha#20",
+    "expression": {
+      "template": "-1 * Rank(($open - Delay($high, 1))) * Rank(($open - Delay($close, 1))) * Rank(($open - Delay($low, 1)))",
+      "parameters": {}
+    },
+    "description": "Negative product of ranks of open price minus previous day’s high, close, and low prices.",
+    "keywords": ["price_based", "momentum"]
+  },
+  {
+    "name": "Alpha#21",
+    "expression": {
+      "template": "-1 * Rank(Delta(Covariance(Rank($high), Rank($volume), {cov_window}), {delta_window}))",
+      "parameters": {
+        "cov_window": {
+          "type": "int",
+          "range": [3, 10],
+          "default": 5
+        },
+        "delta_window": {
+          "type": "int",
+          "range": [1, 5],
+          "default": 1
+        }
+      }
+    },
+    "description": "Negative rank of the change in covariance of ranks of high price and volume.",
+    "keywords": ["price_based", "volume_based", "momentum"]
+  },
+  {
+    "name": "Alpha#22",
+    "expression": {
+      "template": "Rank((Rank(Delta($close, 1)) + Rank(Delta($volume, 1))))",
+      "parameters": {}
+    },
+    "description": "Rank of sum of ranks of daily changes in close price and volume.",
+    "keywords": ["price_based", "volume_based", "momentum"]
+  },
+  {
+    "name": "Alpha#23",
+    "expression": {
+      "template": "Rank(Delta($close, {delta_lag})) * Rank(Corr($close, $volume, {corr_window}))",
+      "parameters": {
+        "delta_lag": {
+          "type": "int",
+          "range": [1, 5],
+          "default": 1
+        },
+        "corr_window": {
+          "type": "int",
+          "range": [3, 10],
+          "default": 5
+        }
+      }
+    },
+    "description": "Product of rank of lagged close price change and rank of correlation between close price and volume.",
+    "keywords": ["price_based", "volume_based", "momentum"]
+  },
+  {
+    "name": "Alpha#24",
+    "expression": {
+      "template": "-1 * Rank(Ts_Rank($close, {ts_rank_window})) * Rank(Delta($close, {delta_lag}))",
+      "parameters": {
+        "ts_rank_window": {
+          "type": "int",
+          "range": [5, 20],
+          "default": 10
+        },
+        "delta_lag": {
+          "type": "int",
+          "range": [1, 5],
+          "default": 1
+        }
+      }
+    },
+    "description": "Negative product of time series rank of close price and rank of its lagged change.",
+    "keywords": ["price_based", "momentum"]
+  },
+  {
+    "name": "Alpha#25",
+    "expression": {
+      "template": "Rank(Corr(Rank($high), Rank($volume), {corr_window}))",
+      "parameters": {
+        "corr_window": {
+          "type": "int",
+          "range": [3, 10],
+          "default": 5
+        }
+      }
+    },
+    "description": "Rank of correlation between ranks of high price and volume.",
+    "keywords": ["price_based", "volume_based"]
+  },
+  {
+    "name": "Alpha#26",
+    "expression": {
+      "template": "Rank((($close - Delay($close, {delay_lag})) / Delay($close, {delay_lag})))",
+      "parameters": {
+        "delay_lag": {
+          "type": "int",
+          "range": [1, 10],
+          "default": 5
+        }
+      }
+    },
+    "description": "Rank of percentage change in close price over a lag period.",
+    "keywords": ["price_based", "momentum"]
+  },
+  {
+    "name": "Alpha#27",
+    "expression": {
+      "template": "-1 * Rank(Covariance(Rank($high), Rank($volume), {cov_window}))",
+      "parameters": {
+        "cov_window": {
+          "type": "int",
+          "range": [3, 10],
+          "default": 5
+        }
+      }
+    },
+    "description": "Negative rank of covariance between ranks of high price and volume.",
+    "keywords": ["price_based", "volume_based"]
+  },
+  {
+    "name": "Alpha#28",
+    "expression": {
+      "template": "Rank(Delta($close, {delta_lag}))",
+      "parameters": {
+        "delta_lag": {
+          "type": "int",
+          "range": [1, 5],
+          "default": 1
+        }
+      }
+    },
+    "description": "Rank of lagged change in close price.",
+    "keywords": ["price_based", "momentum"]
+  },
+  {
+    "name": "Alpha#29",
+    "expression": {
+      "template": "-1 * Rank(Ts_Rank($close, {ts_rank_window}))",
+      "parameters": {
+        "ts_rank_window": {
+          "type": "int",
+          "range": [5, 20],
+          "default": 10
+        }
+      }
+    },
+    "description": "Negative rank of time series rank of close price.",
+    "keywords": ["price_based", "momentum"]
+  },
+  {
+    "name": "Alpha#30",
+    "expression": {
+      "template": "Rank(Covariance(Rank($close), Rank($volume), {cov_window}))",
+      "parameters": {
+        "cov_window": {
+          "type": "int",
+          "range": [3, 10],
+          "default": 5
+        }
+      }
+    },
+    "description": "Rank of covariance between ranks of close price and volume.",
+    "keywords": ["price_based", "volume_based"]
+  },
+    {
+      "name": "Alpha#16",
+      "expression": {
+        "template": "-1 * Rank(Covariance(Rank($high), Rank($volume), {cov_window}))",
+        "parameters": {
+          "cov_window": {
+            "type": "int",
+            "range": [3, 10],
+            "default": 5
+          }
+        }
+      },
+      "description": "Negative rank of covariance between ranks of high price and volume.",
+      "keywords": ["price_based", "volume_based"]
+    },
+    {
+      "name": "Alpha#17",
+      "expression": {
+        "template": "-1 * Rank(Ts_Rank($close, {ts_rank_window})) * Rank(Delta(Delta($close, 1), 1)) * Rank(Ts_Rank(($volume / $adv20), {vol_ts_rank_window}))",
+        "parameters": {
+          "ts_rank_window": {
+            "type": "int",
+            "range": [5, 20],
+            "default": 10
+          },
+          "vol_ts_rank_window": {
+            "type": "int",
+            "range": [3, 10],
+            "default": 5
+          }
+        }
+      },
+      "description": "Product of negative rank of close ts_rank, rank of second difference of close, and volume relative to 20-day avg ts_rank.",
+      "keywords": ["price_based", "volume_based", "momentum"]
+    },
+    {
+      "name": "Alpha#18",
+      "expression": {
+        "template": "-1 * Rank((StdDev(Abs($close - $open), {stddev_window}) + ($close - $open)) + Corr($close, $open, {corr_window}))",
+        "parameters": {
+          "stddev_window": {
+            "type": "int",
+            "range": [3, 10],
+            "default": 5
+          },
+          "corr_window": {
+            "type": "int",
+            "range": [5, 15],
+            "default": 10
+          }
+        }
+      },
+      "description": "Negative rank of sum of intraday volatility, intraday return, and correlation of close and open prices.",
+      "keywords": ["price_based", "volatility_based"]
+    },
+    {
+      "name": "Alpha#19",
+      "expression": {
+        "template": "-1 * Sign(($close - Delay($close, {delay_lag})) + Delta($close, {delta_lag})) * (1 + Rank(1 + Sum(returns, {sum_window})))",
+        "parameters": {
+          "delay_lag": {
+            "type": "int",
+            "range": [5, 10],
+            "default": 7
+          },
+          "delta_lag": {
+            "type": "int",
+            "range": [5, 10],
+            "default": 7
+          },
+          "sum_window": {
+            "type": "int",
+            "range": [100, 300],
+            "default": 250
+          }
+        }
+      },
+      "description": "Negative sign of 7-day price change times rank of cumulative returns over 250 days; a momentum signal.",
+      "keywords": ["returns_based", "momentum"]
+    },
+    {
+      "name": "Alpha#20",
+      "expression": {
+        "template": "-1 * Rank(($open - Delay($high, 1))) * Rank(($open - Delay($close, 1))) * Rank(($open - Delay($low, 1)))",
+        "parameters": {}
+      },
+      "description": "Negative product of ranks of open price minus previous day’s high, close, and low prices.",
+      "keywords": ["price_based", "momentum"]
+    },
+    {
+      "name": "Alpha#21",
+      "expression": {
+        "template": "-1 * Rank(Delta(Covariance(Rank($high), Rank($volume), {cov_window}), {delta_window}))",
+        "parameters": {
+          "cov_window": {
+            "type": "int",
+            "range": [3, 10],
+            "default": 5
+          },
+          "delta_window": {
+            "type": "int",
+            "range": [1, 5],
+            "default": 1
+          }
+        }
+      },
+      "description": "Negative rank of the change in covariance of ranks of high price and volume.",
+      "keywords": ["price_based", "volume_based", "momentum"]
+    },
+    {
+      "name": "Alpha#22",
+      "expression": {
+        "template": "Rank((Rank(Delta($close, 1)) + Rank(Delta($volume, 1))))",
+        "parameters": {}
+      },
+      "description": "Rank of sum of ranks of daily changes in close price and volume.",
+      "keywords": ["price_based", "volume_based", "momentum"]
+    },
+    {
+      "name": "Alpha#23",
+      "expression": {
+        "template": "Rank(Delta($close, {delta_lag})) * Rank(Corr($close, $volume, {corr_window}))",
+        "parameters": {
+          "delta_lag": {
+            "type": "int",
+            "range": [1, 5],
+            "default": 1
+          },
+          "corr_window": {
+            "type": "int",
+            "range": [3, 10],
+            "default": 5
+          }
+        }
+      },
+      "description": "Product of rank of lagged close price change and rank of correlation between close price and volume.",
+      "keywords": ["price_based", "volume_based", "momentum"]
+    },
+    {
+      "name": "Alpha#24",
+      "expression": {
+        "template": "-1 * Rank(Ts_Rank($close, {ts_rank_window})) * Rank(Delta($close, {delta_lag}))",
+        "parameters": {
+          "ts_rank_window": {
+            "type": "int",
+            "range": [5, 20],
+            "default": 10
+          },
+          "delta_lag": {
+            "type": "int",
+            "range": [1, 5],
+            "default": 1
+          }
+        }
+      },
+      "description": "Negative product of time series rank of close price and rank of its lagged change.",
+      "keywords": ["price_based", "momentum"]
+    },
+    {
+      "name": "Alpha#25",
+      "expression": {
+        "template": "Rank(Corr(Rank($high), Rank($volume), {corr_window}))",
+        "parameters": {
+          "corr_window": {
+            "type": "int",
+            "range": [3, 10],
+            "default": 5
+          }
+        }
+      },
+      "description": "Rank of correlation between ranks of high price and volume.",
+      "keywords": ["price_based", "volume_based"]
+    },
+    {
+      "name": "Alpha#26",
+      "expression": {
+        "template": "Rank((($close - Delay($close, {delay_lag})) / Delay($close, {delay_lag})))",
+        "parameters": {
+          "delay_lag": {
+            "type": "int",
+            "range": [1, 10],
+            "default": 5
+          }
+        }
+      },
+      "description": "Rank of percentage change in close price over a lag period.",
+      "keywords": ["price_based", "momentum"]
+    },
+    {
+      "name": "Alpha#27",
+      "expression": {
+        "template": "-1 * Rank(Covariance(Rank($high), Rank($volume), {cov_window}))",
+        "parameters": {
+          "cov_window": {
+            "type": "int",
+            "range": [3, 10],
+            "default": 5
+          }
+        }
+      },
+      "description": "Negative rank of covariance between ranks of high price and volume.",
+      "keywords": ["price_based", "volume_based"]
+    },
+    {
+      "name": "Alpha#28",
+      "expression": {
+        "template": "Rank(Delta($close, {delta_lag}))",
+        "parameters": {
+          "delta_lag": {
+            "type": "int",
+            "range": [1, 5],
+            "default": 1
+          }
+        }
+      },
+      "description": "Rank of lagged change in close price.",
+      "keywords": ["price_based", "momentum"]
+    },
+    {
+      "name": "Alpha#29",
+      "expression": {
+        "template": "-1 * Rank(Ts_Rank($close, {ts_rank_window}))",
+        "parameters": {
+          "ts_rank_window": {
+            "type": "int",
+            "range": [5, 20],
+            "default": 10
+          }
+        }
+      },
+      "description": "Negative rank of time series rank of close price.",
+      "keywords": ["price_based", "momentum"]
+    },
+    {
+      "name": "Alpha#30",
+      "expression": {
+        "template": "Rank(Covariance(Rank($close), Rank($volume), {cov_window}))",
+        "parameters": {
+          "cov_window": {
+            "type": "int",
+            "range": [3, 10],
+            "default": 5
+          }
+        }
+      },
+      "description": "Rank of covariance between ranks of close price and volume.",
+      "keywords": ["price_based", "volume_based"]
+    },{
+        "name": "Alpha#31",
+        "expression": {
+          "template": "-1 * Rank(Corr(Rank($close), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of correlation between ranks of close price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#32",
+        "expression": {
+          "template": "Rank(Corr(Rank($high), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of correlation between ranks of high price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#33",
+        "expression": {
+          "template": "Rank(Delta($close, {delta_lag})) * Rank(Delta($volume, {delta_lag}))",
+          "parameters": {
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Product of ranks of lagged changes in close price and volume.",
+        "keywords": ["price_based", "volume_based", "momentum"]
+      },
+      {
+        "name": "Alpha#34",
+        "expression": {
+          "template": "-1 * Rank(Delta(Covariance(Rank($high), Rank($volume), {cov_window}), {delta_lag}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            },
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Negative rank of lagged change in covariance between ranks of high price and volume.",
+        "keywords": ["price_based", "volume_based", "momentum"]
+      },
+      {
+        "name": "Alpha#35",
+        "expression": {
+          "template": "Rank(Covariance(Rank($high), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of covariance between ranks of high price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#36",
+        "expression": {
+          "template": "-1 * Rank(Covariance(Rank($close), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of covariance between ranks of close price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#37",
+        "expression": {
+          "template": "Rank(Ts_Rank($close, {ts_rank_window}))",
+          "parameters": {
+            "ts_rank_window": {
+              "type": "int",
+              "range": [5, 20],
+              "default": 10
+            }
+          }
+        },
+        "description": "Rank of time series rank of close price.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#38",
+        "expression": {
+          "template": "Rank(Delta($close, {delta_lag}))",
+          "parameters": {
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Rank of lagged change in close price.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#39",
+        "expression": {
+          "template": "-1 * Rank(Corr(Rank($high), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of correlation between ranks of high price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#40",
+        "expression": {
+          "template": "Rank(Covariance(Rank($close), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of covariance between ranks of close price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#41",
+        "expression": {
+          "template": "-1 * Rank(Ts_Rank($close, {ts_rank_window}))",
+          "parameters": {
+            "ts_rank_window": {
+              "type": "int",
+              "range": [5, 20],
+              "default": 10
+            }
+          }
+        },
+        "description": "Negative rank of time series rank of close price.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#42",
+        "expression": {
+          "template": "Rank(Delta($close, {delta_lag}))",
+          "parameters": {
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Rank of lagged change in close price.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#43",
+        "expression": {
+          "template": "-1 * Rank(Covariance(Rank($high), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of covariance between ranks of high price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#44",
+        "expression": {
+          "template": "Rank(Corr(Rank($close), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of correlation between ranks of close price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#45",
+        "expression": {
+          "template": "Rank(Delta($close, {delta_lag})) * Rank(Corr($close, $volume, {corr_window}))",
+          "parameters": {
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            },
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Product of rank of lagged close price change and rank of correlation between close price and volume.",
+        "keywords": ["price_based", "volume_based", "momentum"]
+      },{
+        "name": "Alpha#46",
+        "expression": {
+          "template": "-1 * Rank(Ts_Rank($close, {ts_rank_window})) * Rank(Delta($close, {delta_lag}))",
+          "parameters": {
+            "ts_rank_window": {
+              "type": "int",
+              "range": [5, 20],
+              "default": 10
+            },
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Negative product of time series rank of close price and rank of its lagged change.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#47",
+        "expression": {
+          "template": "Rank(Corr(Rank($high), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of correlation between ranks of high price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#48",
+        "expression": {
+          "template": "Rank((($close - Delay($close, {delay_lag})) / Delay($close, {delay_lag})))",
+          "parameters": {
+            "delay_lag": {
+              "type": "int",
+              "range": [1, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of percentage change in close price over a lag period.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#49",
+        "expression": {
+          "template": "-1 * Rank(Covariance(Rank($high), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of covariance between ranks of high price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#50",
+        "expression": {
+          "template": "Rank(Delta($close, {delta_lag}))",
+          "parameters": {
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Rank of lagged change in close price.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#51",
+        "expression": {
+          "template": "-1 * Rank(Ts_Rank($close, {ts_rank_window}))",
+          "parameters": {
+            "ts_rank_window": {
+              "type": "int",
+              "range": [5, 20],
+              "default": 10
+            }
+          }
+        },
+        "description": "Negative rank of time series rank of close price.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#52",
+        "expression": {
+          "template": "Rank(Covariance(Rank($close), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of covariance between ranks of close price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#53",
+        "expression": {
+          "template": "-1 * Rank(Corr(Rank($close), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of correlation between ranks of close price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#54",
+        "expression": {
+          "template": "Rank(Corr(Rank($high), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of correlation between ranks of high price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#55",
+        "expression": {
+          "template": "Rank(Delta($close, {delta_lag})) * Rank(Delta($volume, {delta_lag}))",
+          "parameters": {
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Product of ranks of lagged changes in close price and volume.",
+        "keywords": ["price_based", "volume_based", "momentum"]
+      },{
+        "name": "Alpha#56",
+        "expression": {
+          "template": "-1 * Rank(Delta(Covariance(Rank($high), Rank($volume), {cov_window}), {delta_lag}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            },
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Negative rank of the lagged change in covariance between ranks of high price and volume over specified windows.",
+        "keywords": ["price_based", "volume_based", "momentum"]
+      },
+      {
+        "name": "Alpha#57",
+        "expression": {
+          "template": "Rank(Covariance(Rank($high), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of covariance between ranks of high price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#58",
+        "expression": {
+          "template": "-1 * Rank(Covariance(Rank($close), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of covariance between ranks of close price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#59",
+        "expression": {
+          "template": "Rank(Ts_Rank($close, {ts_rank_window}))",
+          "parameters": {
+            "ts_rank_window": {
+              "type": "int",
+              "range": [5, 20],
+              "default": 10
+            }
+          }
+        },
+        "description": "Rank of the time series rank of close price over a specified window.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#60",
+        "expression": {
+          "template": "Rank(Delta($close, {delta_lag}))",
+          "parameters": {
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Rank of lagged change in close price over a specified lag.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#61",
+        "expression": {
+          "template": "-1 * Rank(Corr(Rank($close), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of correlation between ranks of close price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#62",
+        "expression": {
+          "template": "Rank(Corr(Rank($high), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of correlation between ranks of high price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#63",
+        "expression": {
+          "template": "Rank(Delta($close, {delta_lag})) * Rank(Delta($volume, {delta_lag}))",
+          "parameters": {
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Product of ranks of lagged changes in close price and volume over specified lag.",
+        "keywords": ["price_based", "volume_based", "momentum"]
+      },
+      {
+        "name": "Alpha#64",
+        "expression": {
+          "template": "-1 * Rank(Delta(Covariance(Rank($high), Rank($volume), {cov_window}), {delta_lag}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            },
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Negative rank of lagged change in covariance between ranks of high price and volume.",
+        "keywords": ["price_based", "volume_based", "momentum"]
+      },
+      {
+        "name": "Alpha#65",
+        "expression": {
+          "template": "Rank(Covariance(Rank($high), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of covariance between ranks of high price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#66",
+        "expression": {
+          "template": "-1 * Rank(Covariance(Rank($close), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of covariance between ranks of close price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#67",
+        "expression": {
+          "template": "Rank(Ts_Rank($close, {ts_rank_window}))",
+          "parameters": {
+            "ts_rank_window": {
+              "type": "int",
+              "range": [5, 20],
+              "default": 10
+            }
+          }
+        },
+        "description": "Rank of time series rank of close price.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#68",
+        "expression": {
+          "template": "Rank(Delta($close, {delta_lag}))",
+          "parameters": {
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Rank of lagged change in close price.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#69",
+        "expression": {
+          "template": "-1 * Rank(Corr(Rank($high), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of correlation between ranks of high price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#70",
+        "expression": {
+          "template": "Rank(Covariance(Rank($close), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of covariance between ranks of close price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#71",
+        "expression": {
+          "template": "-1 * Rank(Ts_Rank($close, {ts_rank_window}))",
+          "parameters": {
+            "ts_rank_window": {
+              "type": "int",
+              "range": [5, 20],
+              "default": 10
+            }
+          }
+        },
+        "description": "Negative rank of time series rank of close price.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#72",
+        "expression": {
+          "template": "Rank(Delta($close, {delta_lag}))",
+          "parameters": {
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Rank of lagged change in close price.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#73",
+        "expression": {
+          "template": "-1 * Rank(Covariance(Rank($high), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of covariance between ranks of high price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#74",
+        "expression": {
+          "template": "Rank(Corr(Rank($close), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of correlation between ranks of close price and volume.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#75",
+        "expression": {
+          "template": "Rank(Delta($close, {delta_lag})) * Rank(Corr($close, $volume, {corr_window}))",
+          "parameters": {
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            },
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Product of rank of lagged close price change and rank of correlation between close price and volume.",
+        "keywords": ["price_based", "volume_based", "momentum"]
+      },{
+        "name": "Alpha#76",
+        "expression": {
+          "template": "-1 * Rank(Ts_Rank($close, {ts_rank_window})) * Rank(Delta($close, {delta_lag}))",
+          "parameters": {
+            "ts_rank_window": {
+              "type": "int",
+              "range": [5, 20],
+              "default": 10
+            },
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Negative product of time series rank of close price and rank of its lagged change over specified windows.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#77",
+        "expression": {
+          "template": "Rank(Corr(Rank($high), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of correlation between ranks of high price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#78",
+        "expression": {
+          "template": "Rank((($close - Delay($close, {delay_lag})) / Delay($close, {delay_lag})))",
+          "parameters": {
+            "delay_lag": {
+              "type": "int",
+              "range": [1, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of percentage change in close price over a lag period specified by delay_lag.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#79",
+        "expression": {
+          "template": "-1 * Rank(Covariance(Rank($high), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of covariance between ranks of high price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#80",
+        "expression": {
+          "template": "Rank(Delta($close, {delta_lag}))",
+          "parameters": {
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Rank of lagged change in close price over a specified lag period.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#81",
+        "expression": {
+          "template": "-1 * Rank(Ts_Rank($close, {ts_rank_window}))",
+          "parameters": {
+            "ts_rank_window": {
+              "type": "int",
+              "range": [5, 20],
+              "default": 10
+            }
+          }
+        },
+        "description": "Negative rank of time series rank of close price over a specified window.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#82",
+        "expression": {
+          "template": "Rank(Covariance(Rank($close), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of covariance between ranks of close price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#83",
+        "expression": {
+          "template": "-1 * Rank(Corr(Rank($close), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of correlation between ranks of close price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#84",
+        "expression": {
+          "template": "Rank(Corr(Rank($high), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of correlation between ranks of high price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#85",
+        "expression": {
+          "template": "Rank(Delta($close, {delta_lag})) * Rank(Delta($volume, {delta_lag}))",
+          "parameters": {
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Product of ranks of lagged changes in close price and volume over a specified lag.",
+        "keywords": ["price_based", "volume_based", "momentum"]
+      },
+      {
+        "name": "Alpha#86",
+        "expression": {
+          "template": "-1 * Rank(Delta(Covariance(Rank($high), Rank($volume), {cov_window}), {delta_lag}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            },
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Negative rank of lagged change in covariance between ranks of high price and volume over specified windows.",
+        "keywords": ["price_based", "volume_based", "momentum"]
+      },
+      {
+        "name": "Alpha#87",
+        "expression": {
+          "template": "Rank(Covariance(Rank($high), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of covariance between ranks of high price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#88",
+        "expression": {
+          "template": "-1 * Rank(Covariance(Rank($close), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of covariance between ranks of close price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#89",
+        "expression": {
+          "template": "Rank(Ts_Rank($close, {ts_rank_window}))",
+          "parameters": {
+            "ts_rank_window": {
+              "type": "int",
+              "range": [5, 20],
+              "default": 10
+            }
+          }
+        },
+        "description": "Rank of time series rank of close price over a specified window.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#90",
+        "expression": {
+          "template": "Rank(Delta($close, {delta_lag}))",
+          "parameters": {
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Rank of lagged change in close price over a specified lag.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#91",
+        "expression": {
+          "template": "-1 * Rank(Corr(Rank($high), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of correlation between ranks of high price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#92",
+        "expression": {
+          "template": "Rank(Covariance(Rank($close), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of covariance between ranks of close price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#93",
+        "expression": {
+          "template": "-1 * Rank(Ts_Rank($close, {ts_rank_window}))",
+          "parameters": {
+            "ts_rank_window": {
+              "type": "int",
+              "range": [5, 20],
+              "default": 10
+            }
+          }
+        },
+        "description": "Negative rank of time series rank of close price over a specified window.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#94",
+        "expression": {
+          "template": "Rank(Delta($close, {delta_lag}))",
+          "parameters": {
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Rank of lagged change in close price over a specified lag.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#95",
+        "expression": {
+          "template": "-1 * Rank(Covariance(Rank($high), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of covariance between ranks of high price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#96",
+        "expression": {
+          "template": "Rank(Corr(Rank($close), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of correlation between ranks of close price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#97",
+        "expression": {
+          "template": "Rank(Delta($close, {delta_lag})) * Rank(Corr($close, $volume, {corr_window}))",
+          "parameters": {
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            },
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Product of rank of lagged close price change and rank of correlation between close price and volume over specified windows.",
+        "keywords": ["price_based", "volume_based", "momentum"]
+      },
+      {
+        "name": "Alpha#98",
+        "expression": {
+          "template": "-1 * Rank(Ts_Rank($close, {ts_rank_window})) * Rank(Delta($close, {delta_lag}))",
+          "parameters": {
+            "ts_rank_window": {
+              "type": "int",
+              "range": [5, 20],
+              "default": 10
+            },
+            "delta_lag": {
+              "type": "int",
+              "range": [1, 5],
+              "default": 1
+            }
+          }
+        },
+        "description": "Negative product of time series rank of close price and rank of its lagged change over specified windows.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#99",
+        "expression": {
+          "template": "Rank(Corr(Rank($high), Rank($volume), {corr_window}))",
+          "parameters": {
+            "corr_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of correlation between ranks of high price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      },
+      {
+        "name": "Alpha#100",
+        "expression": {
+          "template": "Rank((($close - Delay($close, {delay_lag})) / Delay($close, {delay_lag})))",
+          "parameters": {
+            "delay_lag": {
+              "type": "int",
+              "range": [1, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Rank of percentage change in close price over a lag period specified by delay_lag.",
+        "keywords": ["price_based", "momentum"]
+      },
+      {
+        "name": "Alpha#101",
+        "expression": {
+          "template": "-1 * Rank(Covariance(Rank($high), Rank($volume), {cov_window}))",
+          "parameters": {
+            "cov_window": {
+              "type": "int",
+              "range": [3, 10],
+              "default": 5
+            }
+          }
+        },
+        "description": "Negative rank of covariance between ranks of high price and volume over a specified window.",
+        "keywords": ["price_based", "volume_based"]
+      }
+  
+]

@@ -1,0 +1,217 @@
+[
+  {
+    "name": "KMID",
+    "qlib_expression": "($close - $open) / $open",
+    "qlib_expression_default": "($close - $open) / $open"
+  },
+  {
+    "name": "KLEN",
+    "qlib_expression": "($high - $low) / $open",
+    "qlib_expression_default": "($high - $low) / $open"
+  },
+  {
+    "name": "KMID2",
+    "qlib_expression": "($close - $open) / ($high - $low + 1e-12)",
+    "qlib_expression_default": "($close - $open) / ($high - $low + 1e-12)"
+  },
+  {
+    "name": "KUP",
+    "qlib_expression": "($high - Greater($open, $close)) / $open",
+    "qlib_expression_default": "($high - Greater($open, $close)) / $open"
+  },
+  {
+    "name": "KUP2",
+    "qlib_expression": "($high - Greater($open, $close)) / ($high - $low + 1e-12)",
+    "qlib_expression_default": "($high - Greater($open, $close)) / ($high - $low + 1e-12)"
+  },
+  {
+    "name": "KLOW",
+    "qlib_expression": "(Less($open, $close) - $low) / $open",
+    "qlib_expression_default": "(Less($open, $close) - $low) / $open"
+  },
+  {
+    "name": "KLOW2",
+    "qlib_expression": "(Less($open, $close) - $low) / ($high - $low + 1e-12)",
+    "qlib_expression_default": "(Less($open, $close) - $low) / ($high - $low + 1e-12)"
+  },
+  {
+    "name": "KSFT",
+    "qlib_expression": "(2 * $close - $high - $low) / $open",
+    "qlib_expression_default": "(2 * $close - $high - $low) / $open"
+  },
+  {
+    "name": "KSFT2",
+    "qlib_expression": "(2 * $close - $high - $low) / ($high - $low + 1e-12)",
+    "qlib_expression_default": "(2 * $close - $high - $low) / ($high - $low + 1e-12)"
+  },
+    {
+    "name": "OPEN_REF",
+    "qlib_expression": "Ref($open, {window}) / $close",
+    "qlib_expression_default": "Ref($open, 1) / $close"
+  },
+  {
+    "name": "HIGH_REF",
+    "qlib_expression": "Ref($high, {window}) / $close",
+    "qlib_expression_default": "Ref($high, 1) / $close"
+  },
+  {
+    "name": "LOW_REF",
+    "qlib_expression": "Ref($low, {window}) / $close",
+    "qlib_expression_default": "Ref($low, 1) / $close"
+  },
+  {
+    "name": "VWAP_REF",
+    "qlib_expression": "Ref($vwap, {window}) / $close",
+    "qlib_expression_default": "Ref($vwap, 1) / $close"
+  },
+  {
+    "name": "VOLUME_REF",
+    "qlib_expression": "Ref($volume, {window}) / ($volume + 1e-12)",
+    "qlib_expression_default": "Ref($volume, 1) / ($volume + 1e-12)"
+  },
+  {
+    "name": "ROC",
+    "qlib_expression": "Ref($close, {window}) / $close",
+    "qlib_expression_default": "Ref($close, 5) / $close"
+  },
+  {
+    "name": "MA",
+    "qlib_expression": "Mean($close, {window}) / $close",
+    "qlib_expression_default": "Mean($close, 5) / $close"
+  },
+  {
+    "name": "STD",
+    "qlib_expression": "Std($close, {window}) / $close",
+    "qlib_expression_default": "Std($close, 5) / $close"
+  },
+  {
+    "name": "BETA",
+    "qlib_expression": "Slope($close, {window}) / $close",
+    "qlib_expression_default": "Slope($close, 5) / $close"
+  },
+  {
+    "name": "RSQR",
+    "qlib_expression": "Rsquare($close, {window})",
+    "qlib_expression_default": "Rsquare($close, 5)"
+  },
+  {
+    "name": "RESI",
+    "qlib_expression": "Resi($close, {window}) / $close",
+    "qlib_expression_default": "Resi($close, 5) / $close"
+  },
+  {
+    "name": "MAX",
+    "qlib_expression": "Max($high, {window}) / $close",
+    "qlib_expression_default": "Max($high, 5) / $close"
+  },
+  {
+    "name": "LOW",
+    "qlib_expression": "Min($low, {window}) / $close",
+    "qlib_expression_default": "Min($low, 5) / $close"
+  },
+  {
+    "name": "QTLU",
+    "qlib_expression": "Quantile($close, {window}, 0.8) / $close",
+    "qlib_expression_default": "Quantile($close, 5, 0.8) / $close"
+  },
+  {
+    "name": "QTLD",
+    "qlib_expression": "Quantile($close, {window}, 0.2) / $close",
+    "qlib_expression_default": "Quantile($close, 5, 0.2) / $close"
+  },
+  {
+    "name": "RANK_CLOSE",
+    "qlib_expression": "Rank($close, {window})",
+    "qlib_expression_default": "Rank($close, 5)"
+  },
+  {
+    "name": "RSV",
+    "qlib_expression": "($close - Min($low, {window})) / (Max($high, {window}) - Min($low, {window}) + 1e-12)",
+    "qlib_expression_default": "($close - Min($low, 5)) / (Max($high, 5) - Min($low, 5) + 1e-12)"
+  },
+  {
+    "name": "IMAX",
+    "qlib_expression": "IdxMax($high, {window}) / {window}",
+    "qlib_expression_default": "IdxMax($high, 5) / 5"
+  },
+  {
+    "name": "IMIN",
+    "qlib_expression": "IdxMin($low, {window}) / {window}",
+    "qlib_expression_default": "IdxMin($low, 5) / 5"
+  },
+  {
+    "name": "IMXD",
+    "qlib_expression": "(IdxMax($high, {window}) - IdxMin($low, {window})) / {window}",
+    "qlib_expression_default": "(IdxMax($high, 5) - IdxMin($low, 5)) / 5"
+  },
+  {
+    "name": "CORR",
+    "qlib_expression": "Corr($close, Log($volume+1), {window})",
+    "qlib_expression_default": "Corr($close, Log($volume+1), 5)"
+  },
+  {
+    "name": "CORD",
+    "qlib_expression": "Corr($close/Ref($close,1), Log($volume/Ref($volume,1)+1), {window})",
+    "qlib_expression_default": "Corr($close/Ref($close,1), Log($volume/Ref($volume,1)+1), 5)"
+  },
+  {
+    "name": "CNTP",
+    "qlib_expression": "Mean($close>Ref($close,1), {window})",
+    "qlib_expression_default": "Mean($close>Ref($close,1), 5)"
+  },
+  {
+    "name": "CNTN",
+    "qlib_expression": "Mean($close<Ref($close,1), {window})",
+    "qlib_expression_default": "Mean($close<Ref($close,1), 5)"
+  },
+  {
+    "name": "CNTD",
+    "qlib_expression": "Mean($close>Ref($close,1), {window})-Mean($close<Ref($close,1), {window})",
+    "qlib_expression_default": "Mean($close>Ref($close,1), 5)-Mean($close<Ref($close,1), 5)"
+  },
+  {
+    "name": "SUMP",
+    "qlib_expression": "Sum(Greater($close-Ref($close,1),0), {window})/(Sum(Abs($close-Ref($close,1)), {window})+1e-12)",
+    "qlib_expression_default": "Sum(Greater($close-Ref($close,1),0), 5)/(Sum(Abs($close-Ref($close,1)), 5)+1e-12)"
+  },
+  {
+    "name": "SUMN",
+    "qlib_expression": "Sum(Greater(Ref($close,1)-$close,0), {window})/(Sum(Abs($close-Ref($close,1)), {window})+1e-12)",
+    "qlib_expression_default": "Sum(Greater(Ref($close,1)-$close,0), 5)/(Sum(Abs($close-Ref($close,1)), 5)+1e-12)"
+  },
+  {
+    "name": "SUMD",
+    "qlib_expression": "(Sum(Greater($close-Ref($close,1),0), {window})-Sum(Greater(Ref($close,1)-$close,0), {window}))/(Sum(Abs($close-Ref($close,1)), {window})+1e-12)",
+    "qlib_expression_default": "(Sum(Greater($close-Ref($close,1),0), 5)-Sum(Greater(Ref($close,1)-$close,0), 5))/(Sum(Abs($close-Ref($close,1)), 5)+1e-12)"
+  },
+  {
+    "name": "VMA",
+    "qlib_expression": "Mean($volume, {window})/($volume+1e-12)",
+    "qlib_expression_default": "Mean($volume, 5)/($volume+1e-12)"
+  },
+  {
+    "name": "VSTD",
+    "qlib_expression": "Std($volume, {window})/($volume+1e-12)",
+    "qlib_expression_default": "Std($volume, 5)/($volume+1e-12)"
+  },
+  {
+    "name": "WVMA",
+    "qlib_expression": "Std(Abs($close/Ref($close,1)-1)*$volume, {window})/(Mean(Abs($close/Ref($close,1)-1)*$volume, {window})+1e-12)",
+    "qlib_expression_default": "Std(Abs($close/Ref($close,1)-1)*$volume, 5)/(Mean(Abs($close/Ref($close,1)-1)*$volume, 5)+1e-12)"
+  },
+  {
+    "name": "VSUMP",
+    "qlib_expression": "Sum(Greater($volume-Ref($volume,1),0), {window})/(Sum(Abs($volume-Ref($volume,1)), {window})+1e-12)",
+    "qlib_expression_default": "Sum(Greater($volume-Ref($volume,1),0), 5)/(Sum(Abs($volume-Ref($volume,1)), 5)+1e-12)"
+  },
+  {
+    "name": "VSUMN",
+    "qlib_expression": "Sum(Greater(Ref($volume,1)-$volume,0), {window})/(Sum(Abs($volume-Ref($volume,1)), {window})+1e-12)",
+    "qlib_expression_default": "Sum(Greater(Ref($volume,1)-$volume,0), 5)/(Sum(Abs($volume-Ref($volume,1)), 5)+1e-12)"
+  },
+  {
+    "name": "VSUMD",
+    "qlib_expression": "(Sum(Greater($volume-Ref($volume,1),0), {window})-Sum(Greater(Ref($volume,1)-$volume,0), {window}))/(Sum(Abs($volume-Ref($volume,1)), {window})+1e-12)",
+    "qlib_expression_default": "(Sum(Greater($volume-Ref($volume,1),0), 5)-Sum(Greater(Ref($volume,1)-$volume,0), 5))/(Sum(Abs($volume-Ref($volume,1)), 5)+1e-12)"
+  }
+]

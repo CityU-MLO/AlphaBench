@@ -1,1 +1,1 @@
-# AlphaBench
+# FactorLang

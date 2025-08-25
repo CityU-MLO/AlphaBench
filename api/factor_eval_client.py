@@ -14,8 +14,8 @@ import time
 logger = logging.getLogger(__name__)
 
 # Default API configuration
-DEFAULT_API_URL = "http://localhost:9888"
-DEFAULT_TIMEOUT = 600  # seconds
+DEFAULT_API_URL = "http://localhost:9889"
+DEFAULT_TIMEOUT = 30  # seconds
 MAX_RETRIES = 5
 RETRY_DELAY = 1  # seconds
 
@@ -359,8 +359,18 @@ if __name__ == "__main__":
 
     print("API server is healthy!")
 
+    from agent.qlib_contrib.qlib_expr_parsing import FactorParser, print_tree
+    
+    fs = FactorParser()
+
     # Test single factor evaluation
-    test_expr = "Rank(Corr($close, $volume, 10), 252)"
+    test_expr = "Less($volume, Quantile($volume, 21, 0.8))"
+    ast = fs.parse(test_expr) 
+    copx = fs.get_complexity(ast)
+    print_tree(ast)
+    print("Complex:", copx)
+    result = check_factor_via_api(test_expr)
+    print("Check:", result)
     print(f"\nEvaluating test factor: {test_expr}")
 
     result = evaluate_factor_via_api(test_expr)

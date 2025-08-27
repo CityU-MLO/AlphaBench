@@ -80,6 +80,7 @@ def judge_batch(
         json_output=True,
         temperature=0,
         num_workers=num_workers,
+        service_provider='default'
     )
 
     results = []

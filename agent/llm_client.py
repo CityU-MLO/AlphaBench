@@ -1,5 +1,7 @@
-import time
 from openai import OpenAI
+
+import time
+
 import requests
 import yaml
 from tqdm import tqdm
@@ -29,6 +31,8 @@ def call_llm(
     local_port=8000,
     return_raw=False,
     max_try=5,
+    timeout=120,
+    service_provider='all', # 'all' use all-in-one, 'default' is default URL
 ):
     # If local is True, send request to local server
     if local:
@@ -53,27 +57,40 @@ def call_llm(
             raise RuntimeError(f"Local model server error: {e}")
 
     # Otherwise, use API-based client
-    if model.startswith("gpt-"):
+    if service_provider == 'default':
+        if model.startswith("gpt-"):
+            client = OpenAI(
+                api_key=api_key or OPENAI_API_KEY,
+                base_url=base_url or "https://api.openai-proxy.com/v1",
+            )
+        elif model.startswith("gemini-"):
+            client = OpenAI(
+                api_key=api_key or GEMINI_API_KEY,
+                base_url=base_url or "https://gemini-openai-proxy.deno.dev/v1",
+            )
+        elif model.startswith("deepseek-"):
+            client = OpenAI(
+                api_key=api_key or DEEPSEEK_API_KEY,
+                base_url=base_url or "https://api.deepseek.com",
+            )
+        else:
+            # Use all in one platform
+            client = OpenAI(
+                api_key="sk-qXQzDPMjBw0fMHSQtb7s1JO68IKrAMPwTjVOeJ2f19SEv2PZ",
+                base_url="https://api2.aigcbest.top/v1",
+                timeout=timeout,
+            )
+    elif service_provider == 'all':
+        # General API
         client = OpenAI(
-            api_key=api_key or OPENAI_API_KEY,
-            base_url=base_url or "https://api.openai-proxy.com/v1",
-        )
-    elif model.startswith("gemini-"):
-        client = OpenAI(
-            api_key=api_key or GEMINI_API_KEY,
-            base_url=base_url or "https://gemini-openai-proxy.deno.dev/v1",
-        )
-    # elif model.startswith("claude-"):
-    #     client = OpenAI(
-    #         api_key=api_key or CLAUDE_API_KEY,
-    #         base_url=base_url or "https://claude-code-proxy.suixifa.workers.dev/https/api.anthropic.com/v1/messages",
-    #     )
-    else:
-        client = OpenAI(
-            api_key=api_key or DEEPSEEK_API_KEY,
-            base_url=base_url or "https://api.deepseek.com",
+            api_key="sk-qXQzDPMjBw0fMHSQtb7s1JO68IKrAMPwTjVOeJ2f19SEv2PZ",
+            base_url="https://api2.aigcbest.top/v1",
+            timeout=timeout,
         )
 
+    else:
+        raise ValueError(f"Unknown service_provider: {service_provider}")
+    
     request_params = {
         "model": model,
         "messages": [
@@ -117,6 +134,7 @@ def _worker_call_llm(idx, prompt, kwargs):
         local=kwargs["local"],
         local_port=kwargs["local_port"],
         return_raw=kwargs["return_raw"],
+        service_provider=kwargs["service_provider"],
     )
     return idx, res
 
@@ -135,57 +153,63 @@ def batch_call_llm(
     num_workers=4,
     return_raw=False,
     verbose=False,
-    parallel=True,
-    timeout: float = 60.0,  # 超时时间（秒）
+    timeout=None,
+    service_provider='all',
 ):
     """
-    Batch call LLM with hard timeout (kills process if exceeded).
+    Batch call LLM with multiple prompts while keeping the result order.
+
+    Args:
+        prompts (list[str]): List of prompts to query.
+        model, api_key, base_url, json_output, system_prompt, temperature,
+        local, local_port: Same as call_llm.
+        num_workers (int): Number of parallel workers.
+        verbose (bool): If True, show progress bar.
+
+    Returns:
+        list[str or None]: Responses in the same order as prompts. None if error.
     """
+
     results = [None] * len(prompts)
-    if not prompts:
-        return results
 
-    kwargs = dict(
-        model=model,
-        api_key=api_key,
-        base_url=base_url,
-        json_output=json_output,
-        system_prompt=system_prompt,
-        temperature=temperature,
-        local=local,
-        local_port=local_port,
-        return_raw=return_raw,
-        latency=latency,
-    )
+    def _worker(idx, prompt):
+        try:
+            if latency:
+                import time
 
-    max_workers = max(1, num_workers if parallel else 1)
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = {
-            executor.submit(_worker_call_llm, i, p, kwargs): i
-            for i, p in enumerate(prompts)
-        }
+                time.sleep(latency)
+            return (
+                idx,
+                call_llm(
+                    prompt,
+                    model=model,
+                    api_key=api_key,
+                    base_url=base_url,
+                    json_output=json_output,
+                    system_prompt=system_prompt,
+                    temperature=temperature,
+                    local=local,
+                    local_port=local_port,
+                    return_raw=return_raw,
+                    timeout=timeout,
+                    service_provider=service_provider,
+                ),
+            )
+        except Exception:
+            return idx, None
 
-        futures_iter = (
-            tqdm(futures, total=len(prompts), desc="Processing") if verbose else futures
-        )
+    with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        futures = [executor.submit(_worker, i, p) for i, p in enumerate(prompts)]
+        if verbose:
+            futures_iter = tqdm(
+                as_completed(futures), total=len(prompts), desc="Processing"
+            )
+        else:
+            futures_iter = as_completed(futures)
 
-        for fut in futures_iter:
-            idx = futures[fut]
-            try:
-                idx, res = fut.result(timeout=timeout)  # 超时会直接 kill 子进程
-                results[idx] = res
-            except TimeoutError:
-                fut.cancel()
-                print(f"[Timeout] prompt {idx} exceeded {timeout}s and was terminated")
-                results[idx] = {
-                    "success": False,
-                    "error_type": "TIMEOUT",
-                    "error_message": f"Request exceeded {timeout}s and was terminated",
-                }
-            except Exception as e:
-                results[idx] = None
-                if verbose:
-                    print(f"[Error] prompt {idx}: {e}")
+        for f in futures_iter:
+            idx, res = f.result()
+            results[idx] = res
 
     return results
 

@@ -116,12 +116,25 @@ class CoTSearcher:
                 local_port=self.local_port,
             )
             elapsed = time.time() - start_time
-
+            # import pdb;pdb.set_trace()
             cand = self._extract_single_candidate(payload)
             if cand is None:
                 if verbose:
-                    print("No candidate returned this round; stopping early.")
-                break
+                    print(
+                        "No candidate returned in this round; continuing to next round."
+                    )
+                chain.append(
+                    {
+                        "round": r,
+                        "name": best_name,
+                        "expression": best_expr,
+                        "metrics": best_metrics,
+                        "instruction": instruction,
+                        "elapsed_time": elapsed,
+                        "generated": {},
+                    }
+                )
+                continue
 
             cand_name = cand.get("name", f"round{r}_candidate")
             cand_expr = cand.get("expression", "")
@@ -141,7 +154,7 @@ class CoTSearcher:
             else:
                 if verbose:
                     print("⬇️  Not improved — keeping previous best.")
-
+            
             chain.append(
                 {
                     "round": r,
@@ -234,10 +247,16 @@ class CoTSearcher:
                     f"r{rec['round']} candidate: {gen.get('name','?')} => {gen.get('expression','?')} | \n"
                     f"{fmt_m(gen)} | promoted={gen.get('promoted', False)}\n"
                 )
+            else:
+                history_lines.append(
+                    f"r{rec['round']} candidate: no_result => no_result | \n"
+                    f"IC=nan, RankIC=nan, ICIR=nan | promoted=False\n"
+                )
             # Snapshot of best after this round
             history_lines.append(
                 f"r{rec['round']} best: {rec['name']} => {rec['expression']} | {fmt_m(rec)}\n"
             )
+            
 
         history_text = "".join(history_lines) if history_lines else "(no history)"
 
@@ -264,6 +283,7 @@ class CoTSearcher:
         - Volume conditioning: weight by or interact with volume features.,
         - Exploration reset: you may abandon the current structure and propose a brand-new formulation.,
         Constraints: obey variable/operator whitelist; avoid overly long or redundant chains; ensure novelty vs history.,
+        Complexity: for each generation, never generate too complex factor or make huge changes.
         """
 
         if round_id == 1:
@@ -341,9 +361,9 @@ if __name__ == "__main__":
     searcher = CoTSearcher(
         evaluate_factor_fn=evaluate_factor_via_api,
         search_fn=call_qlib_search,
-        model="gpt-5",
+        model="gemini-2.5-flash",
         temperature=1.0,
-        enable_reason=True,
+        enable_reason=False,
         local=False,
         local_port=8000,
     )

@@ -183,8 +183,8 @@ if result['success']:
 from api.factor_eval_client import batch_evaluate_factors_via_api
 
 factors = [
-    {'name': 'mom_factor', 'expr': 'Rank($close, 20)'},
-    {'name': 'vol_factor', 'expr': 'Mean($volume, 10)'}
+    {'name': 'mom_factor', 'expression': 'Rank($close, 20)'},
+    {'name': 'vol_factor', 'expression': 'Mean($volume, 10)'}
 ]
 
 results = batch_evaluate_factors_via_api(

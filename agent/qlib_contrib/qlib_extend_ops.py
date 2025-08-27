@@ -125,6 +125,24 @@ class Tan(NpElemOperator):
         super(Tan, self).__init__(feature, "tan")
 
 
+class Tanh(NpElemOperator):
+    """Feature Tanh
+
+    Parameters
+    ----------
+    feature : Expression
+        feature instance
+
+    Returns
+    ----------
+    Expression
+        a feature instance with tanh
+    """
+
+    def __init__(self, feature):
+        super(Tan, self).__init__(feature, "tanh")
+
+
 class Arcsin(NpElemOperator):
     """Feature Arcsin
 
@@ -240,7 +258,7 @@ class Clip(ElemOperator):
         return np.clip(series, self.a_min, self.a_max)
 
 
-Ext_OpsList = [Sqrt, Exp, Square, Sin, Cos, Tan, Reciprocal, Clip]
+Ext_OpsList = [Sqrt, Exp, Square, Sin, Cos, Tan, Tanh, Reciprocal, Clip]
 
 
 for op in Ext_OpsList:

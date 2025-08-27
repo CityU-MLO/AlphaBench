@@ -2,6 +2,8 @@ import os
 import time
 import pickle
 from typing import Any, Dict, List, Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 from agent.generator_qlib_search import call_qlib_search
 from api.factor_eval_client import (
@@ -12,17 +14,20 @@ from api.factor_eval_client import (
 
 class ToTSearcher:
     """
-    Chain-of-Thought (ToT) guided factor searcher.
+    Tree-of-Thought (ToT) parallel-recursive searcher.
 
-    This class orchestrates an iterative search over alpha-factor expressions using a
-    language model (LLM) and an external evaluation backend (e.g., Qlib).
+    Per node (round):
+      1) Generate N candidates from the current parent (seed for round-1).
+      2) Evaluate, then select survivors:
+         - Keep only IC > seed_IC; if >= top_k (3), take top_k by (IC, RankIC, IR).
+         - If some but < top_k, keep all.
+         - If none beat seed_IC, keep the single best-of-round.
+      3) For each survivor, run the SAME search in PARALLEL on the next depth.
 
-    It assumes you already have three callables available somewhere in your codebase:
-      - evaluate_factor_via_api(expr: str) -> Dict[str, float]
-      - batch_evaluate_factors_via_api(factors: List[Dict[str, str]]) -> Dict[str, Dict[str, float]]
-      - call_qlib_search(instruction: str, **llm_kwargs) -> Dict[str, Any]
-
-    You can inject those at construction time via the corresponding parameters.
+    External hooks (unchanged):
+      - evaluate_factor_via_api(expression: str) -> Dict[str, float]
+      - batch_evaluate_factors_via_api(items: List[{"name","expression"}]) -> Dict[str, Dict]
+      - call_qlib_search(instruction: str, **kwargs) -> Dict[str, Any]
     """
 
     def __init__(
@@ -37,6 +42,7 @@ class ToTSearcher:
         local: bool = False,
         local_port: int = 8000,
         save_dir: str = "./runs/tot_search",
+        top_k: int = 3,
     ) -> None:
         # LLM params
         self.model = model
@@ -50,9 +56,16 @@ class ToTSearcher:
         self.batch_evaluate_factors_fn = batch_evaluate_factors_fn
         self.search_fn = search_fn
 
+        # Policy
+        self.top_k = int(top_k)
+
         # I/O
         self.save_dir = save_dir
         os.makedirs(self.save_dir, exist_ok=True)
+
+        # Global de-dup across whole run
+        self._seen_exprs = set()
+        self._seen_lock = threading.Lock()
 
     # ------------------------------ Public API ------------------------------ #
     def search_single_factor(
@@ -70,213 +83,241 @@ class ToTSearcher:
         save_dir: Optional[str] = "./runs/tot_search",
     ) -> Dict[str, Any]:
         """
-        Run ToT-guided search starting from a seed factor.
+        Top-level entry. Recursively expand in parallel.
 
         Args:
             seed: {"name": str, "expression": str}
-            rounds: number of search rounds
-            N: number of candidates to generate per round
-            run_name: optional tag for file naming
-            verbose: print progress
-            avoid_repeat, max_try, debug_mode: forwarded to search_fn
-            save_pickle: whether to persist results at the end
-
-        Returns:
-            summary dict containing history, best factor, and save path (if any)
+            rounds: max depth (>=1). We treat round-1 as the first expansion from seed.
+            N: number of candidates to generate per node (per parent) each round.
         """
-        assert (
-            isinstance(seed, dict) and "name" in seed and "expression" in seed
-        ), "seed must be a dict with keys 'name' and 'expression'"
-        rounds = int(rounds)
-        N = int(N)
+        assert isinstance(seed, dict) and "name" in seed and "expression" in seed, \
+            "seed must be a dict with keys 'name' and 'expression'"
+
+        rounds = max(1, int(rounds))
+        n_expand = max(1, int(N))
+
         t0 = time.time()
 
-        # Evaluate seed performance
+        # Evaluate seed (baseline)
         if verbose:
             print("Evaluating seed factor …")
-        seed_metrics = self._safe_eval_single(seed["expression"])[
-            "metrics"
-        ]  # Dict[str, float]
+        seed_eval = self._safe_eval_single(seed["expression"])
+        seed_metrics = seed_eval.get("metrics", {}) if isinstance(seed_eval, dict) else {}
+        seed_ic = float(seed_metrics.get("ic", float("-inf")))
         if verbose:
             print(f"Seed metrics: {self._fmt_metrics(seed_metrics)}")
 
+        # init global seen with seed
+        with self._seen_lock:
+            self._seen_exprs.add(self._normalize_expr(seed["expression"]))
+
+        # Run recursive parallel search starting at depth=1 (node = seed)
         history: List[Dict[str, Any]] = []
-        seen_exprs = {self._normalize_expr(seed["expression"])}
-        best_name, best_expr, best_metrics = (
-            seed["name"],
-            seed["expression"],
-            seed_metrics,
-        )
+        best_global = {
+            "name": seed["name"],
+            "expression": seed["expression"],
+            "metrics": seed_metrics,
+        }
 
-        # Round 0 instruction (derive from seed + metrics)
-        instruction = self._compose_instruction(
-            round_id=0,
-            seed=seed,
-            best_so_far=(best_name, best_expr, best_metrics),
-            prev_round_topk=[],
-        )
+        def _update_best(candidate_metrics: Dict[str, float], candidate_name: str, candidate_expr: str):
+            nonlocal best_global
+            if self._is_better(best_global.get("metrics", {}), candidate_metrics):
+                best_global = {"name": candidate_name, "expression": candidate_expr, "metrics": candidate_metrics}
 
-        for r in range(1, rounds + 1):
-            if verbose:
-                print("\n" + "=" * 80)
-                print(f"Round {r}/{rounds}: Generating {N} candidates …")
-                print("Instruction:\n" + instruction)
+        # Recursive function over a single parent node
+        def _search_branch(parent: Dict[str, Any], depth: int) -> Dict[str, Any]:
+            """
+            parent: {"name","expression","metrics"}
+            depth:  current depth (1..rounds)
+            Returns: {"history": [...], "best": {...}}
+            """
+            branch_history: List[Dict[str, Any]] = []
 
-            # --- LLM search call ---
-            start_time = time.time()
-            search_payload = self.search_fn(
-                instruction=instruction,
-                model=self.model,
-                N=N,
-                max_try=max_try,
-                avoid_repeat=avoid_repeat,
-                verbose=verbose,
-                debug_mode=debug_mode,
-                temperature=self.temperature,
-                enable_reason=self.enable_reason,
-                local=self.local,
-                local_port=self.local_port,
+            # Compose prompt (round 1 uses seed-only parent=None; later rounds include current parent)
+            instr = self._compose_instruction(
+                round_id=depth,
+                seed=seed,
+                parent=None if depth == 1 else parent,
+                size=n_expand,
             )
-            elapsed = time.time() - start_time
 
-            candidates = self._extract_candidates(search_payload, verbose=verbose)
+            # LLM call to expand N candidates from this parent
             if verbose:
-                print(f"Generated {len(candidates)} raw candidates")
+                print("\n" + "-" * 80)
+                print(f"[Depth {depth}] Expand N={n_expand} from parent: {parent['name'] if depth>1 else seed['name']}")
+                print("Instruction:\n" + instr)
 
-            # Deduplicate by normalized expression
-            unique_candidates: List[Dict[str, str]] = []
-            for c in candidates:
-                key = (
-                    self._normalize_expr(c["expression"])
-                    if c.get("expression")
-                    else None
+            start_time = time.time()
+            try:
+                payload = self.search_fn(
+                    instruction=instr,
+                    model=self.model,
+                    N=n_expand,
+                    max_try=max_try,
+                    avoid_repeat=avoid_repeat,
+                    verbose=verbose,
+                    debug_mode=debug_mode,
+                    temperature=self.temperature,
+                    enable_reason=self.enable_reason,
+                    local=self.local,
+                    local_port=self.local_port,
                 )
-                if key and key not in seen_exprs:
-                    seen_exprs.add(key)
-                    unique_candidates.append(
-                        {
-                            "name": c.get(
-                                "name", f"cand_{r}_{len(unique_candidates)+1}"
-                            ),
-                            "expression": c["expression"],
-                            "reason": c.get("reason", ""),
-                        }
-                    )
+            except Exception as e:
+                if verbose:
+                    print(f"[WARN] LLM expand failed at depth {depth}: {e}")
+                payload = {}
+            elapsed_expand = time.time() - start_time
+
+            # Parse candidates & global de-dup (by expression)
+            raw_candidates = self._extract_candidates(payload, verbose=verbose)
+            unique_candidates: List[Dict[str, Any]] = []
+            for c in raw_candidates:
+                key = self._normalize_expr(c.get("expression", ""))
+                if not key:
+                    continue
+                with self._seen_lock:
+                    if key in self._seen_exprs:
+                        continue
+                    self._seen_exprs.add(key)
+                # ensure name uniqueness within global run
+                cname = c.get("name") or f"cand_d{depth}_{len(unique_candidates)+1}"
+                unique_candidates.append({"name": cname, "expression": c.get("expression", ""), "reason": c.get("reason", "")})
+
             if verbose:
-                print(f"Kept {len(unique_candidates)} unique candidates after de-dup")
+                print(f"[Depth {depth}] Generated {len(raw_candidates)} raw, kept {len(unique_candidates)} unique")
 
             if not unique_candidates:
-                # Nothing new; record empty round and break
-                history.append(
-                    {
-                        "round": r,
-                        "instruction": instruction,
-                        "candidates": [],
-                        "evaluations": {},
-                        "best_of_round": None,
-                    }
-                )
-                break
+                rec = {
+                    "depth": depth,
+                    "parent": parent,
+                    "instruction": instr,
+                    "candidates": [],
+                    "evaluations": {},
+                    "ranking": [],
+                    "survivors": [],
+                    "elapsed_expand": elapsed_expand,
+                }
+                branch_history.append(rec)
+                return {"history": branch_history, "best": parent}
 
-            # --- Batch evaluation ---
-            eval_input = [
-                {"name": c["name"], "expr": c["expression"]} for c in unique_candidates
-            ]
+            # Batch evaluate candidates at this node
+            eval_input = [{"name": c["name"], "expression": c["expression"]} for c in unique_candidates]
+            # import pdb;pdb.set_trace()
             if verbose:
-                print(f"Batch evaluating {len(eval_input)} candidates …")
+                print(f"[Depth {depth}] Evaluating {len(eval_input)} candidates …")
             round_results = self._safe_eval_batch(eval_input)
 
-            # Pair up results (ensure stable mapping)
+            # Bind evaluations
             evaluations: Dict[str, Dict[str, float]] = {}
             for c in unique_candidates:
                 name = c["name"]
-                metrics = (
-                    round_results.get(name)["metrics"]
-                    or round_results.get(c["expression"])
-                    or {}
-                )
-                evaluations[name] = metrics
+                m = (round_results.get(name) or {}).get("metrics", {}) \
+                    or round_results.get(c["expression"], {}) or {}
+                evaluations[name] = m
 
-            # Rank by IC primarily, then RankIC, then IR
-            ranked = self._rank_by_objective(evaluations)
-            best_of_round = None
-            if ranked:
-                best_of_round = (ranked[0][0], ranked[0][1])  # (name, metrics)
-                # Update global best if improved
-                if self._is_better(best_metrics, best_of_round[1]):
-                    idx = next(
-                        (
-                            i
-                            for i, c in enumerate(unique_candidates)
-                            if c["name"] == best_of_round[0]
-                        ),
-                        None,
-                    )
-                    if idx is not None:
-                        best_name = unique_candidates[idx]["name"]
-                        best_expr = unique_candidates[idx]["expression"]
-                        best_metrics = best_of_round[1]
+            # Ranking
+            ranked = self._rank_by_objective(evaluations)  # [(name, metrics), ...]
+            best_of_node = ranked[0] if ranked else None
+            if best_of_node:
+                name2expr = {c["name"]: c["expression"] for c in unique_candidates}
+                _update_best(best_of_node[1], best_of_node[0], name2expr.get(best_of_node[0], ""))
 
-            # Record round
+            # Survivors by seed-IC rule
+            def beats_seed(tup) -> bool:
+                _, m = tup
+                return float(m.get("ic", float("-inf"))) > seed_ic
+
+            qualified = [x for x in ranked if beats_seed(x)]
+            if len(qualified) >= self.top_k:
+                survivors = qualified[: self.top_k]
+            elif len(qualified) > 0:
+                survivors = qualified[:]  # keep all
+            else:
+                survivors = ranked[:1] if ranked else []
+
+            # Build survivor nodes
+            name2expr = {c["name"]: c["expression"] for c in unique_candidates}
+            survivor_nodes: List[Dict[str, Any]] = []
+            for nm, mx in survivors:
+                survivor_nodes.append({"name": nm, "expression": name2expr.get(nm, ""), "metrics": mx})
+
+            # Record this node
             rec = {
-                "round": r,
-                "instruction": instruction,
-                "candidates": unique_candidates,  # list of dicts with name, expression, reason
-                "evaluations": evaluations,  # name -> metrics
-                "ranking": ranked,  # [(name, metrics), …]
-                "best_of_round": best_of_round,  # (name, metrics) or None,
-                "elapsed_time": elapsed,
-                "best_so_far": {
-                    "name": best_name,
-                    "expression": best_expr,
-                    "metrics": best_metrics,
-                },
+                "depth": depth,
+                "parent": parent,
+                "instruction": instr,
+                "candidates": unique_candidates,
+                "evaluations": evaluations,
+                "ranking": ranked,
+                "best_of_node": best_of_node,
+                "survivors": survivors,
+                "elapsed_expand": elapsed_expand,
             }
-            history.append(rec)
+            branch_history.append(rec)
 
-            if verbose and best_of_round:
-                print(
-                    f"Best of round: {best_of_round[0]} | "
-                    f"{self._fmt_metrics(best_of_round[1])}"
-                )
-                print(f"Best so far: {best_name} | {self._fmt_metrics(best_metrics)}")
+            # If reached max depth or no survivors, stop here
+            if depth >= rounds or not survivor_nodes:
+                # best for this branch is best_of_node (if exists) or parent
+                if best_of_node:
+                    best_here = {
+                        "name": best_of_node[0],
+                        "expression": name2expr.get(best_of_node[0], parent["expression"]),
+                        "metrics": best_of_node[1],
+                    }
+                else:
+                    best_here = parent
+                return {"history": branch_history, "best": best_here}
 
-            # Compose next-round instruction using ToT from this round
-            instruction = self._compose_instruction(
-                round_id=r,
-                seed=seed,
-                best_so_far=(best_name, best_expr, best_metrics),
-                prev_round_topk=ranked[: len(ranked) // 2],
-                factors_pool=unique_candidates,
-            )
+            # Else, recursively search deeper for each survivor IN PARALLEL
+            results: List[Dict[str, Any]] = []
+            with ThreadPoolExecutor(max_workers=len(survivor_nodes)) as ex:
+                futs = [ex.submit(_search_branch, sn, depth + 1) for sn in survivor_nodes]
+                for fut in as_completed(futs):
+                    try:
+                        results.append(fut.result())
+                    except Exception as e:
+                        if verbose:
+                            print(f"[WARN] child branch failed at depth {depth+1}: {e}")
 
-        # Finalize
-        elapsed = time.time() - t0
+            # Merge descendants
+            subtree_best = {"name": parent["name"], "expression": parent["expression"], "metrics": parent.get("metrics", {})}
+            for res in results:
+                if not res:
+                    continue
+                branch_history.extend(res.get("history", []))
+                b = res.get("best")
+                if b and self._is_better(subtree_best.get("metrics", {}), b.get("metrics", {})):
+                    subtree_best = b
+                # also update global best
+                if b:
+                    _update_best(b.get("metrics", {}), b.get("name", ""), b.get("expression", ""))
+
+            return {"history": branch_history, "best": subtree_best}
+
+        # Kick off from seed as the root parent (depth=1)
+        root_parent = {"name": seed["name"], "expression": seed["expression"], "metrics": seed_metrics}
+        root_res = _search_branch(root_parent, depth=1)
+        history.extend(root_res.get("history", []))
+        if root_res.get("best"):
+            _update_best(root_res["best"].get("metrics", {}), root_res["best"]["name"], root_res["best"]["expression"])
+
         summary: Dict[str, Any] = {
             "seed": seed,
             "seed_metrics": seed_metrics,
             "history": history,
-            "best": {
-                "name": best_name,
-                "expression": best_expr,
-                "metrics": best_metrics,
-            },
-            "elapsed_sec": elapsed,
+            "best": best_global,
+            "elapsed_sec": time.time() - t0,
         }
 
-        save_path = None
         if save_pickle:
             tag = run_name or self._safe_tag(seed.get("name", "seed"))
-            fname = f"tot_search_{tag}.pkl"
-            if save_dir:
-                save_path = os.path.join(save_dir, fname)
-            else:
-                save_path = os.path.join(self.save_dir, fname)
-            with open(save_path, "wb") as f:
+            fname = f"tot_parallel_search_{tag}.pkl"
+            path = os.path.join(save_dir or self.save_dir, fname)
+            with open(path, "wb") as f:
                 pickle.dump(summary, f)
-            summary["save_path"] = save_path
+            summary["save_path"] = path
             if verbose:
-                print(f"\nSaved search summary to: {save_path}")
+                print(f"\nSaved search summary to: {path}")
 
         return summary
 
@@ -286,70 +327,65 @@ class ToTSearcher:
         *,
         round_id: int,
         seed: Dict[str, str],
-        best_so_far: Tuple[str, str, Dict[str, float]],
-        prev_round_topk: List[Tuple[str, Dict[str, float]]],
-        factors_pool: Dict[str, Any] = None,
+        parent: Optional[Dict[str, Any]],
+        size: int,
     ) -> str:
-        """Compose an English instruction for the next LLM search call.
-
-        The prompt references: the seed factor, metrics so far, and (optionally)
-        the top results from the previous round to steer the model.
         """
-        best_name, best_expr, best_metrics = best_so_far
+        Long-text single prompt, NO backslashes.
+        - round 1: only seed
+        - round >=2: seed + current parent
+        """
+        def fmt_m(m: Dict[str, float]) -> str:
+            ic   = m.get("ic", float("nan"))
+            ric  = m.get("rank_ic", float("nan"))
+            ir   = m.get("ir", float("nan"))
+            icir = m.get("icir", float("nan"))
+            return f"IC={ic:.6f}, RankIC={ric:.6f}, IR={ir:.6f}, ICIR={icir:.6f}"
 
-        def fmt_m(m):
-            return (
-                f"IC={m.get('ic', float('nan')):.6f}, "
-                f"RankIC={m.get('rank_ic', float('nan')):.6f}, "
-                f"ICIR={m.get('icir', float('nan')):.6f}"
-            )
-
-        header = [
-            "You are an expert quantitative researcher generating formulaic alpha factors.",
-            "Return exactly N candidate factors as JSON objects with keys: name, expression, and reason.",
-            "Focus on improving IC primarily, then RankIC and IR.",
-        ]
-
-        context = [
-            f"Seed factor: {seed['name']} => {seed['expression']}",
-            f"Best so far: {best_name} => {best_expr} with {fmt_m(best_metrics)}",
-        ]
-
-        if prev_round_topk:
-            bullets = [f"- {nm}: {fmt_m(mx)}" for nm, mx in prev_round_topk]
-            context.append("Top signals from last round:\n" + "\n".join(bullets))
-            # import pdb;pdb.set_trace()  # Debugging point to inspect the top signals
-            context.append(
-                "Top signals with their expressions:\n"
-                + "\n".join(
-                    f"{nm}: {next(d['expression'] for d in factors_pool if d['name'] == nm)}"
-                    for nm, _ in prev_round_topk
-                )
-            )
-
-        # Heuristics for guidance based on metrics
-        steer = [
-            "Guidelines:",
-            "1) Normalize by volatility or range when signals are noisy (e.g., divide by Std).",
-            "2) Consider momentum windows (10–60), mean-reversion (2–5), or volume conditioning.",
-            "3) Prefer simple, computationally efficient expressions.",
-            "4) Avoid reusing identical structures; diversify operators and windows.",
-        ]
-
-        if round_id == 0:
-            target = (
-                "Task: Propose N improved variants of the seed and a few orthogonal baselines. "
-                "Explain briefly why each might improve IC."
-            )
+        lines = []
+        lines.append(f"You are an expert quantitative researcher generating formulaic alpha factors.")
+        lines.append(f"Return exactly {size} candidate factors as a JSON list of objects, each with:")
+        lines.append(f'- "name": short CamelCase identifier')
+        lines.append(f'- "expression": Qlib-style expression string')
+        lines.append(f'- "reason": one concise sentence (family + why it may improve IC)')
+        lines.append("")
+        ctx = [f"- Seed: {seed['name']} => {seed['expression']}"]
+        if parent is not None:
+            pm = parent.get("metrics", {})
+            ctx.append(f"- Current parent: {parent['name']} => {parent['expression']} with {fmt_m(pm)}")
+        lines.append("**Context**")
+        lines.extend(ctx)
+        lines.append("")
+        if round_id == 1:
+            lines.append(f"You will perform a Tree-of-Thought expand step from the seed. Generate exactly {size} diverse candidates.")
         else:
-            target = (
-                "Task: Using the feedback above, generate N refined candidates that either "
-                "(a) strengthen the best structure via stability/normalization tweaks or "
-                "(b) explore adjacent but distinct operator chains (e.g., volatility-adjusted momentum, "
-                "conditional signals with moving-average regimes). Include a one-sentence reason."
-            )
+            lines.append(f"You will perform a Tree-of-Thought expand step conditioned on the current parent. ")
+            lines.append(f"Generate exactly {size} candidates that either (a) refine this parent for stability or (b) explore adjacent but distinct operator chains.")
+        lines.append("")
+        lines.append("**Strict expression rules**")
+        lines.append("1) Allowed variables: $close, $open, $high, $low, $volume")
+        lines.append("2) Allowed ops (Qlib style): Mean, Std, Corr, Rank, Ref, Sum, Sub, Add, Mul, Div, Max, Min, Abs, Power, Delta, Slope, Rsquare, Quantile, If, Greater, Gt")
+        lines.append("3) Use function calls only (e.g., Div(x, y)); never arithmetic symbols.")
+        lines.append("4) Windows must be positive integers; keep operator depth within 2–4.")
+        lines.append("5) Every denominator in Div must be Add(<den>, 1e-12).")
+        lines.append("6) Use at most one Rank(...) per expression; avoid Rank(Rank(...)).")
+        lines.append("7) Keep expressions compact; no triple Power.")
+        lines.append("")
+        lines.append("**ToT-expand diversity constraints**")
+        lines.append("• Branch across families: momentum, mean-reversion, range/breakout, volatility-scaled, volume-conditioned.")
+        lines.append("• No two candidates share the same operator skeleton (ignoring constants/windows).")
+        lines.append("• Ensure >=30% token difference between any pair (operators + window values).")
+        lines.append("• Prefer (short, long) pairs: short in {5,10}, long in {20,30,60}.")
+        lines.append("• Optional gating: If(Gt($close, Mean($close, L)), A, B) with L in {20,60}; keep A/B simple.")
+        lines.append("")
+        lines.append("**Output format (JSON list only)**")
+        lines.append('[{"name":"Momentum20Adj","expression":"Div(Delta($close,20), Add(Std($close,20), 1e-12))","reason":"Momentum with volatility scaling."}]')
 
-        return "\n\n".join(header + [""] + context + [""] + steer + [""] + [target])
+        text = "\n".join(lines)
+        # Ensure NO backslashes (user constraint)
+        if "\\" in text:
+            text = text.replace("\\", "")
+        return text
 
     # ----------------------------- Ranking Logic --------------------------- #
     @staticmethod
@@ -357,7 +393,6 @@ class ToTSearcher:
         evaluations: Dict[str, Dict[str, float]]
     ) -> List[Tuple[str, Dict[str, float]]]:
         """Rank candidates primarily by IC, then RankIC, then IR (descending)."""
-
         def key_fn(item):
             name, m = item
             return (
@@ -365,8 +400,6 @@ class ToTSearcher:
                 float(m.get("rank_ic", float("nan"))),
                 float(m.get("ir", float("nan"))),
             )
-
-        # Filter out items without IC
         valid_items = [(k, v) for k, v in evaluations.items() if "ic" in v]
         return sorted(valid_items, key=key_fn, reverse=True)
 
@@ -386,34 +419,24 @@ class ToTSearcher:
         self, payload: Dict[str, Any], verbose: bool = False
     ) -> List[Dict[str, str]]:
         """
-        Normalize the search_fn return into a list of {name, expression, reason}.
-        Accepts either the 'factors' list as shown in the example, or a 'results' mapping.
+        Normalize search_fn return into [{name, expression, reason}].
+        Accepts either 'factors' list, or 'results' mapping.
         """
         factors: List[Dict[str, str]] = []
         if not payload:
             return factors
 
         if isinstance(payload, dict):
-            # Preferred path
             if isinstance(payload.get("factors"), list):
                 for item in payload["factors"]:
                     expr = item.get("expression")
                     name = item.get("name")
                     if expr and name:
-                        factors.append(
-                            {
-                                "name": name,
-                                "expression": expr,
-                                "reason": item.get("reason", ""),
-                            }
-                        )
-            # Fallback path: mapping name -> expr under 'results'
+                        factors.append({"name": name, "expression": expr, "reason": item.get("reason", "")})
             elif isinstance(payload.get("results"), dict):
                 for name, expr in payload["results"].items():
                     if expr:
-                        factors.append(
-                            {"name": str(name), "expression": str(expr), "reason": ""}
-                        )
+                        factors.append({"name": str(name), "expression": str(expr), "reason": ""})
         if verbose:
             print(f"_extract_candidates: parsed {len(factors)} candidates")
         return factors
@@ -433,7 +456,7 @@ class ToTSearcher:
             # Fallback: try evaluating one by one to salvage results
             out: Dict[str, Dict[str, float]] = {}
             for it in items:
-                name, expr = it.get("name"), it.get("expr")
+                name, expr = it.get("name"), it.get("expression")
                 try:
                     out[name] = dict(self.evaluate_factor_fn(expr) or {})
                 except Exception as ie:
@@ -446,7 +469,6 @@ class ToTSearcher:
 
     @staticmethod
     def _fmt_metrics(m: Dict[str, Any]) -> str:
-
         keys = ["ic", "rank_ic", "ir", "icir", "rank_icir"]
         parts = []
         for k in keys:
@@ -462,20 +484,22 @@ class ToTSearcher:
 
 
 if __name__ == "__main__":
-    seed = {"name": "Seed_KLEN", "expression": "Div(Sub($high, $low), $open)"}
+    seed = {"name": "Seed_KLEN", "expression": "Div(Sub($high, $low), Add($open, 1e-12))"}
 
     searcher = ToTSearcher(
         evaluate_factor_fn=evaluate_factor_via_api,
         batch_evaluate_factors_fn=batch_evaluate_factors_via_api,
         search_fn=call_qlib_search,
         model="deepseek-chat",
-        temperature=1.0,
-        enable_reason=True,
+        temperature=1.2,
+        enable_reason=False,
         local=False,
         local_port=8000,
+        top_k=3,
     )
 
+    # rounds = depth limit; N = candidates per node per round
     summary = searcher.search_single_factor(
-        seed=seed, rounds=15, N=10, verbose=True, save_dir="./runs/tot_search"
+        seed=seed, rounds=3, N=6, verbose=True, save_dir="./runs/tot_search"
     )
     print("Best:", summary["best"])

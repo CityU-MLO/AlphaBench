@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 from typing import List, Dict, Tuple, Optional
 import math
-
+import re
 
 def _dcg(relevances):
     """DCG with log2 discount and (2^rel - 1) gains."""
@@ -108,7 +108,14 @@ def evaluate_performance_ranking(test_cases, results):
         try:
             # Parse model output to get indices
             if isinstance(result, str):
-                parsed = ast.literal_eval(result)
+                if result.startswith("```"):
+                    cleaned = re.sub(r"^```(?:json)?\s*", "", result, flags=re.IGNORECASE)
+                    cleaned = re.sub(r"\s*```$", "", cleaned)
+                    parsed = cleaned.strip()
+                    # import pdb;pdb.set_trace()
+                    parsed = json.loads(parsed)
+                else: 
+                    parsed = ast.literal_eval(result)
             elif isinstance(result, dict):
                 parsed = result
             else:
@@ -168,17 +175,30 @@ def _parse_pred_result(x):
     if isinstance(x, dict):
         return x
     if isinstance(x, str):
-        s = x.strip()
-        # Try JSON first
         try:
-            return json.loads(s)
-        except Exception:
-            pass
-        # Fallback to Python literal
-        try:
-            return ast.literal_eval(s)
+            if x.startswith("```"):
+                cleaned = re.sub(r"^```(?:json)?\s*", "", x, flags=re.IGNORECASE)
+                cleaned = re.sub(r"\s*```$", "", cleaned)
+                parsed = cleaned.strip()
+                # import pdb;pdb.set_trace()
+                parsed = json.loads(parsed)
+            else: 
+                parsed = ast.literal_eval(x)
+            return parsed
         except Exception:
             return None
+    # else:
+    #     s = x.strip()
+    #     # Try JSON first
+    #     try:
+    #         return json.loads(s)
+    #     except Exception:
+    #         pass
+    #     # Fallback to Python literal
+    #     try:
+    #         return ast.literal_eval(s)
+    #     except Exception:
+    #         return None
     return None
 
 
@@ -355,13 +375,22 @@ def evaluate_performance_scoring(
         gt_scores = case.get("scores", {})
 
         pred = _parse_pred_result(pred_raw)
-        if pred is None:
+        try:
+            if isinstance(pred, List):
+                pred = pred[0]
+            try:
+                if pred is None:
+                    pred_signal = None
+                    pred_scores = {}
+                else:
+                    pred_signal = pred.get("signal", None)
+                    pred_scores = pred.get("scores", {})
+            except Exception:
+                pred_signal = None
+                pred_scores = {}
+        except Exception:
             pred_signal = None
             pred_scores = {}
-        else:
-            pred_signal = pred.get("signal", None)
-            pred_scores = pred.get("scores", {})
-
         # Signal correctness (binary 0/1)
         signal_correct = float(pred_signal == gt_signal)
 

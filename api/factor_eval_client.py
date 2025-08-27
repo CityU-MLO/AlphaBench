@@ -98,7 +98,7 @@ class FactorEvalClient:
         Returns:
             Dictionary with success status and error message if any
         """
-        result = self._make_request("POST", "/check", json={"expr": expr})
+        result = self._make_request("POST", "/check", json={"expression": expr})
         return result if result else {"success": False, "error": "Server Check failed"}
 
     def evaluate_factor(
@@ -131,7 +131,7 @@ class FactorEvalClient:
                 "POST",
                 "/eval",
                 json={
-                    "expr": expr,
+                    "expression": expr,
                     "start": start_date,
                     "end": end_date,
                     "market": market,
@@ -142,7 +142,7 @@ class FactorEvalClient:
         else:
             # Use GET for short expressions
             params = {
-                "expr": expr,
+                "expression": expr,
                 "start": start_date,
                 "end": end_date,
                 "market": market,
@@ -181,7 +181,7 @@ class FactorEvalClient:
         Evaluate multiple factors in batch.
         
         Args:
-            factors: List of factor dictionaries with 'name' and 'expr' keys
+            factors: List of factor dictionaries with 'name' and 'expression' keys
             market: Market identifier
             start_date: Start date (YYYY-MM-DD)
             end_date: End date (YYYY-MM-DD)
@@ -318,7 +318,7 @@ def batch_evaluate_factors_via_api(
     Convenience function to evaluate multiple factors via API.
     
     Args:
-        factors: List of factor dictionaries with 'name' and 'expr' keys
+        factors: List of factor dictionaries with 'name' and 'expression' keys
         market: Market identifier
         start_date: Start date (YYYY-MM-DD)
         end_date: End date (YYYY-MM-DD)
@@ -369,6 +369,10 @@ if __name__ == "__main__":
     copx = fs.get_complexity(ast)
     print_tree(ast)
     print("Complex:", copx)
+    
+    # Check factor if wrong
+    print(check_factor_via_api("Les($volume, Quantile($volume, 21, 0.8))"))
+    print(check_factor_via_api("Less($volume, Quantile($volume, 21))"))
     result = check_factor_via_api(test_expr)
     print("Check:", result)
     print(f"\nEvaluating test factor: {test_expr}")
@@ -382,9 +386,9 @@ if __name__ == "__main__":
 
     # Test batch evaluation
     test_factors = [
-        {"name": "factor1", "expr": "Rank($close, 20)"},
-        {"name": "factor2", "expr": "Mean($volume, 10)"},
-        {"name": "factor3", "expr": "Corr($close, $volume, 30)"},
+        {"name": "factor1", "expression": "Rank($close, 20)"},
+        {"name": "factor2", "expression": "Mean($volume, 10)"},
+        {"name": "factor3", "expression": "Corr($close, $volume, 30)"},
     ]
 
     print(f"\nBatch evaluating {len(test_factors)} factors...")

@@ -46,7 +46,7 @@ def _seed_block_json(seeds: List[Dict[str, Any]]) -> str:
         compact.append(
             {
                 "name": s.get("name"),
-                "expression": s.get("expr"),  # <- keep key "expression" for LLM
+                "expression": s.get("expression") or s.get("expression"),  # <- keep key "expression" for LLM
                 "metrics": _format_metrics(s),
             }
         )
@@ -106,12 +106,13 @@ class EA_Searcher:
         rounds: int,
         verbose: bool = True,
         save_pickle: bool = True,
+        pool_size: int = 30,
     ) -> Dict[str, Any]:
         """
         Evolutionary search on a factor pool.
 
         Args:
-            pool: initial factor pool as [{"name": str, "expr": str}]
+            pool: initial factor pool as [{"name": str, "expression": str}]
             mutation_rate: fraction of N assigned to mutation (0~1)
             crossover_rate: fraction of N assigned to crossover (0~1)
             N: total new candidates to request from LLM each round
@@ -120,9 +121,10 @@ class EA_Searcher:
         # Evaluate initial pool
         if verbose:
             print("Evaluating initial pool …")
-        perf = self.batch_evaluate_factors_fn(pool)
-        for i, p in enumerate(perf):
-            pool[i]["metrics"] = p.get("metrics", {})
+        # perf = self.batch_evaluate_factors_fn(pool)
+        
+        # for i, p in enumerate(perf):
+        #     pool[i]["metrics"] = p.get("metrics", {})
 
         current_pool = _rank_by_ic(pool)
         baseline_ic = sum(_safe_metric(f, "ic", 0.0) for f in current_pool) / max(
@@ -206,7 +208,7 @@ class EA_Searcher:
                 seen_exprs = set()
 
                 for cand in factor_pool:
-                    expr = cand["expr"]
+                    expr = cand["expression"]
                     if expr not in seen_exprs:
                         unique_candidates.append(cand)
                         seen_exprs.add(expr)
@@ -216,9 +218,9 @@ class EA_Searcher:
             unique_candidates = get_unique_set(candidates)
             # --- Evaluate new candidates ---
             eval_input = [
-                {"name": c["name"], "expr": c["expr"]}
+                {"name": c["name"], "expression": c["expression"]}
                 for c in unique_candidates
-                if c.get("expr")
+                if c.get("expression")
             ]
             results = self.batch_evaluate_factors_fn(eval_input)
             for i, res in enumerate(results):
@@ -231,7 +233,7 @@ class EA_Searcher:
             combined = get_unique_set(combined)
 
             combined = _rank_by_ic(combined)
-            current_pool = combined[: len(pool)]
+            current_pool = combined[:pool_size]
 
             history.append(
                 {
@@ -244,15 +246,14 @@ class EA_Searcher:
                     "mut_escaped_time": mut_escaped if n_mut > 0 else None,
                     "candidates": candidates,
                     "unique_candidates": unique_candidates,
-                    "pool_size": len(current_pool),
                 }
             )
 
             if verbose:
                 top_ic = (
-                    _safe_metric(current_pool[0], "ic", float("nan"))
+                    _safe_metric(current_pool[0], "ic", float(0.0))
                     if current_pool
-                    else float("nan")
+                    else float(0.0)
                 )
                 mean_ic = sum(_safe_metric(f, "ic", 0.0) for f in current_pool) / max(
                     len(current_pool), 1
@@ -296,6 +297,7 @@ What to do (Mutation):
 - Add light regularization tricks (e.g., small epsilon in denom, clipping via Min/Max) to improve numerical stability.
 - Keep expressions parsable and balanced (all parentheses closed), and variables limited to: $close, $open, $high, $low, $volume.
 - Do NOT invent new variables or unsupported ops.
+- Try to use more diverse operators and window sizes than the seeds, don't only adjust parameters.
 
 Examples (illustrative only; you must produce new ones):
 - From: Mean(Sub($close, Ref($close, 1)), 10)
@@ -328,12 +330,18 @@ Goal: Propose **exactly {n}** crossover candidates by combining complementary pa
 Seed factors (JSON; each item has "name", "expression", "metrics"):
 {seed_block}
 
-What to do (Crossover):
-- Fuse complementary operator chains (e.g., momentum core + volatility normalization).
-- Align and blend window sizes; when merging, prefer stable combos like (short, long) = (5–10, 30–60).
-- Combine volume- and price-based components to reduce overfitting to one modality.
-- Keep expressions concise and valid; avoid excessively deep nesting or unsupported ops.
-- Variables allowed: $close, $open, $high, $low, $volume.
+What "crossover" means here
+- **Pick good parts from good factors**: identify sub-expressions that plausibly drive performance (e.g., momentum cores, volatility/volume normalizers, range/volatility proxies, smoothers, gates/filters).
+- **Recombine** complementary parts across seeds to form concise, novel expressions (not minor edits or concatenations).
+
+How to identify & extract good parts
+1) Rank seeds by metrics (prefer higher RankIC/ICIR and stability). Skim top seeds first.
+2) Decompose expressions into roles:
+   - Core signal (e.g., Sub/Delta/Range/Momentum on $close/$high/$low)
+   - Normalizer (e.g., Std/Mean/Rank with safe epsilon in denominators)
+   - Volume or regime component (e.g., Mean($volume, L), Rank(...))
+   - Smoother (e.g., Mean(..., L), Rank(...))
+3) Extract the **short, reusable subchains** (2–4 ops) that carry the behavior (trend, mean-revert, breakout) or the stabilizer (vol/volume scaling).
 
 Examples (illustrative only; you must produce new ones):
 - From A: Mean(Sub($close, Ref($close, 1)), 10)
@@ -343,6 +351,7 @@ Examples (illustrative only; you must produce new ones):
 - From A: Rank(Sub($high, $low))
   From B: Div(Sub($close, Ref($close, 1)), Add(Std($close, 30), 1e-12))
   To:     Rank(Div(Sub($high, $low), Add(Std($close, 30), 1e-12)))
+
 
 Output format:
 Return a JSON array of length {n}. Each item MUST be an object with:
@@ -381,14 +390,14 @@ No extra text. Output ONLY the JSON array.
                 items = []
         for it in items:
             name = it.get("name")
-            expr = it.get("expression") or it.get("expr")
+            expr = it.get("expression") or it.get("expression")
             if not (name and expr):
                 continue
             random_suffix = str(uuid.uuid4())[:6]
             out.append(
                 {
                     "name": name + "_" + random_suffix,
-                    "expr": expr,
+                    "expression": expr,
                     "reason": it.get("reason", ""),
                     "provenance": provenance,
                 }
@@ -411,7 +420,7 @@ if __name__ == "__main__":
     )
 
     parsed_factor_pool = [
-        {"name": f.get("name"), "expr": f.get("qlib_expression_default")}
+        {"name": f.get("name"), "expression": f.get("qlib_expression_default")}
         for f in compile_factors.values()
     ]
 
@@ -435,12 +444,13 @@ if __name__ == "__main__":
 
     summary = searcher.search_population(
         parsed_factor_pool,
-        mutation_rate=0.5,
-        crossover_rate=0.5,
-        N=20,
-        rounds=15,
+        mutation_rate=0.25,
+        crossover_rate=0.75,
+        N=30,
+        rounds=20,
         verbose=True,
         save_pickle=True,
+        pool_size=30,
     )
     print("Final pool size:", len(summary["final_pool"]))
     if "save_path" in summary:

@@ -1,3 +1,4 @@
+import argparse
 import ast
 import csv
 from datetime import datetime
@@ -13,7 +14,6 @@ import numpy as np
 from pathlib import Path
 from agent.qlib_contrib.qlib_valid import test_qlib_operator
 from agent.generator_qlib import call_gen_qlib_factors, batch_call_gen_qlib_factors
-from agent.compiler import apply_parameters_to_template
 
 from agent.qlib_contrib.qlib_expr_parsing import FactorParser
 
@@ -34,6 +34,46 @@ import re
 
 from agent.llm_client import batch_call_llm, call_llm
 from factors.lib.alpha158 import load_factors_alpha158
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="AlphaBench T1 generation pipeline")
+    parser.add_argument(
+        "--base_dir",
+        type=Path,
+        default=Path("./runs/T2_Evaluate_deepseek"),
+        help="Base directory to save instructions, outputs, and scores.",
+    )
+    parser.add_argument(
+        "--enable_cot",
+        action="store_true",
+        help="Enable Chain-of-Thought generation for LLM calls.",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default="deepseek-chat",
+        help="Model name to use for generation.",
+    )
+    parser.add_argument(
+        "--local_model",
+        action="store_true",
+        help="Use a local LLM server for generation.",
+    )
+    parser.add_argument(
+        "--local_port",
+        type=int,
+        default=8000,
+        help="Port number for the local LLM server.",
+    )
+    parser.add_argument(
+        "--log_level",
+        type=str,
+        default="ERROR",
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging verbosity.",
+    )
+    return parser.parse_args()
 
 
 RANKING_SYSTEM_PROMPTS_BASE = """
@@ -327,71 +367,33 @@ def benchmark_scoring_performance(
 
 if __name__ == "__main__":
 
-    # model = ['deepseek-chat']
-    # 'gpt-4.1'
-    # model = ['gpt-4.1']
-    # model = ["deepseek-chat", "gpt-4.1"]
-    # model = ["gemini-2.5-pro"]
-    # model = ["deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"]
-    model = ["Qwen/Qwen3-8B"]
-    local = True
-    local_port = 8000
-    enable_CoT_status = [False, True]
+    args = parse_args()
+
+    model = args.model
+    local = args.local_model
+    local_port = args.local_port
+    enable_CoT_status = args.enable_cot
+    save_dir = args.base_dir
     num_workers = 8
-    for m in model:
-        for enable_CoT in enable_CoT_status:
-            print(f"Running benchmark for model: {m}, enable_CoT: {enable_CoT}")
-            outdir = f"./runs/T2_Evaluate_1/{m}_{enable_CoT}"
-            os.makedirs(outdir, exist_ok=True)
-            benchmark_ranking_performance(
-                model=m,
-                output_path=outdir,
-                enable_CoT=enable_CoT,
-                local=local,
-                local_port=local_port,
-                num_workers=num_workers,
-            )
-            benchmark_scoring_performance(
-                model=m,
-                output_path=outdir,
-                enable_CoT=enable_CoT,
-                local=local,
-                local_port=local_port,
-                num_workers=num_workers,
-            )
 
-            rank_output_file = os.path.join(outdir, "ranking_results.json")
-            with open(rank_output_file, "r") as f:
-                results_ranking = json.load(f)
+    print(f"Running benchmark for model: {model}, enable_CoT: {enable_CoT_status}")
+    outdir = os.path.join(save_dir, f"{model}_{enable_CoT_status}")
+    os.makedirs(outdir, exist_ok=True)
+    benchmark_ranking_performance(
+        model=model,
+        output_path=outdir,
+        enable_CoT=enable_CoT_status,
+        local=local,
+        local_port=local_port,
+        num_workers=num_workers,
+    )
+    benchmark_scoring_performance(
+        model=model,
+        output_path=outdir,
+        enable_CoT=enable_CoT_status,
+        local=local,
+        local_port=local_port,
+        num_workers=num_workers,
+    )
 
-            rank_case_path = os.path.join(
-                "./benchmark/data/evaluation/all_env_scenarios.json"
-            )
-            with open(rank_case_path, "r") as f:
-                test_cases_ranking = json.load(f)
-
-            precision_avg, ndcg_avg = evaluate_performance_ranking(
-                test_cases_ranking, results_ranking
-            )
-            print("Ranking Evaluation Results:")
-            print(precision_avg)
-            print(ndcg_avg)
-
-            score_output_file = os.path.join(outdir, "scoring_results.json")
-            with open(score_output_file, "r") as f:
-                results_scoring = json.load(f)
-
-            score_case_path = os.path.join(
-                "./benchmark/data/evaluation/alphabench_testset.json"
-            )
-            with open(score_case_path, "r") as f:
-                test_cases_scoring = json.load(f)
-
-            env_mae_summary, env_classification_report, per_case = evaluate_performance_scoring(
-                test_cases_scoring["items"], results_scoring
-            )
-            print("Scoring Evaluation Results:")
-            print(env_mae_summary)
-            print(env_classification_report)
-
-            # #
+    print("Complete all benchmark.")

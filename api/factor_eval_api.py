@@ -100,7 +100,7 @@ def check():
 
     Body JSON:
     {
-      "expr": "...",
+      "expression": "...",
       "instruments": "CSI300"  (optional; default from utils.DEFAULT_INSTRUMENTS)
       "start": "YYYY-MM-DD"    (optional; default DEFAULTS['check_start'])
       "end": "YYYY-MM-DD"      (optional; default DEFAULTS['check_end'])
@@ -108,9 +108,9 @@ def check():
     }
     """
     data = request.get_json(force=True, silent=True) or {}
-    expr = (data.get("expr") or "").strip()
+    expr = (data.get("expression") or "").strip()
     if not expr:
-        return jsonify({"success": False, "error_message": "Missing 'expr'", "error_type": "EMPTY_EXPR"}), 400
+        return jsonify({"success": False, "error_message": "Missing 'expression'", "error_type": "EMPTY_EXPR"}), 400
 
     instruments = data.get("instruments", DEFAULT_INSTRUMENTS)
     start = data.get("start", DEFAULTS["check_start"])
@@ -132,7 +132,7 @@ def eval_once():
       expr, start, end, market, label, use_cache=true|false, timeout
     POST JSON:
     {
-      "expr": "...",
+      "expression": "...",
       "start": "YYYY-MM-DD",
       "end": "YYYY-MM-DD",
       "market": "csi300",
@@ -143,7 +143,7 @@ def eval_once():
     """
     try:
         if request.method == "GET":
-            expr = unquote((request.args.get("expr") or "").strip().strip("'").strip('"'))
+            expr = unquote((request.args.get("expression") or "").strip().strip("'").strip('"'))
             start = (request.args.get("start") or DEFAULTS["start"]).strip("'").strip('"')
             end = (request.args.get("end") or DEFAULTS["end"]).strip("'").strip('"')
             market = (request.args.get("market") or DEFAULTS["market"]).strip("'").strip('"').lower()
@@ -152,7 +152,7 @@ def eval_once():
             timeout = int(request.args.get("timeout", DEFAULTS["timeout_eval"]))
         else:
             data = request.get_json(force=True, silent=True) or {}
-            expr = (data.get("expr") or "").strip()
+            expr = (data.get("expression") or "").strip()
             start = data.get("start", DEFAULTS["start"])
             end = data.get("end", DEFAULTS["end"])
             market = data.get("market", DEFAULTS["market"]).lower()
@@ -161,7 +161,7 @@ def eval_once():
             timeout = int(data.get("timeout", DEFAULTS["timeout_eval"]))
 
         if not expr:
-            return jsonify({"success": False, "error": "Missing 'expr'"}), 400
+            return jsonify({"success": False, "error": "Missing 'expression'"}), 400
 
         key = cache_key(expr, market, start, end, label)
         if use_cache:
@@ -190,7 +190,7 @@ def batch_eval():
 
     Body JSON:
     {
-      "factors": [{"name": "F1", "expr": "..."}, ...],
+      "factors": [{"name": "F1", "expression": "..."}, ...],
       "start": "YYYY-MM-DD",
       "end": "YYYY-MM-DD",
       "market": "csi300",
@@ -200,7 +200,7 @@ def batch_eval():
     """
     data = request.get_json(force=True, silent=True) or {}
     factors = data.get("factors") or []
-    if not isinstance(factors, list) or not all(isinstance(f, dict) and "name" in f and "expr" in f for f in factors):
+    if not isinstance(factors, list) or not all(isinstance(f, dict) and "name" in f and "expression" in f for f in factors):
         return jsonify({"success": False, "error": "Invalid 'factors' format"}), 400
 
     start = data.get("start", DEFAULTS["start"])

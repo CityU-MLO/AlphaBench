@@ -1,6 +1,7 @@
 import time
 import json
 import re
+from uuid import uuid4
 
 from jsonschema import validate, ValidationError
 from pathlib import Path
@@ -15,6 +16,14 @@ from typing import Dict, Any, List, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing as mp
 
+from agent.prompts_qlib_instruction import QLIB_GENERATE_INSTRUCTION
+from api.factor_eval_client import check_factor_via_api
+from agent.qlib_contrib.qlib_expr_parsing import FactorParser, print_tree
+
+DEFAULT_API_URL = "http://localhost:9888"
+DEFAULT_TIMEOUT = 30  # seconds
+MAX_RETRIES = 3
+RETRY_DELAY = 1  # seconds
 
 TAG_CATEGORY_PATH = "./factors/registry/factor_categories.json"
 factor_categories_dict = json.loads(Path(TAG_CATEGORY_PATH).read_text())
@@ -42,60 +51,27 @@ def prepend_random_header(prompt):
 SYSTEM_GENERATOR_PROMPT = f"""
 You are an expert quantitative researcher who designs alpha factors for stock ranking. Please generate a new factor in JSON format with the following requirements:
 
-1. The factor must be defined using a mathematical expression in a string template, provided under "expression.template".
-2. Allowed variables (must be prefixed with '$') include: $close, $open, $high, $low, $volume.
-3. Use only CamelCase function names and operators (Qlib style). Supported functions include: Mean, Std, Max, Min, Ref, Abs, Rank, Sum, Delay.
+1. The factor must be defined using a mathematical expression in a string template, provided under "expression".
+2. Allowed Variables
+- Use ONLY variables prefixed with `$`: $close, $open, $high, $low, $volume  
+- Numeric constants are allowed (e.g., 1.0, 1e-12, 20).
+
+3. Use only CamelCase function names and operators (Qlib style). Supported functions include: 
 And please pay attention that all ( and ) are used correctly and closed properly. More details about operators:
 
-Arithmetic & Logical Operators:
-NOTICE x and y are two variable
-    Add(x, y), Sub(x, y), Mul(x, y), Div(x, y)
-    Power(x, y), Log(x), Abs(x), Sign(x), Delta(x, n)
-    And(x, y), Or(x, y), Not(x)
+4. You factor should be executed in 30 seconds, please control the complexity, never generate too deep and complex factor, the max depth should be 4.
 
-Special Meth Operator:
-Exp(x), Sqrt(x), Tan(x)
+{QLIB_GENERATE_INSTRUCTION}
 
-Get max or min item between two variable (x, y): Greater(x, y), Less(x, y)
-Compare two variable (x, y), return bool: Gt(x, y): x > y, Ge(x, y): x ≥ y, Lt(x, y): x < y, Le(x, y): x ≤ y, Eq(x, y): x == y, Ne(x, y): x ≠ y
+4. Self check list:
+- Variables ∈ {{$close,$open,$high,$low,$volume}} only  
+- Functions all ∈ allowed list, with correct arity  
+- All n parameters are positive integers  
+- Parentheses close properly  
+- Any Div uses denominator + 1e-12 when needed, no negative Sqrt
 
-Rolling Statistical Functions: 
-NOTICE where n is the time period length in rolling, is parameter
-    Mean(x, n), Std(x, n), Var(x, n)
-    Max(x, n), Min(x, n) (Notice this is rolling get max/min value in last n steps, don't use it to compare two variable)
-    Skew(x, n), Kurt(x, n)
-    Sum(x, n), Med(x, n), Mad(x, n), Count(x, n)
-    EMA(x, n), WMA(x, n)
-    Corr(x, y, n), Cov(x, y, n)
-    Clip(x, a, b): Clip x to [a, b] (if a or b is None, it means no limit for that side)
-
-Regression & Decomposition:
-For above, notice never use N<=0, it is forbidden.
-    Slope(x, n), Rsquare(x, n), Resi(x, n)
-    Ranking & Quantile:
-    Rank(x, n), Quantile(x, n)
-    Index & Conditional Logic:
-    Ref(x, n): value of x n steps ago
-    IdxMax(x, n), IdxMin(x, n): index of max/min in last n steps
-    If(cond, x, y): if condition is true, return x; else return y
-    Mask(cond, x): x where cond is true, otherwise NaN
-
-For arithmetic operations, do NOT use symbols. Instead, use:
-    Add for +, Sub for -, Mul for *, Div for /
-
-5. Any parameter in the expression must be written as {{param_name}}. You must define all such parameters in "expression.parameters".
-6. In "expression.parameters", specify each parameter's:
-   - type: "int" or "float"
-   - range: [min_value, max_value]
-   - default: default_value
-   - never: Don't use any NaN in parameter field
-   
-   
-7. Do NOT include "param_config". All necessary defaults must be in "expression.parameters".
-8. Make sure all parameters used in the expression are defined, and vice versa.
 
 Output must be a single valid JSON object. Example:
-
 """
 
 
@@ -110,7 +86,7 @@ def get_system_prompt(enable_cot=False):
         str: The system prompt.
     """
     cot_field = (
-        """"CoT": "This is your chain of thought thinking process." """
+        """"CoT": "This is your chain of thought thinking process. Limited length, don't write too much" """
         if enable_cot
         else ""
     )
@@ -118,13 +94,7 @@ def get_system_prompt(enable_cot=False):
     {{
         "name": "meanreversion_short_term",
         {cot_field}
-        "expression": {{
-            "template": "Div(Sum($close, {{windows_1}}), Sum($volume, {{windows_2}}))",
-            "parameters": {{
-                "window_1": {{"type": "int", "range": [3, 60], "default": 10}},
-                "window_2": {{"type": "int", "range": [3, 60], "default": 15}}
-            }}
-        }}
+        "expression": "Div(Sum($close, 5), Sum($volume, 10))"
     }}"""
 
     system_prompt = SYSTEM_GENERATOR_PROMPT + output_format
@@ -135,133 +105,6 @@ def get_system_prompt(enable_cot=False):
         )
     else:
         return system_prompt
-
-
-# Template schema to validate against
-factor_schema = {
-    "type": "object",
-    "required": ["name", "expression"],
-    "properties": {
-        "name": {"type": "string"},
-        "expression": {
-            "type": "object",
-            "required": ["template", "parameters"],
-            "properties": {
-                "template": {"type": "string"},
-                "parameters": {
-                    "type": "object",
-                    "patternProperties": {
-                        "^[a-zA-Z_][a-zA-Z0-9_]*$": {
-                            "type": "object",
-                            "required": ["type", "range", "default"],
-                            "properties": {
-                                "type": {"type": "string", "enum": ["int", "float"]},
-                                "range": {
-                                    "type": "array",
-                                    "items": {"type": "number"},
-                                    "minItems": 2,
-                                    "maxItems": 2,
-                                },
-                                "default": {"type": "number"},
-                            },
-                        }
-                    },
-                },
-            },
-        },
-    },
-}
-
-
-def validate_all(parsed_output):
-    # JSON schema check
-    try:
-        validate(instance=parsed_output, schema=factor_schema)
-    except ValidationError as e:
-        return False, f"Schema validation failed: {e.message}"
-
-    # Expression template check
-    from json import JSONDecodeError
-
-    try:
-        template = parsed_output["expression"]["template"]
-    except (KeyError, TypeError):
-        return False, "Missing or malformed 'expression.template'"
-
-    result = is_valid_template_expression(template)
-    if not result["valid"]:
-        return False, f"Expression template error: {result['error']}"
-
-    # Parameter consistency check
-    template_params = set(re.findall(r"{([a-zA-Z_][a-zA-Z0-9_]*)}", template))
-    defined_params = set(parsed_output["expression"]["parameters"].keys())
-    if template_params != defined_params:
-        missing = template_params - defined_params
-        extra = defined_params - template_params
-        error_parts = []
-        if missing:
-            error_parts.append(f"Missing parameter definitions: {sorted(missing)}")
-        if extra:
-            error_parts.append(f"Unused parameters: {sorted(extra)}")
-        return False, "; ".join(error_parts)
-
-    return True, None
-
-
-def apply_parameters_to_template(
-    template: str, param_specs: dict, parameters: dict = None
-) -> str:
-    """
-    Validate and apply parameters to the factor template.
-
-    Args:
-        template (str): The factor expression template with {param} placeholders.
-        param_specs (dict): Dict of param_name → {type, range, default}.
-        parameters (dict, optional): Optional overrides.
-
-    Returns:
-        str: The filled-in template string.
-    """
-    final_params = {}
-
-    if parameters is None:
-        parameters = {}
-
-    for name, spec in param_specs.items():
-        if name in parameters:
-            value = parameters[name]
-            expected_type = spec["type"]
-            if expected_type == "int" and not isinstance(value, int):
-                raise TypeError(
-                    f"Parameter '{name}' must be int, got {type(value).__name__}"
-                )
-            if expected_type == "float" and not isinstance(value, (int, float)):
-                raise TypeError(
-                    f"Parameter '{name}' must be float, got {type(value).__name__}"
-                )
-            if "range" in spec:
-                low, high = spec["range"]
-                if not (low <= value <= high):
-                    raise ValueError(
-                        f"Parameter '{name}' must be in range [{low}, {high}], got {value}"
-                    )
-            final_params[name] = value
-        else:
-            final_params[name] = spec["default"]
-
-    # Check for extra parameters not in spec
-    for name in parameters:
-        if name not in param_specs:
-            raise ValueError(
-                f"Unexpected parameter '{name}' not defined in the factor spec."
-            )
-
-    try:
-        filled = template.format(**final_params)
-    except KeyError as e:
-        raise ValueError(f"Missing parameter for formatting: {e}")
-
-    return filled
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -296,7 +139,7 @@ def call_gen_qlib_factors(
         instruction = prepend_random_header(instruction)
 
     last_response, last_error = None, None
-
+    error_records = []
     for attempt in range(1, max_try + 1):
         time.sleep(0.1)  # Avoid rate limiting
         response = call_llm(
@@ -307,14 +150,24 @@ def call_gen_qlib_factors(
             temperature=temperature,
             local=local,
             local_port=local_port,
+            # service_provider='default'
         )
 
         if verbose and debug_mode:
             print(f"[{attempt}/{max_try}] Raw LLM output:\n{response}\n")
-
+        
         # ── JSON parsing ────────────────────────────────────────────────────
         try:
-            parsed_output = json.loads(response)
+            # Clean up common LLM formatting like ```json ... ```
+            cleaned = response.strip()
+            if cleaned.startswith("```"):
+                # remove leading and trailing fences
+                cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+                cleaned = re.sub(r"\s*```$", "", cleaned)
+
+            cleaned = cleaned.strip()
+            parsed_output = json.loads(cleaned)
+
         except json.JSONDecodeError as e:
             last_error = f"JSON parse error: {e}"
             instruction = (
@@ -324,31 +177,103 @@ def call_gen_qlib_factors(
             )
             continue
 
-        # ── Schema / expression validation ─────────────────────────────────
-        is_valid, error_msg = validate_all(parsed_output)
-        if not is_valid:
-            last_error = f"Schema/expr validation failed: {error_msg}"
+        # ── Schema validation ───────────────────────────────────────────────
+        schema = {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "expression": {"type": "string"},
+            },
+            "required": ["name", "expression"],
+        }
 
+        try:
+            validate(instance=parsed_output, schema=schema)
+            expr = parsed_output["expression"]
+            stack = []
+            for ch in expr:
+                if ch == "(":
+                    stack.append(ch)
+                elif ch == ")":
+                    if not stack:
+                        raise ValidationError(
+                            "Unmatched closing parenthesis ) in expression"
+                        )
+                    stack.pop()
+            if stack:
+                raise ValidationError("Unmatched opening parenthesis ( in expression")
+
+            # Depth check
+            fs = FactorParser()
+            ast = fs.parse(expr) 
+            depth = fs.get_complexity(ast)['depth']
+            if depth > 5:
+                last_error = f"Too complex factor with depth {depth}"
+                instruction = (
+                    f"Previous output was too complex.\n"
+                    f"Error: {last_error}\nOutput was: {json.dumps(parsed_output, indent=2)}\n\n"
+                    f"Please simplify and regenerate."
+                )
+                error_records.append('COMPLEX')
+                continue
+                
+        except ValidationError as e:
+            last_error = f"Schema validation error: {e.message}"
+            instruction = (
+                f"Previous output did not conform to the required schema.\n"
+                f"Error: {e.message}\nOutput was: {json.dumps(parsed_output, indent=2)}\n\n"
+                f"Please fix and regenerate."
+            )
+            error_records.append('WRONG_SCHEMA')
+            continue
+        
+        except Exception as e:
+            last_error = f"Unexpected error: {e}"
+            instruction = (
+                f"Previous output caused an unexpected error.\n"
+                f"Error: {e}\nOutput was: {json.dumps(parsed_output, indent=2)}\n\n"
+                f"Please fix and regenerate."
+            )
+            error_records.append('UNKNOWN_ERROR')
+            continue
+
+        # ── Qlib runtime check ────────────────────────────────────────
+        expr_default = parsed_output["expression"]
+
+        try:
+            result = check_factor_via_api(expr_default)
+        except Exception as e:
+            if verbose:
+                print(f"[WARN] check_factor_via_api failed: {e}")
+            continue
+        
+        if verbose and debug_mode:
+            print(f"[{attempt}/{max_try}] Qlib validation result: {result}")
+        if result.get("success"):
+            parsed_output["name"] = parsed_output["name"] + "_" + str(uuid4())[:8]
+            # if verbose:
+            #     print(f"[{attempt}/{max_try}] Factor generated successfully: {parsed_output['name']}")
+            return {
+                "success": True,
+                "content": parsed_output,
+                "trynum": attempt,
+                "error_records": error_records,
+            }
         else:
-            # ── Qlib runtime check ────────────────────────────────────────
-            expr_default = apply_parameters_to_template(
-                parsed_output["expression"]["template"],
-                parsed_output["expression"]["parameters"],
-            )
+            try:
+                qlib_msg = result["error_message"]
+                error_records.append(result["error_type"])
+            except Exception as e:
+                qlib_msg = f"Unknown error during Qlib validation"
+                error_records.append("UNKNOWN_ERROR")
 
-            qlib_status, qlib_msg = test_qlib_operator(
-                expr_default, verbose=verbose, timeout=90
-            )
-
-            if qlib_status:
-                return {"success": True, "content": parsed_output, "trynum": attempt}
-            last_error = f"Qlib validation failed: {qlib_msg}"
+        last_error = f"Qlib validation failed: {qlib_msg}"
 
         # ── Prepare next prompt (self-healing retry) ───────────────────────
         instruction = (
             f"Base instruction:\n{base_instruction}\n\n"
             f"The last generated factor was invalid: {last_error}\n\n"
-            f"Last attempt:\n{json.dumps(parsed_output, indent=2)}\n\n"
+            f"Last attempt:\n{parsed_output}\n\n"
             f"Please correct the issues and regenerate a valid factor."
         )
         last_response = response
@@ -360,7 +285,12 @@ def call_gen_qlib_factors(
             f"Last error: {last_error}\nLast response:\n{last_response}"
         )
 
-    return {"success": False, "content": last_error or last_response, "trynum": max_try}
+    return {
+        "success": False,
+        "content": last_error or last_response,
+        "trynum": max_try,
+        "error_records": error_records,
+    }
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -407,3 +337,17 @@ def batch_call_gen_qlib_factors(
                 iterator.set_description(f"Done {idx+1}/{len(futures)}")
 
     return results
+
+
+if __name__ == "__main__":
+    instructions = [
+    "Design a factor that ranks stocks by z-scored 10-day cumulative return, then multiplies the rank by the inverse of rolling volume volatility (default return window = 10, volume vol window = 20).",
+    "Generate a signal that outputs 1 if close is above its 30-day rolling maximum and today’s volume exceeds its 90th percentile, otherwise −1; the result is then standardized cross-sectionally each day (default price window = 30, volume window = 30).",
+    "Create a factor equal to the beta of 15-day price returns regressed on 15-day volume changes, divided by the rolling standard deviation of those betas (default window = 15).",
+    "Compute the percentage distance of close from its 60-day rolling median, winsorize at ±3σ, multiply by volume percentile rank, and finally rank the result cross-sectionally (default median window = 60).",
+    "Construct an indicator that counts consecutive up closes longer than 3 days while volume is below its 20-day SMA; output the count divided by rolling ATR (default ATR window = 14).",
+    "Return the skewness of 21-day close returns minus the skewness of 21-day log-volume changes, then divide by their pooled standard deviation (default window = 21).",
+    ]
+    for instruction in instructions:
+        output = call_gen_qlib_factors(instruction, model='gemini-2.5-pro', verbose=True, max_try=5, debug_mode=True)
+        print(output)

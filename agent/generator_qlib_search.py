@@ -7,6 +7,7 @@ from pathlib import Path
 import random
 
 from tqdm import tqdm
+import uuid
 
 import random
 from agent.llm_client import call_llm
@@ -16,6 +17,7 @@ from typing import Dict, Any, List, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing as mp
 from factors.lib.alpha158 import load_factors_alpha158
+from agent.prompts_qlib_instruction import QLIB_GENERATE_INSTRUCTION
 
 from api.factor_eval_client import (
     FactorEvalClient,
@@ -35,6 +37,7 @@ RETRY_DELAY = 1  # seconds
 
 SYSTEM_SEARCHER_PROMPT = f"""
 You are an expert quantitative researcher who designs alpha factors for stock ranking. 
+Your job is a **search task**: plan → generate → evaluate heuristically → refine/prune → diversify, then output candidates.
 Please generate N new factors in JSON list format. 
 
 ### Requirements:
@@ -47,21 +50,10 @@ Please generate N new factors in JSON list format.
    - Only use variables prefixed with `$`: $close, $open, $high, $low, $volume.
 
 3. **Operators and Functions**
-   - Use only CamelCase function names, Qlib style.
-   - Supported operators:
-     Add(x, y), Sub(x, y), Mul(x, y), Div(x, y)
-     Power(x, y), Log(x), Abs(x), Sign(x), Delta(x, n)
-     And(x, y), Or(x, y), Not(x)
-     Exp(x), Sqrt(x), Tan(x)
-     Greater(x, y), Less(x, y), Gt(x, y), Ge(x, y), Lt(x, y), Le(x, y), Eq(x, y), Ne(x, y)
-   - Supported rolling functions (with integer window n > 0):
-     Mean(x, n), Std(x, n), Var(x, n), Max(x, n), Min(x, n), Skew(x, n), Kurt(x, n),
-     Sum(x, n), Med(x, n), Mad(x, n), Count(x, n),
-     EMA(x, n), WMA(x, n), Corr(x, y, n), Cov(x, y, n),
-     Slope(x, n), Rsquare(x, n), Resi(x, n)
-   - Ranking & Conditional:
-     Rank(x, n), Quantile(x, n), Ref(x, n), IdxMax(x, n), IdxMin(x, n),
-     If(cond, x, y), Mask(cond, x), Clip(x, a, b)
+3. Use only CamelCase function names and operators (Qlib style). Supported functions include: 
+And please pay attention that all ( and ) are used correctly and closed properly. More details about operators:
+
+{QLIB_GENERATE_INSTRUCTION}
 
 4. **Expression Rules**
    - Always use function calls (e.g., Div(x, y)) instead of arithmetic symbols (+, -, *, /).
@@ -77,7 +69,36 @@ Please generate N new factors in JSON list format.
 6. **Diversity**
    - The N generated factors should cover different ideas: momentum, mean reversion, volatility, volume dynamics, cross-variable relations, etc.
 
+### Universal Search Process (algorithm-agnostic)
+A. **Plan**
+   - Decompose candidates into roles: **Core signal** (trend/mean-revert/range), **Normalizer** (vol/range/level), **Conditioner/Smoother** (volume, Rank, Mean).
+   - Sketch 3–5 distinct blueprints before writing expressions.
 
+B. **Generate**
+   - For each blueprint, emit 1–2 concise expressions (2–4 ops main chain).
+   - Align windows: prefer (short, long) pairs like (5–10, 30–60) to stabilize behavior.
+   - Encourage price ⨁ volume combinations in part of the set.
+
+C. **Heuristic Evaluate (no backtest here)**
+   - Prefer normalized forms: Div(core, Add(Std(..., L) or Mean(..., L), 1e-12)).
+   - Smooth noisy cores: Mean(..., short L) or Rank(...).
+   - Avoid brittle constructs (e.g., deep nesting, stacked Power, Rank inside Rank inside Rank).
+
+D. **Refine / Prune**
+   - If two candidates share the same skeleton, keep the cleaner one.
+   - Replace fragile pieces (e.g., raw Delta) with stabilized variants (e.g., Div(Delta, Add(Std, 1e-12))).
+
+E. **Diversify**
+   - Ensure at least one price+volume candidate and one range/volatility‑scaled candidate.
+   - Vary operator families (Sub/Delta vs. Sub($high,$low); Std vs. Mean; Rank vs. Mean smoothers).
+
+F. **Validate (pre‑output self‑check)**
+   - Count equals **N**.
+   - Only allowed variables/operators; windows in [2, 120].
+   - All denominators have epsilon.
+   - Depth ≤ 6; expressions are parsable Qlib style.
+   - Names unique; expressions materially different from each other.
+   
 """
 
 
@@ -92,22 +113,26 @@ def get_system_searcher_prompt(enable_reason) -> str:
         ### Output:
         - Return only the JSON list as specified, with exactly N factors
         Example:
-        {{
-            "Momentum20": {{"reason":..., "expr": "Div(Sub($close, Ref($close, 20)), Ref($close, 20))"},
-            "VolumeVolatility10": {{"reason":..., "expr": "Std($volume, 10)"}
-        }}
-        
-        """
+        {{ "generated":
+        [
+            {{"name": "Momentum20", "expression": "Div(Sub($close, Ref($close, 20)), Ref($close, 20))", "reason": "Measures 20-day price momentum as percentage change."}},
+            {{"name": "VolumeVolatility10", "expression": "Std($volume, 10)", "reason": "Captures short-term fluctuations in trading volume."}}
+        ]
+        }}"""
+
     else:
         extra_instruction = """
         ### Output:
-        - Return only the JSON list as specified, with exactly N factors
+        - Return only a JSON list with exactly N factors.
+        - Each factor must be an object with two keys: "name" and "expression".
+
         Example:
-        {{
-            "Momentum20": "Div(Sub($close, Ref($close, 20)), Ref($close, 20))",
-            "VolumeVolatility10": "Std($volume, 10)"
-        }}
-        """
+        {{ "generated": 
+        [
+            {{"name": "Momentum20", "expression": "Div(Sub($close, Ref($close, 20)), Ref($close, 20))"}},
+            {{"name": "VolumeVolatility10", "expression": "Std($volume, 10)"}}
+        ]
+        }}"""
 
     return SYSTEM_SEARCHER_PROMPT + extra_instruction
 
@@ -117,7 +142,7 @@ def _extract_expression(payload: Any) -> Optional[str]:
     Extract a Qlib expression string from many possible shapes.
     Supported:
       - str
-      - {"qlib_expression" | "expression" | "expr" | "value": str}
+      - {"qlib_expression" | "expression" | "expression" | "value": str}
       - {"expression": {"template": str}}
     """
     if payload is None:
@@ -125,7 +150,7 @@ def _extract_expression(payload: Any) -> Optional[str]:
     if isinstance(payload, str):
         return payload.strip()
     if isinstance(payload, dict):
-        for k in ("qlib_expression", "expression", "expr", "value"):
+        for k in ("qlib_expression", "expression", "expression", "value"):
             v = payload.get(k)
             if isinstance(v, str):
                 return v.strip()
@@ -137,113 +162,45 @@ def _extract_expression(payload: Any) -> Optional[str]:
     return None
 
 
-def _extract_reason(payload: Any) -> Optional[str]:
+
+def _normalize_llm_output(parsed_output: dict) -> list[dict]:
     """
-    Extract an optional reasoning text if provided by the LLM.
-    Looks for common keys and simple nested shapes.
+    Enforce the unified schema:
+        {
+          "generated": [
+            {"name": str, "expression": str, "reason": Optional[str]},
+            ...
+          ]
+        }
+    Returns a cleaned list of items or [] if schema invalid.
     """
-    if payload is None:
-        return None
-    if isinstance(payload, dict):
-        for k in (
-            "reason",
-            "rationale",
-            "explanation",
-            "why",
-            "analysis",
-            "justification",
-        ):
-            v = payload.get(k)
-            if isinstance(v, str):
-                return v.strip()
-            if isinstance(v, dict):
-                # e.g., {"reason": {"text": "..."}}
-                text = v.get("text")
-                if isinstance(text, str):
-                    return text.strip()
-    return None
+    if not isinstance(parsed_output, dict):
+        return []
 
+    items = parsed_output.get("generated")
+    if not isinstance(items, list):
+        return []
 
-def _normalize_llm_output(parsed_output: Any) -> List[Tuple[str, str, Optional[str]]]:
-    """
-    Normalize LLM output into a list of (name, expr, reason) tuples.
+    cleaned = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        name = it.get("name")
+        expr = it.get("expression")
+        reason = it.get("reason", None)
 
-    Accepts:
-      - {"Momentum20": "Div(...)", "StdVol": "Std(...)"}
-      - [{"Momentum20": "Div(...)"}, {"StdVol": "Std(...)"}, ...]
-      - [{"name": "Momentum20", "expression": "Div(...)", "reason": "..."} , ...]
-      - "Div(...)"  -> becomes ("Factor_1", "Div(...)", None)
-    """
-    triplets: List[Tuple[str, str, Optional[str]]] = []
+        if not isinstance(name, str) or not name.strip():
+            continue
+        if not isinstance(expr, str) or not expr.strip():
+            continue
+        if reason is not None and not isinstance(reason, str):
+            # If reason is non-string, drop it rather than failing the item
+            reason = None
 
-    def push(name_guess: Optional[str], payload: Any, idx: int):
-        # Single-key dict like {"Momentum20": "Div(...)"}
-        if isinstance(payload, dict) and "name" not in payload:
-            if len(payload) == 1:
-                (k, v), = payload.items()
-                name = str(k)
-                expr = _extract_expression(v)
-                if expr:
-                    reason = _extract_reason(v)  # usually none in this shape
-                    triplets.append((name, expr, reason))
-                return
-            # general dict (maybe has expression/reason keys)
-            expr = _extract_expression(payload)
-            if expr:
-                name = (name_guess or f"Factor_{idx}").strip()
-                reason = _extract_reason(payload)
-                triplets.append((name, expr, reason))
-            return
-
-        # Explicit "name"
-        if isinstance(payload, dict) and "name" in payload:
-            name = str(payload.get("name") or name_guess or f"Factor_{idx}").strip()
-            expr = _extract_expression(payload)
-            if expr:
-                reason = _extract_reason(payload)
-                triplets.append((name, expr, reason))
-            return
-
-        # Plain string expression
-        if isinstance(payload, str):
-            triplets.append(
-                ((name_guess or f"Factor_{idx}").strip(), payload.strip(), None)
-            )
-            return
-
-        # Fallback
-        expr = _extract_expression(payload)
-        if expr:
-            triplets.append(
-                (
-                    (name_guess or f"Factor_{idx}").strip(),
-                    expr,
-                    _extract_reason(payload),
-                )
-            )
-
-    if isinstance(parsed_output, dict):
-        for i, (k, v) in enumerate(parsed_output.items(), 1):
-            name = str(k).strip()
-            expr = _extract_expression(v)
-            if expr:
-                reason = _extract_reason(v)
-                triplets.append((name, expr, reason))
-    elif isinstance(parsed_output, (list, tuple)):
-        for i, item in enumerate(parsed_output, 1):
-            if isinstance(item, dict) and "name" not in item and len(item) == 1:
-                (k, v), = item.items()
-                name = str(k).strip()
-                expr = _extract_expression(v)
-                if expr:
-                    reason = _extract_reason(v)
-                    triplets.append((name, expr, reason))
-            else:
-                push(name_guess=None, payload=item, idx=i)
-    elif isinstance(parsed_output, str):
-        triplets.append(("Factor_1", parsed_output.strip(), None))
-
-    return triplets
+        cleaned.append(
+            {"name": name.strip() + '_' + str(uuid.uuid4())[:6], "expression": expr.strip(), **({"reason": reason.strip()} if reason else {})}
+        )
+    return cleaned
 
 
 def _unique_name(base: str, used: Set[str]) -> str:
@@ -281,7 +238,7 @@ def call_qlib_search(
     Returns:
       {
         "success": bool,                # True iff we filled N
-        "results": {name: expr, ...},   # backward-compatible mapping
+        "results": {name: expression, ...},   # backward-compatible mapping
         "factors": [                    # detailed list with reasoning
           {"name": str, "expression": str, "reason": str}, ...
         ],
@@ -308,6 +265,7 @@ def call_qlib_search(
             + "\n"
         )
 
+    min_N = int(N * 0.5) if N > 1 else 1
     attempt = 0
     for attempt in range(1, max_try + 1):
         time.sleep(0.1)  # small backoff to mitigate rate limits
@@ -320,6 +278,7 @@ def call_qlib_search(
             temperature=temperature,
             local=local,
             local_port=local_port,
+            service_provider='default'
         )
 
         if verbose and debug_mode:
@@ -334,8 +293,8 @@ def call_qlib_search(
                 f"Your last output was not valid JSON.\n"
                 f"Error: {e}\nOutput was: {response}\n\n"
                 f"Please return a JSON object ONLY.\n"
-                f'Preferred format: {{"FactorName": "<QlibExpression>", ...}} '
-                f"or a list of objects with fields name/expression[/reason]."
+                'Recall format: {"generated": [{"name": xxx, "expression": xxx, ..}, ...]}'
+                f"one key is 'generated', and value is a list of objects with fields name/expression[/reason]."
                 f"{_anti_repeat_block()}"
             )
             continue
@@ -346,18 +305,26 @@ def call_qlib_search(
             last_error = "No factors could be parsed from your JSON."
             instruction = (
                 f"Base instruction:\n{base_instruction}\n\n"
-                f"The last output contained no usable factors.\n"
-                f"Return a JSON object mapping factor names to Qlib expressions, "
-                f"optionally with 'reason'. Example:\n"
-                f'{{"Momentum20": "Div(Sub($close, Ref($close, 20)), Ref($close, 20))"}}\n'
-                f"or\n"
-                f'[{{"name": "Momentum20", "expression": "Div(...)", "reason": "..."}}]\n'
+                "The last output contained no usable factors.\n"
+                "Return a JSON object with a single key 'generated' that maps to a list of factor objects.\n"
+                "Each object MUST have 'name' (string) and 'expression' (string); 'reason' is optional.\n"
+                "Do not include any extra keys or text outside of valid JSON.\n\n"
+                "Schema (informal):\n"
+                '{ "generated": [ { "name": str, "expression": str, "reason"?: str }, ... ] }\n\n'
+                "Example:\n"
+                '{ "generated": [\n'
+                '  {"name": "Momentum20", "expression": "Div(Sub($close, Ref($close, 20)), Ref($close, 20))", '
+                '"reason": "Measures 20-day price momentum as percentage change."},\n'
+                '  {"name": "VolumeVolatility10", "expression": "Std($volume, 10)", '
+                '"reason": "Captures short-term fluctuations in trading volume."}\n'
+                "] }\n"
                 f"{_anti_repeat_block()}"
             )
             continue
 
         # Validate & collect
-        for raw_name, expr, reason in items:
+        for record in items:
+            raw_name, expr, reason = record['name'], record['expression'], record.get('reason', '')
             expr = (expr or "").strip()
             if not expr:
                 continue
@@ -385,10 +352,10 @@ def call_qlib_search(
                 used_exprs.add(expr)
                 expr_to_name[expr] = name
 
-                if len(collected) >= N:
+                if len(collected) >= min_N:
                     break  # early stop
 
-        if len(collected) >= N:
+        if len(collected) >= min_N:
             break  # done
 
         # Prepare next self-healing instruction
@@ -418,7 +385,7 @@ def call_qlib_search(
         for name, info in collected.items()
     ]
 
-    success = len(collected) >= N
+    success = len(collected) >= min_N
     return {
         "success": success,
         "results": results_mapping,  # backward-compatible: {name: expr}
@@ -430,7 +397,7 @@ def call_qlib_search(
 if __name__ == "__main__":
 
     # standard_factors, compile_factors = load_factors_alpha158(exclude_var="vwap")
-    # parsed_factor_pool = [{"name": factor.get("name"), "expr": factor.get('qlib_expression_default')} for factor in compile_factors.values()]
+    # parsed_factor_pool = [{"name": factor.get("name"), "expression": factor.get('qlib_expression_default')} for factor in compile_factors.values()]
 
     # sample_n = 10
     # sample_factors = random.sample(list(parsed_factor_pool), sample_n)
@@ -517,9 +484,9 @@ if __name__ == "__main__":
 
     # # Test batch evaluation
     # test_factors = [
-    #     {"name": "factor1", "expr": "Rank($close, 20)"},
-    #     {"name": "factor2", "expr": "Mean($volume, 10)"},
-    #     {"name": "factor3", "expr": "Corr($close, $volume, 30)"},
+    #     {"name": "factor1", "expression": "Rank($close, 20)"},
+    #     {"name": "factor2", "expression": "Mean($volume, 10)"},
+    #     {"name": "factor3", "expression": "Corr($close, $volume, 30)"},
     # ]
 
     # print(f"\nBatch evaluating {len(test_factors)} factors...")

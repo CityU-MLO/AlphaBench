@@ -1,5 +1,7 @@
+import argparse
 import os
-from factors.lib.alpha158 import load_factors_alpha158
+from pathlib import Path
+from factors.lib.alpha158 import load_factors_alpha158, load_factors_alpha158_names
 from agent.generator_qlib_search import call_qlib_search
 from api.factor_eval_client import (
     batch_evaluate_factors_via_api,
@@ -8,10 +10,54 @@ from api.factor_eval_client import (
 
 from searcher.CoT.CoT_searcher import CoTSearcher
 from searcher.ToT.ToT_searcher import ToTSearcher
+from searcher.EA.EA_searcher import EA_Searcher
 
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from typing import Callable, Dict, Iterable, Any, Optional
 from tqdm.auto import tqdm
+
+import yaml
+
+
+def load_config():
+    parser = argparse.ArgumentParser(description="AlphaBench Search Config")
+
+    # main config file
+    parser.add_argument(
+        "--config_path", type=str, required=True, help="Path to YAML configuration file"
+    )
+
+    # override options
+    parser.add_argument(
+        "--model_name", type=str, default=None, help="Override model name in config"
+    )
+    parser.add_argument(
+        "--model_local",
+        type=lambda x: str(x).lower() == "true",
+        default=None,
+        help="Override model local flag (True/False)",
+    )
+    parser.add_argument(
+        "--local_port", type=int, default=None, help="Override local port in config"
+    )
+    parser.add_argument("--save_dir", type=str, default="./runs/T3_searching")
+
+    args = parser.parse_args()
+
+    # load yaml config
+    with open(args.config_path, "r") as f:
+        config = yaml.safe_load(f)
+
+    # apply overrides
+    if args.model_name is not None:
+        config["model"]["name"] = args.model_name
+    if args.model_local is not None:
+        config["model"]["local"] = args.model_local
+    if args.local_port is not None:
+        config["model"]["local_port"] = args.local_port
+
+    config["save_dir"] = args.save_dir
+    return config
 
 
 def to_cot_kwargs(rec):
@@ -37,7 +83,7 @@ def run_batch(
     record_to_kwargs: Callable[[dict], Dict[str, Any]],
     key_fn: Callable[[dict], str] = lambda r: r.get("name", "<unnamed>"),
     common_kwargs: Optional[Dict[str, Any]] = None,
-    num_workers: int = 4,
+    num_workers: int = 16,
     show_progress: bool = True,
     executor: str = "thread",  # "thread" or "process"
 ):
@@ -104,18 +150,26 @@ def run_batch(
 
 
 def benchmark_main(
-    model="deepseek-chat",
-    temperature=1.75,
-    enable_reason=True,
-    local=False,
-    local_port=8000,
-    save_dir="./runs/T3_searching",
+    config,
+    # model="deepseek-chat",
+    enable_reason=False,
+    # local=False,
+    # local_port=8000,
+    # save_dir="./runs/T3_searching",
 ):
+
+    model = config["model"]["name"]
+    local = config["model"].get("local", False)
+    local_port = config["model"].get("local_port", 8000)
+    temperature = config["model"].get("temperature", 1.5)
+
+    num_workers = 4
+    save_dir = config["save_dir"]
 
     """Main function to run the benchmark for searching factors."""
     os.makedirs(save_dir, exist_ok=True)
     standard_factors, compile_factors = load_factors_alpha158(
-        exclude_var="vwap", collection=["kbar", "rolling"]
+        exclude_var="vwap", collection=["kbar", "rolling", "price"]
     )
 
     # Here you would typically set up your benchmark environment,
@@ -126,9 +180,15 @@ def benchmark_main(
             len(standard_factors), len(compile_factors)
         )
     )
-
+    
+    factor_groups = load_factors_alpha158_names()
+    kbar_names = [fac['name'] for fac in factor_groups['kbar']]
+    price_names = [fac['name'] for fac in factor_groups['price']]
+    rolling_names = [fac['name'] for fac in factor_groups['rolling']]
+    
+    # import pdb;pdb.set_trace()
     parsed_factor_pool = [
-        {"name": factor.get("name"), "expr": factor.get("qlib_expression_default")}
+        {"name": factor.get("name"), "expression": factor.get("qlib_expression_default")}
         for factor in compile_factors.values()
     ]
 
@@ -152,65 +212,126 @@ def benchmark_main(
 
         json.dump(filtered_performance, f, indent=4)
 
-    # Start CoT searching
-    cot_save_dir = os.path.join(save_dir, "CoT")
-    os.makedirs(cot_save_dir, exist_ok=True)
+    if config.get("cot", {}).get("enable", True):
+        print("CoT searching enabled.")
+        # Start CoT searching
+        cot_save_dir = os.path.join(save_dir, "CoT")
+        os.makedirs(cot_save_dir, exist_ok=True)
 
-    cot_searcher = CoTSearcher(
-        evaluate_factor_fn=evaluate_factor_via_api,
-        search_fn=call_qlib_search,
-        model=model,
-        temperature=temperature,
-        enable_reason=enable_reason,
-        local=local,
-        local_port=local_port,
-    )
+        rounds = config.get("cot", {}).get("rounds", 10)
+        cot_searcher = CoTSearcher(
+            evaluate_factor_fn=evaluate_factor_via_api,
+            search_fn=call_qlib_search,
+            model=model,
+            temperature=temperature,
+            enable_reason=enable_reason,
+            local=local,
+            local_port=local_port,
+        )
 
-    common_cot = {"rounds": 10, "verbose": False, "save_dir": cot_save_dir}
+        common_cot = {"rounds": rounds, "verbose": True, "save_dir": cot_save_dir}
 
-    results, errors = run_batch(
-        records=filtered_performance,
-        worker=cot_searcher,
-        method="search_single_factor",
-        record_to_kwargs=to_cot_kwargs,
-        common_kwargs=common_cot,
-        num_workers=4,
-        show_progress=True,
-        executor="thread",  # API/IO-bound typical for LLM calls
-    )
+        results, errors = run_batch(
+            records=filtered_performance,
+            worker=cot_searcher,
+            method="search_single_factor",
+            record_to_kwargs=to_cot_kwargs,
+            common_kwargs=common_cot,
+            num_workers=num_workers,
+            show_progress=True,
+            executor="thread",  # API/IO-bound typical for LLM calls
+        )
 
-    # Start ToT searching
-    tot_save_dir = os.path.join(save_dir, "ToT")
-    os.makedirs(tot_save_dir, exist_ok=True)
+    if config.get("tot", {}).get("enable", True):
+        print("ToT searching enabled.")
+        tot_names = ['']
+        filtered_performance_tot = [rec for rec in filtered_performance if rec['name'] in kbar_names + price_names]
+        tot_save_dir = os.path.join(save_dir, "ToT")
+        os.makedirs(tot_save_dir, exist_ok=True)
 
-    common_tot = {"rounds": 10, "verbose": False, "save_dir": tot_save_dir, "N": 10}
+        N = config.get("tot", {}).get("size", 6)
+        rounds = config.get("tot", {}).get("rounds", 3)
+        common_tot = {
+            "rounds": rounds,
+            "verbose": False,
+            "save_dir": tot_save_dir,
+            "N": N,
+        }
 
-    tot_searcher = ToTSearcher(
-        evaluate_factor_fn=evaluate_factor_via_api,
-        batch_evaluate_factors_fn=batch_evaluate_factors_via_api,
-        search_fn=call_qlib_search,
-        model=model,
-        temperature=temperature,
-        enable_reason=enable_reason,
-        local=local,
-        local_port=local_port,
-    )
+        tot_searcher = ToTSearcher(
+            evaluate_factor_fn=evaluate_factor_via_api,
+            batch_evaluate_factors_fn=batch_evaluate_factors_via_api,
+            search_fn=call_qlib_search,
+            model=model,
+            temperature=temperature,
+            enable_reason=enable_reason,
+            local=local,
+            local_port=local_port,
+        )
+        # import pdb;pdb.set_trace()
+        results_tot, errors_tot = run_batch(
+            records=filtered_performance_tot,
+            worker=tot_searcher,
+            method="search_single_factor",  # whatever your method is called
+            record_to_kwargs=to_tot_kwargs,
+            common_kwargs=common_tot,
+            num_workers=num_workers,
+            show_progress=True,
+            executor="thread",  # API/IO-bound typical for LLM calls
+        )
 
-    results_tot, errors_tot = run_batch(
-        records=filtered_performance,
-        worker=tot_searcher,
-        method="search_single_factor",  # whatever your method is called
-        record_to_kwargs=to_tot_kwargs,
-        common_kwargs=common_tot,
-        num_workers=4,
-        show_progress=True,
-        executor="thread",  # API/IO-bound typical for LLM calls
-    )
+    # Start EA searching
+    if config.get("ea", {}).get("enable", True):
+        print("EA searching enabled.")
+        filtered_performance_ea = [rec for rec in filtered_performance if rec['name'] in rolling_names]
+        ea_save_dir = os.path.join(save_dir, "EA")
+        os.makedirs(ea_save_dir, exist_ok=True)
 
-    import pdb
+        mutation_rate = config.get("ea", {}).get("mutation_rate", 0.3)
+        crossover_rate = config.get("ea", {}).get("crossover_rate", 0.7)
+        generations = config.get("ea", {}).get("generations", 10)
+        generate_size = config.get("ea", {}).get("generate_size", 20)
+        population_size = config.get("ea", {}).get("population_size", 20)
 
-    pdb.set_trace()  # Debugging point to inspect the loaded factors
+        # parsed_factor_pool = [
+        #     {"name": f.get("name"), "expression": f.get("qlib_expression_default")}
+        #     for f in compile_factors.values()
+        # ]
+
+        # # Evaluate baseline metrics (IC, RankIC, etc.) via your API
+        # perf = batch_evaluate_factors_via_api(parsed_factor_pool)
+        # for i, p in enumerate(perf):
+        #     parsed_factor_pool[i]["metrics"] = p.get("metrics", {})
+
+        # Build and run EA searcher
+        searcher = EA_Searcher(
+            batch_evaluate_factors_fn=batch_evaluate_factors_via_api,
+            search_fn=call_qlib_search,
+            model=model,
+            temperature=1.55,
+            enable_reason=True,
+            local=local,
+            local_port=local_port,
+            save_dir=ea_save_dir,
+            seeds_top_k=12,
+        )
+
+        # import pdb;pdb.set_trace()
+        summary = searcher.search_population(
+            filtered_performance_ea,
+            mutation_rate=mutation_rate,
+            crossover_rate=crossover_rate,
+            N=generate_size,
+            rounds=generations,
+            pool_size=population_size,
+            verbose=True,
+            save_pickle=True,
+        )
+
+        print(f"EA search completed. Results saved to {ea_save_dir}")
 
 
 if __name__ == "__main__":
-    benchmark_main()
+    config = load_config()
+
+    benchmark_main(config)

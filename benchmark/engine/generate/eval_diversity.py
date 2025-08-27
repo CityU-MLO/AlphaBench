@@ -1,7 +1,7 @@
 import json
 from agent.generator_qlib import call_gen_qlib_factors
 from agent.compiler import apply_parameters_to_template
-from agent.LLMExecutor import FactorGenerationQlibExecutor
+
 from utils import *
 from benchmark.engine.utils import similarity_factor_output
 import numpy as np

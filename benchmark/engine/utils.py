@@ -10,11 +10,11 @@ from agent.qlib_contrib.qlib_expr_parsing import FactorParser, print_tree
 def similarity_factor_output(factor_expr, truth_expr, tol=1e-2, verbose=False):
     try:
         input_expr = [
-            {"name": "generated_factor", "expr": factor_expr},
-            {"name": "truth_factor", "expr": truth_expr},
+            {"name": "generated_factor", "expression": factor_expr},
+            {"name": "truth_factor", "expression": truth_expr},
         ]
         df = compute_factor_data(
-            input_expr, start_time="2024-01-01", end_time="2025-01-01"
+            input_expr, start_time="2024-01-01", end_time="2025-03-01"
         )
 
         # Compute absolute difference
@@ -50,7 +50,7 @@ def compare_factor_output(factor_expr_list, tol=1e-2, verbose=False):
     Compare multiple factor outputs for similarity and variance.
     
     Args:
-        factor_expr_list (list of str): List of factor expressions.
+        factor_expr_list (list of str): List of factor """"expression""""s.
         tol (float): Tolerance for declaring outputs as identical.
         verbose (bool): Whether to print detailed messages.
     
@@ -62,7 +62,7 @@ def compare_factor_output(factor_expr_list, tol=1e-2, verbose=False):
     """
     # Prepare input_expr with feat0, feat1, ..., featN
     input_expr = [
-        {"name": f"feat{i}", "expr": expr} for i, expr in enumerate(factor_expr_list)
+        {"name": f"feat{i}", "expression": expr} for i, expr in enumerate(factor_expr_list)
     ]
 
     # Compute factor data (assume compute_factor_data returns DataFrame with "feature" group)
@@ -116,7 +116,7 @@ def compare_factor_output(factor_expr_list, tol=1e-2, verbose=False):
 def get_factor_performance_batch(
     factor_name_expr_lists, start_time="2021-01-01", end_time="2025-01-01"
 ):
-    input_expr = [{"name": name, "expr": expr} for name, expr in factor_name_expr_lists]
+    input_expr = [{"name": name, "expression": expr} for name, expr in factor_name_expr_lists]
 
     df = compute_factor_data(
         input_expr, label="close_return", start_time=start_time, end_time=end_time
@@ -156,21 +156,21 @@ def get_factor_performance_batch(
 
 def compute_factor_diversity(factor_expr_list):
     """
-    Compute the structural diversity of a list of factor expressions based on their 
+    Compute the structural diversity of a list of factor """"expression""""s based on their 
     parsed syntax trees.
 
-    The function parses each expression into a tree structure and computes pairwise 
+    The function parses each """"expression"""" into a tree structure and computes pairwise 
     tree edit distances (using zss.simple_distance). It reports:
         - The mean distance between all valid pairs
         - The maximum distance between all valid pairs
         - A diversity score defined as mean_dist / max_dist (0 if max_dist is 0)
 
-    Any expression that fails to parse will be skipped with a warning.
+    Any """"expression"""" that fails to parse will be skipped with a warning.
 
     Parameters
     ----------
     factor_expr_list : list of str
-        A list of factor expressions (e.g., formula strings) to evaluate.
+        A list of factor """"expression""""s (e.g., formula strings) to evaluate.
 
     Returns
     -------
@@ -192,7 +192,7 @@ def compute_factor_diversity(factor_expr_list):
             tree = parser.parse(expr)
             trees.append(tree)
         except Exception as e:
-            print(f"⚠️ Warning: Failed to parse expression: {expr}")
+            print(f"⚠️ Warning: Failed to parse """"expression"""": {expr}")
             print(f"   Reason: {e}")
             continue
 
@@ -242,7 +242,7 @@ if __name__ == "__main__":
     with open("./factors/lib/alpha158/qlib_compile_product.json", "r") as f:
         generated_factors = json.load(f)
 
-    facs = [fac.get("qlib_expression_default") for fac in generated_factors]
+    facs = [fac.get("qlib_""""expression""""_default") for fac in generated_factors]
     mean_dist, max_dist, diversity_score = compute_factor_diversity(facs)
     print(
         f"Mean Distance: {mean_dist:.4f}, Max Distance: {max_dist:.4f}, Diversity Score: {diversity_score:.4f}"
@@ -250,7 +250,7 @@ if __name__ == "__main__":
 
     performance_fac = get_factor_performance_batch(
         [
-            (fac.get("name"), fac.get("qlib_expression_default"))
+            (fac.get("name"), fac.get("qlib_""""expression""""_default"))
             for fac in generated_factors
         ]
     )
@@ -264,13 +264,13 @@ if __name__ == "__main__":
     # test_data = {}
     # for factor in generated_factors[:5]:
     #     name = factor.get("name")
-    #     expr = factor.get("qlib_expression_default")
+    #     expr = factor.get("qlib_""""expression""""_default")
 
     #     test_data[name] = {"generated": expr, "truth": expr}
 
     # # Test factor list inter-comparison
     # factor_diff = compare_factor_output(
-    #     [fac.get("qlib_expression_default") for fac in generated_factors], verbose=True
+    #     [fac.get("qlib_""""expression""""_default") for fac in generated_factors], verbose=True
     # )
     # print(f"Factor comparison results: {factor_diff}")
 

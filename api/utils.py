@@ -12,6 +12,7 @@ Key features:
 """
 
 from __future__ import annotations
+import re
 import agent.qlib_contrib.qlib_extend_ops
 import os
 import json
@@ -212,14 +213,14 @@ def _daily_ic_rankic(feature_s: pd.Series, label_s: pd.Series) -> Tuple[pd.Serie
 
 def _ir(mean_val: float, std_val: float) -> float:
     if std_val is None or not np.isfinite(std_val) or std_val <= 0:
-        return float("nan")
+        return float(0)
     return float(mean_val / std_val)
 
 def summarize_ic_rankic(ic_daily: pd.Series, rankic_daily: pd.Series) -> Dict[str, float]:
-    ic_mean = float(ic_daily.mean()) if len(ic_daily) else float("nan")
-    ic_std = float(ic_daily.std(ddof=1)) if len(ic_daily) > 1 else float("nan")
-    rankic_mean = float(rankic_daily.mean()) if len(rankic_daily) else float("nan")
-    rankic_std = float(rankic_daily.std(ddof=1)) if len(rankic_daily) > 1 else float("nan")
+    ic_mean = float(ic_daily.mean()) if len(ic_daily) else float(0)
+    ic_std = float(ic_daily.std(ddof=1)) if len(ic_daily) > 1 else float(0)
+    rankic_mean = float(rankic_daily.mean()) if len(rankic_daily) else float(0)
+    rankic_std = float(rankic_daily.std(ddof=1)) if len(rankic_daily) > 1 else float(0)
     return {
         "ic": ic_mean,
         "icir": _ir(ic_mean, ic_std),
@@ -241,7 +242,7 @@ def _child_eval_expr(expr: str, market: str, start: str, end: str, label: str) -
     # Per-process init (safer across OS / forks)
     qlib.init(provider_uri=DEFAULT_PROVIDER_URI, region=DEFAULT_REGION)
 
-    factor_list = [{"name": "api_factor", "expr": expr}]
+    factor_list = [{"name": "api_factor", "expression": expr}]
     out = compute_factor_data(factor_list, label=label, instruments=market.lower(), start_time=start, end_time=end)
 
     if (
@@ -283,10 +284,34 @@ def _child_check_expr(expr: str, instruments: str, start_time: str, end_time: st
 
     qlib.init(provider_uri=DEFAULT_PROVIDER_URI, region=DEFAULT_REGION)
 
+
     cfg = {"feature": ([expr], ["test_expr"])}
     dl = QlibDataLoader(config=cfg)
-    df = dl.load(instruments=instruments, start_time=start_time, end_time=end_time)
-    feat = df.get("feature", pd.DataFrame())
+    try:
+        df = dl.load(instruments=instruments, start_time=start_time, end_time=end_time)
+        feat = df.get("feature", pd.DataFrame())
+    except Exception as e:
+        error_message = str(e)
+        # Read error message from Qlib
+        if re.search(r"missing \d+ required positional argument", error_message):
+            return  {
+                        "success": False,
+                        "error_message": error_message,
+                        "error_type": "INVALID_PARA",
+                    }
+            
+        elif re.search(r"The operator \[.*?\] is not registered", error_message):
+            return {
+                        "success": False,
+                        "error_message": error_message,
+                        "error_type": "UNREGISTERED_OPERATOR",
+                    }
+        else:
+            return  {
+                        "success": False,
+                        "error_message": error_message,
+                        "error_type": "UNKNOWN_ERROR",
+                    }
 
     if feat.empty:
         return {"success": False, "error_message": "Empty feature matrix", "error_type": "EMPTY_DATA"}
@@ -310,7 +335,7 @@ def _child_batch_eval(
     qlib.init(provider_uri=DEFAULT_PROVIDER_URI, region=DEFAULT_REGION)
 
     names = [f["name"] for f in factors]
-    fields = [f["expr"] for f in factors]
+    fields = [f["expression"] for f in factors]
 
     cfg = {
         "feature": (fields, names),
@@ -368,13 +393,13 @@ def _child_batch_eval(
     for nm in X.columns:
         ic_series = ic_table[nm].dropna()
         ric_series = ric_table[nm].dropna()
-        ic_mean = float(ic_series.mean()) if len(ic_series) else float("nan")
-        ic_std = float(ic_series.std(ddof=1)) if len(ic_series) > 1 else float("nan")
-        ric_mean = float(ric_series.mean()) if len(ric_series) else float("nan")
-        ric_std = float(ric_series.std(ddof=1)) if len(ric_series) > 1 else float("nan")
+        ic_mean = float(ic_series.mean()) if len(ic_series) else float(0)
+        ic_std = float(ic_series.std(ddof=1)) if len(ic_series) > 1 else float(0)
+        ric_mean = float(ric_series.mean()) if len(ric_series) else float(0)
+        ric_std = float(ric_series.std(ddof=1)) if len(ric_series) > 1 else float(0)
 
         # find expression
-        expr = next((f["expr"] for f in factors if f["name"] == nm), "")
+        expr = next((f["expression"] for f in factors if f["name"] == nm), "")
 
         results.append(
             {

@@ -27,8 +27,8 @@ def compute_factor_data(
     """
     Compute factor data and label data using QlibDataLoader.
 
-    :param factor_definitions: List of dicts, each with 'name' and 'expr'
-                               e.g. [{'name': 'factor1', 'expr': 'Rank(Div($high, $low), 10)'}]
+    :param factor_definitions: List of dicts, each with 'name' and 'expression'
+                               e.g. [{'name': 'factor1', 'expression': 'Rank(Div($high, $low), 10)'}]
     :param label: String, label expression, e.g. 'Ref($close, -2)/Ref($close, -1) - 1'
     :param instruments: String, instruments universe, default 'csi300'
     :param start_time: String, start date
@@ -36,7 +36,7 @@ def compute_factor_data(
     :return: pandas DataFrame containing factor data and label data
     """
     # Extract fields and names from factor_definitions
-    fields = [f["expr"] for f in factor_definitions]
+    fields = [f["expression"] for f in factor_definitions]
     names = [f["name"] for f in factor_definitions]
 
     # Prepare label
@@ -77,9 +77,9 @@ def main():
     factor_definitions = [
         {
             "name": "vol_momentum",
-            "expr": "(Sum(Greater($volume-Ref($volume, 1), 0), 10)-Sum(Greater(Ref($volume, 1)-$volume, 0), 10))/(Sum(Abs($volume-Ref($volume, 1)), 10)+1e-12)",
+            "expression": "(Sum(Greater($volume-Ref($volume, 1), 0), 10)-Sum(Greater(Ref($volume, 1)-$volume, 0), 10))/(Sum(Abs($volume-Ref($volume, 1)), 10)+1e-12)",
         },
-        {"name": "price_ratio", "expr": "Rank(Div($high, $low), 10)"},
+        {"name": "price_ratio", "expression": "Rank(Div($high, $low), 10)"},
     ]
 
     label = "close_return"

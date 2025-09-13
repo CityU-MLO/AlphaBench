@@ -48,9 +48,9 @@ DEFAULTS = {
     "check_start": os.environ.get("CHECK_START", "2020-01-01"),
     "check_end": os.environ.get("CHECK_END", "2020-01-15"),
     "use_cache": True,
-    "timeout_eval": int(os.environ.get("TIMEOUT_EVAL_SEC", "120")),
-    "timeout_check": int(os.environ.get("TIMEOUT_CHECK_SEC", "60")),
-    "timeout_batch": int(os.environ.get("TIMEOUT_BATCH_SEC", "300")),
+    "timeout_eval": int(os.environ.get("TIMEOUT_EVAL_SEC", "180")),
+    "timeout_check": int(os.environ.get("TIMEOUT_CHECK_SEC", "120")),
+    "timeout_batch": int(os.environ.get("TIMEOUT_BATCH_SEC", "600")),
 }
 
 # Persistent cache

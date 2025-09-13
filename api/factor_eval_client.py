@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Default API configuration
 DEFAULT_API_URL = "http://localhost:9889"
-DEFAULT_TIMEOUT = 30  # seconds
+DEFAULT_TIMEOUT = 120  # seconds
 MAX_RETRIES = 5
 RETRY_DELAY = 1  # seconds
 

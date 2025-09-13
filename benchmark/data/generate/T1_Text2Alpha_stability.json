@@ -1,0 +1,295 @@
+    
+ [
+        {
+            "test_name": "stability_price_volume_momentum_like",
+            "factor_gt": "(Mean($close / Ref($close, 1), 5) / Std($close / Ref($close, 1), 5)) * (Mean($volume, 10) / Std($volume, 10))",
+            "base_prompt": "Calculate the ratio of N days (default 5) mean of close price divided by its previous close price to N days (default 5) standard deviation of close price divided by its previous close price, multiplied by the ratio of N days (default 10) mean volume to N days (default 10) standard deviation of volume.",
+            "synonym_prompts": [
+                "Compute N days (default 5) average of close price over prior close divided by N days (default 5) standard deviation of the same, then multiply by N days (default 10) average volume over N days (default 10) std of volume.",
+                "Find the product of the N days (default 5) mean of close divided by prior close over N days (default 5) std of that ratio, and N days (default 10) mean volume over its N days (default 10) std.",
+                "Derive the factor as (N days (default 5) mean of close / previous close divided by N days (default 5) std of close / previous close) times (N days (default 10) mean volume over N days (default 10) std volume).",
+                "Calculate (N days (default 5) mean of close price over previous close / N days (default 5) std of that) * (N days (default 10) mean of volume / N days (default 10) std of volume).",
+                "Obtain (N days (default 5) mean of close / previous close divided by N days (default 5) std of close / previous close) multiplied by (N days (default 10) mean volume / N days (default 10) std volume).",
+                "Formulate factor: (mean of close / REF close N days (default 5) / std of same) * (mean of volume N days (default 10) / std of volume N days (default 10)).",
+                "Get (N days (default 5) mean of close over prior close / N days (default 5) std of close over prior close) * (N days (default 10) mean of volume / N days (default 10) std of volume).",
+                "Create factor: multiply N days (default 5) mean of close over REF close / N days (default 5) std of same with N days (default 10) mean of volume over N days (default 10) std volume."
+            ]
+        },
+        {
+            "test_name": "volume_weighted_price_oscillator",
+            "factor_gt": "(Mean($close * $volume, 5) - Mean($close * $volume, 20)) / Mean($close, 20)",
+            "base_prompt": "Calculate the difference between the N-day (default 5) mean of (close price times volume) and the N-day (default 20) mean of (close price times volume), divided by the N-day (default 20) mean of the close price.",
+            "synonym_prompts": [
+                "Compute the N-day (default 5) average of (close times volume) less the N-day (default 20) average of (close times volume), all over the N-day (default 20) average close.",
+                "Find the result of (N-day (default 5) mean (close * volume) minus N-day (default 20) mean (close * volume)) divided by the N-day (default 20) mean close.",
+                "Derive the factor as (N-day (default 5) mean of (close times volume) minus N-day (default 20) mean of (close times volume)) divided by (N-day (default 20) mean of close).",
+                "Calculate (N-day (default 5) mean of (close * volume) - N-day (default 20) mean of (close * volume)) / (N-day (default 20) mean of close).",
+                "Generate a factor by dividing the difference between the N-day (default 5) mean of (close times volume) and the N-day (default 20) mean of (close times volume) by the N-day (default 20) mean of close.",
+                "Obtain (N-day (default 5) mean of (close times volume) minus N-day (default 20) mean of (close times volume)) divided by (N-day (default 20) mean of close).",
+                "Formulate factor: (mean of (close * volume) N days (default 5) - mean of (close * volume) N days (default 20)) / mean of close N days (default 20).",
+                "Get (N-day (default 5) mean of (close times volume) less N-day (default 20) mean of (close times volume)) over N-day (default 20) mean of close.",
+                "Create factor: divide (N-day (default 5) mean of (close * volume) - N-day (default 20) mean of (close * volume)) by N-day (default 20) mean of close."
+            ]
+        },
+        {
+            "test_name": "relative_volume_breakout",
+            "factor_gt": "($close > Ref(Max($high, 20), 1)) * ($volume / Mean($volume, 20))",
+            "base_prompt": "Calculate a factor that is 1 if the close is greater than the previous day's N-day (default 20) maximum high, and 0 otherwise, multiplied by the ratio of volume to the N-day (default 20) mean of volume.",
+            "synonym_prompts": [
+                "Compute a factor: 1 if close exceeds prior day's N-day (default 20) high, else 0, times volume divided by N-day (default 20) average volume.",
+                "Find the product of (1 if close > prior N-day (default 20) max high, else 0) and (volume / N-day (default 20) mean volume).",
+                "Derive the factor as (if close is greater than the previous day's N-day (default 20) maximum high, then 1, else 0) times (volume divided by N-day (default 20) mean volume).",
+                "Calculate (close > Ref(Max(high, 20), 1)) * (volume / Mean(volume, 20)).",
+                "Generate a factor by multiplying the boolean result of (close > prior day's N-day (default 20) max high) with (volume / N-day (default 20) mean volume).",
+                "Obtain (1 if close is above the previous day's N-day (default 20) maximum high, otherwise 0) multiplied by (volume divided by N-day (default 20) mean volume).",
+                "Formulate factor: (close GT REF(MAX(high, N days (default 20)), 1)) * (volume / mean of volume N days (default 20)).",
+                "Get (close greater than prior day's N-day (default 20) max high) times (volume over N-day (default 20) mean volume).",
+                "Create factor: multiply (close > Ref(Max(high, 20), 1)) with (volume / Mean(volume, 20))."
+            ]
+        },
+        {
+            "test_name": "relative_volume_breakout",
+            "factor_gt": "($close > Ref($high, 1)) * ($volume / Mean($volume, 20))",
+            "base_prompt": "Multiply a boolean indicating whether the close is greater than the previous day's high by the ratio of the current volume to the N-day (default 20) mean volume.",
+            "synonym_prompts": [
+                "Compute (close greater than prior high) times (volume divided by N-day (default 20) average volume).",
+                "Find the product of (close > previous high) and (volume / N-day (default 20) mean volume).",
+                "Derive the factor as (close is greater than the previous high) times (volume divided by the N-day (default 20) mean volume).",
+                "Calculate (close > Ref($high, 1)) * (volume / Mean($volume, 20)).",
+                "Generate a factor by multiplying the boolean result of close exceeding prior high by the volume relative to its N-day (default 20) average.",
+                "Obtain (close greater than previous high) multiplied by (volume divided by N-day (default 20) mean volume).",
+                "Formulate factor: (close > previous high) * (volume / mean of volume N days (default 20)).",
+                "Get (close exceeds prior day's high) times (volume over N-day (default 20) mean volume).",
+                "Create factor: multiply (close > prior high) with (volume / N-day (default 20) mean volume)."
+            ]
+        },
+        {
+            "test_name": "relative_volume_breakout",
+            "factor_gt": "($close > Ref($high, 1)) * ($volume > Mean($volume, 20) * 2)",
+            "base_prompt": "Generate a signal that is 1 if the close is greater than the previous day's high, AND the volume is greater than twice the N-day (default 20) mean of volume, otherwise 0.",
+            "synonym_prompts": [
+                "Check if close exceeds prior high AND volume is more than double the N-day (default 20) average volume; if so, return 1, else 0.",
+                "Is the close above yesterday's high AND volume greater than 2 times the N-day (default 20) average volume? Return 1 if true, 0 otherwise.",
+                "Create a factor that equals 1 when close > previous high AND volume > 2 * N-day (default 20) mean volume; else 0.",
+                "If close is higher than the previous high AND volume is greater than twice the N-day (default 20) average volume, then the factor is 1, otherwise it is 0.",
+                "A factor is generated that returns 1 if the close is above the prior day's high AND volume exceeds twice the N-day (default 20) average volume; otherwise, it returns 0.",
+                "Signal 1 if close > Ref(high, 1) AND volume > 2 * Mean(volume, 20), else signal 0.",
+                "Factor: (close greater than previous high) AND (volume greater than twice the N-day (default 20) mean volume) yields 1, otherwise 0.",
+                "If close breaches the previous high AND volume surpasses twice the N-day (default 20) average volume, return 1, else return 0.",
+                "Generate 1 if close is above the prior high and volume is above twice the N-day (default 20) mean volume; else generate 0."
+            ]
+        },
+        {
+            "test_name": "close_to_open_range_volume_ratio",
+            "factor_gt": "(Abs($close - $open) / (Max($high, 5) - Min($low, 5))) * Mean($volume, 10)",
+            "base_prompt": "Calculate the absolute value of (close minus open) divided by the N-day (default 5) range (max high minus min low), multiplied by the N-day (default 10) mean of volume.",
+            "synonym_prompts": [
+                "Compute the absolute difference between close and open, over the N-day (default 5) range, times the N-day (default 10) average volume.",
+                "Find the product of (absolute value of (close - open) / (N-day (default 5) range)) and the N-day (default 10) mean volume.",
+                "Derive the factor as (absolute value of (close minus open) divided by (N-day (default 5) max high minus N-day (default 5) min low)) times (N-day (default 10) mean of volume).",
+                "Calculate (abs(close - open) / (N-day (default 5) max(high) - N-day (default 5) min(low))) * (N-day (default 10) mean of volume).",
+                "Generate a factor by multiplying the ratio of the absolute difference between close and open to the N-day (default 5) range, and the N-day (default 10) mean volume.",
+                "Obtain (absolute value of (close minus open) divided by (N-day (default 5) range)) multiplied by (N-day (default 10) mean of volume).",
+                "Formulate factor: (abs(close - open) / (max high - min low N days (default 5))) * (mean of volume N days (default 10)).",
+                "Get (absolute value of (close minus open) over (N-day (default 5) max high minus N-day (default 5) min low)) * (N-day (default 10) mean of volume).",
+                "Create factor: multiply abs(close - open) / (N-day (default 5) max high - N-day (default 5) min low) with N-day (default 10) mean of volume."
+            ]
+        },
+        {
+            "test_name": "close_to_open_range_volume_strength",
+            "factor_gt": "(Abs($close - $open) / (Max($high, 5) - Min($low, 5))) * Mean($volume, 10)",
+            "base_prompt": "Calculate the ratio of the absolute value of (close minus open) to the N-day (default 5) range (high minus low), multiplied by the N-day (default 10) mean volume.",
+            "synonym_prompts": [
+                "Compute (absolute value of close less open) over the N-day (default 5) range (high minus low), times the N-day (default 10) average volume.",
+                "Find the product of (abs(close - open) / (N-day (default 5) range (high - low))) and the N-day (default 10) mean volume.",
+                "Derive the factor as (absolute value of (close minus open) divided by N-day (default 5) range (high minus low)) times (N-day (default 10) mean of volume).",
+                "Calculate (abs(close - open) / (N-day (default 5) (max high - min low))) * (N-day (default 10) mean of volume).",
+                "Generate a factor by multiplying the ratio of abs(close - open) to the N-day (default 5) range (high - low), and the N-day (default 10) mean volume.",
+                "Obtain (absolute value of (close minus open) divided by N-day (default 5) range (high minus low)) multiplied by (N-day (default 10) mean volume).",
+                "Formulate factor: (abs(close - open) / (max high - min low) N days (default 5)) * (mean of volume N days (default 10)).",
+                "Get (absolute value of (close minus open) over N-day (default 5) range (high minus low)) * (N-day (default 10) mean of volume).",
+                "Create factor: multiply abs(close - open) / (N-day (default 5) (max high - min low)) with N-day (default 10) mean of volume."
+            ]
+        },
+        {
+            "test_name": "close_to_open_range_volume_ratio",
+            "factor_gt": "(Abs($close - $open) / (Max($high, 5) - Min($low, 5))) * Mean($volume, 10)",
+            "base_prompt": "Calculate the absolute value of the difference between the close and open prices, divided by the N-day (default 5) range (high minus low), multiplied by the N-day (default 10) mean of volume.",
+            "synonym_prompts": [
+                "Compute the absolute difference of close and open over the N-day (default 5) range, times the N-day (default 10) average volume.",
+                "Find the product of (absolute value of close minus open) / (N-day (default 5) range) and the N-day (default 10) mean volume.",
+                "Derive the factor as (absolute value of (close minus open) divided by (N-day (default 5) range)) times (N-day (default 10) mean of volume).",
+                "Calculate (abs(close - open) / (N-day (default 5) range)) * (N-day (default 10) mean of volume).",
+                "Generate a factor by multiplying the ratio of the absolute value of (close - open) to the N-day (default 5) range, and the N-day (default 10) mean volume.",
+                "Obtain (absolute value of (close minus open) divided by (N-day (default 5) range)) multiplied by (N-day (default 10) mean volume).",
+                "Formulate factor: (abs(close - open) / (range N days (default 5))) * (mean of volume N days (default 10)).",
+                "Get (absolute value of (close minus open) over (N-day (default 5) range)) * (N-day (default 10) mean of volume).",
+                "Create factor: multiply abs(close - open) / (N-day (default 5) range) with N-day (default 10) mean of volume."
+            ]
+        },
+    
+        {
+            "test_name": "momentum_oscillator_volume_filter",
+            "factor_gt": "((Mean($close, 10) - Ref($close, 20)) / $close) * (Mean($volume, 5) > Ref(Mean($volume, 5), 10))",
+            "base_prompt": "Calculate the N-day (default 10) mean of the close price minus the close price N days (default 20) ago, divided by the current close price, multiplied by a boolean indicating whether the N-day (default 5) mean of volume is greater than the same mean N days (default 10) ago.",
+            "synonym_prompts": [
+                "Compute (N-day (default 10) average close less close N days (default 20) ago) / current close, times (N-day (default 5) average volume greater than the same average N days (default 10) prior).",
+                "Find the product of ((N-day (default 10) mean close minus close N days (default 20) ago) / close) and (N-day (default 5) mean volume exceeding its value N days (default 10) ago).",
+                "Derive the factor as ((N-day (default 10) mean of close minus close N days (default 20) ago) divided by close) times (whether N-day (default 5) mean volume is greater than N-day (default 5) mean volume N days (default 10) ago).",
+                "Calculate ((N-day (default 10) mean of close - close N days (default 20) ago) / close) * (N-day (default 5) mean of volume > N-day (default 5) mean of volume N days (default 10) ago).",
+                "Generate a factor by multiplying the ratio of (N-day (default 10) mean close less close N days (default 20) ago) to close, and a boolean for (N-day (default 5) mean volume exceeding its value N days (default 10) ago).",
+                "Obtain ((N-day (default 10) mean of close minus close N days (default 20) ago) divided by close) multiplied by (N-day (default 5) mean volume is greater than N-day (default 5) mean volume N days (default 10) ago).",
+                "Formulate factor: ((mean of close N days (default 10) - close N days (default 20)) / close) * (mean of volume N days (default 5) > mean of volume N days (default 5) ago N days (default 10)).",
+                "Get ((N-day (default 10) mean of close less close N days (default 20) prior) / close) * (N-day (default 5) mean of volume is greater than N-day (default 5) mean of volume N days (default 10) prior).",
+                "Create factor: multiply ((N-day (default 10) mean of close - close N days (default 20)) / close) with (N-day (default 5) mean volume > N-day (default 5) mean volume N days (default 10) ago)."
+            ]
+        },{
+            "test_name": "relative_volume_breakout",
+            "factor_gt": "($close > Ref($high, 1)) * ($volume / Mean($volume, 20))",
+            "base_prompt": "Calculate whether the close is greater than the previous day's high, multiplied by the ratio of the current volume to the N-day (default 20) mean of volume.",
+            "synonym_prompts": [
+                "Compute (close greater than prior high) times (volume over N-day (default 20) average volume).",
+                "Find the product of (close > previous high) and (volume divided by the N-day (default 20) mean volume).",
+                "Derive the factor as (close is greater than the previous high) times (volume divided by N-day (default 20) mean volume).",
+                "Calculate (close > Ref(high, 1)) * (volume / Mean(volume, 20)).",
+                "Generate a factor by multiplying the boolean result of (close > prior day's high) with the ratio of volume to N-day (default 20) mean volume.",
+                "Obtain (close exceeds previous high) multiplied by (volume divided by N-day (default 20) mean volume).",
+                "Formulate factor: (close > REF high, 1) * (volume / mean of volume N days (default 20)).",
+                "Get (close greater than prior day's high) * (volume over N-day (default 20) mean volume).",
+                "Create factor: multiply (close > previous high) with (volume / N-day (default 20) mean volume)."
+            ]
+        },
+        {
+            "test_name": "close_to_open_range_volume_rank",
+            "factor_gt": "Rank(Abs($close - $open) / $volume, 20)",
+            "base_prompt": "Calculate the N-day (default 20) rank of the absolute value of (close minus open) divided by volume.",
+            "synonym_prompts": [
+                "Compute the N-day (default 20) ranking of the absolute difference between close and open, scaled by volume.",
+                "Find the N-day (default 20) rank of the absolute value of (close - open) divided by volume.",
+                "Derive the factor as the N-day (default 20) rank of (absolute value of (close minus open) divided by volume).",
+                "Calculate the N-day (default 20) rank of (absolute value of (close - open) / volume).",
+                "Generate a factor by ranking the absolute value of the difference between close and open, divided by volume, over N days (default 20).",
+                "Obtain the N-day (default 20) rank of (absolute value of (close minus open) divided by volume).",
+                "Formulate factor: rank of (abs(close - open) / volume) N days (default 20).",
+                "Get the N-day (default 20) rank of the absolute value of (close minus open) divided by volume.",
+                "Create factor: rank N days (default 20) of (absolute value of (close - open) / volume)."
+            ]
+        },
+    
+        {
+            "test_name": "high_low_range_over_volume_std",
+            "factor_gt": "(Max($high, 10) - Min($low, 10)) / Std($volume, 20)",
+            "base_prompt": "Calculate the N-day (default 10) range (maximum high minus minimum low) divided by the N-day (default 20) standard deviation of volume.",
+            "synonym_prompts": [
+                "Compute the N-day (default 10) range (max high less min low) over the N-day (default 20) standard deviation of volume.",
+                "Find the result of (N-day (default 10) range) divided by (N-day (default 20) volume std).",
+                "Derive the factor as (N-day (default 10) maximum high minus N-day (default 10) minimum low) divided by (N-day (default 20) standard deviation of volume).",
+                "Calculate (N-day (default 10) (max high - min low)) / (N-day (default 20) std of volume).",
+                "Generate a factor by dividing the N-day (default 10) range by the N-day (default 20) standard deviation of volume.",
+                "Obtain (N-day (default 10) range) divided by (N-day (default 20) standard deviation of volume).",
+                "Formulate factor: (range N days (default 10)) / (std of volume N days (default 20)).",
+                "Get (N-day (default 10) max high minus N-day (default 10) min low) over (N-day (default 20) standard deviation of volume).",
+                "Create factor: divide N-day (default 10) range by N-day (default 20) std of volume."
+            ]
+        },
+        {
+            "test_name": "complex_price_volume_momentum_rank",
+            "factor_gt": "Rank((Mean($close / Ref($close, 1), 5) / Std($close, 10)) * (Sqrt($volume) + Correlation($close, $volume, 5)), 20)",
+            "base_prompt": "Calculate the N-day (default 20) rank of the product of (the N-day (default 5) mean of (close divided by previous close) divided by the N-day (default 10) standard deviation of close) and (the square root of volume plus the N-day (default 5) correlation between close and volume).",
+            "synonym_prompts": [
+                "Compute the N-day (default 20) ranking of (N-day (default 5) average (close over prior close) / N-day (default 10) close std) times (volume square root plus close-volume N-day (default 5) correlation).",
+                "Find the N-day (default 20) rank of the product of: (N-day (default 5) mean (close / prior close) divided by N-day (default 10) std of close) and (sqrt(volume) + N-day (default 5) correlation(close, volume)).",
+                "Derive the factor as the N-day (default 20) rank of ((N-day (default 5) mean of (close divided by previous close) divided by N-day (default 10) standard deviation of close) multiplied by (square root of volume plus N-day (default 5) correlation of close and volume)).",
+                "Calculate the N-day (default 20) rank of ((N-day (default 5) mean(close / Ref(close, 1)) / N-day (default 10) Std(close)) * (Sqrt(volume) + N-day (default 5) Correlation(close, volume))).",
+                "Generate a factor by ranking the product of (N-day (default 5) mean (close / prior close) / N-day (default 10) std close) and (sqrt(volume) + N-day (default 5) correlation of close and volume) over N days (default 20).",
+                "Obtain the N-day (default 20) rank of the result of multiplying (N-day (default 5) mean (close / previous close) divided by N-day (default 10) standard deviation of close) by (square root of volume plus N-day (default 5) correlation between close and volume).",
+                "Formulate factor: rank N days (default 20) of ((mean of (close / REF close) N days (default 5) / std of close N days (default 10)) * (sqrt(volume) + correlation(close, volume) N days (default 5))).",
+                "Get the N-day (default 20) ranking of (mean close over prior close N days (default 5) / std close N days (default 10)) times (square root volume plus correlation between close and volume N days (default 5)).",
+                "Create factor: rank N days (default 20) of ((N-day (default 5) mean (close / Ref(close, 1)) / N-day (default 10) Std(close)) * (Sqrt(volume) + N-day (default 5) Correlation(close, volume)))."
+            ]
+        },
+        {
+            "test_name": "advanced_price_volume_breakout",
+            "factor_gt": "((($close - Ref($close, 5)) / Ref($close, 5)) > 0.02) * (Mean($volume, 3) > Mean($volume, 20) * 1.5) * Rank(Correlation($close, $volume, 10), 20)",
+            "base_prompt": "Calculate a factor that combines price momentum, volume surge, and correlation ranking. It is 1 if the percentage change in close price over the past 5 days exceeds 2%, AND the 3-day average volume is greater than 1.5 times the 20-day average volume. The result is then multiplied by the N-day (default 20) rank of the correlation between close price and volume over the past N days (default 10).",
+            "synonym_prompts": [
+                "Compute a factor: (close price increased by more than 2% over the last 5 days) AND (recent 3-day volume exceeds 1.5x the 20-day average volume), scaled by the N-day (default 20) rank of the correlation between price and volume.",
+                "Find a signal where (5-day price change > 2%) AND (3-day average volume > 1.5 * 20-day average volume), weighted by the N-day (default 20) rank of price-volume correlation.",
+                "Derive a factor that is the product of (price up > 2% in 5 days), (volume surge: 3-day avg > 1.5x 20-day avg), and the N-day (default 20) ranked price-volume correlation.",
+                "Calculate ((($close - Ref($close, 5)) / Ref($close, 5)) > 0.02) * (Mean($volume, 3) > Mean($volume, 20) * 1.5) * Rank(Correlation($close, $volume, 10), 20).",
+                "Generate a factor by combining a price momentum condition (5-day change > 2%), a volume surge condition (3-day avg > 1.5x 20-day avg), and the N-day (default 20) ranking of price-volume correlation.",
+                "Obtain a factor that is the result of (price momentum > 2%) AND (volume surge > 1.5x), modulated by the N-day (default 20) rank of price-volume correlation.",
+                "Formulate factor: (price momentum > 2%) * (volume surge > 1.5x) * N-day (default 20) rank of (price-volume correlation).",
+                "Get (price up more than 2% in 5 days) AND (volume surge: 3-day avg > 1.5x 20-day avg), all scaled by N-day (default 20) ranked price-volume correlation.",
+                "Create factor: multiply (price momentum > 2%) with (volume surge > 1.5x), and then multiply by the N-day (default 20) rank of price-volume correlation."
+            ]
+        },
+    
+        {
+            "test_name": "advanced_momentum_volume_value",
+            "factor_gt": "Rank((Delta($close, 10) / Ref($close, 10)) * Corr($close, $volume, 5), 20) * If(Mean($volume, 5) > Mean($volume, 20), 1, 0) * ($pe_ttm < Med($pe_ttm, 20))",
+            "base_prompt": "Calculate a factor that combines price momentum, price-volume correlation, a volume breakout filter, and a value screen. It ranks the product of the 10-day percentage price change and the 5-day price-volume correlation over N days (default 20). This is then multiplied by a boolean (1 or 0) indicating whether the 5-day average volume is greater than the 20-day average volume. Finally, this is multiplied by a boolean (1 or 0) indicating whether the price-to-earnings ratio is less than the median price-to-earnings ratio over the past N days (default 20).",
+            "synonym_prompts": [
+                "Compute a score based on (momentum * correlation), ranked over N days (default 20), filtered by (short-term volume exceeding long-term volume), and screened by (PE ratio below median).",
+                "Find a factor that combines (momentum strength), (price-volume relationship), (volume breakout confirmation), and (value investing) principles.",
+                "Derive a factor that is the product of (ranked momentum * correlation), (volume breakout), and (value screen).",
+                "Calculate Rank((Delta(close, 10) / Ref(close, 10)) * Corr(close, volume, 5), 20) * If(Mean(volume, 5) > Mean(volume, 20), 1, 0) * (pe_ttm < Med(pe_ttm, 20)).",
+                "Generate a factor that integrates ranked momentum-correlation, volume confirmation, and a PE ratio-based value screen.",
+                "Obtain a signal that is the combination of ranked momentum-correlation, a volume surge indicator, and a value screen based on PE ratio.",
+                "Formulate factor: Rank(momentum * correlation) * (volume breakout) * (value screen).",
+                "Get a factor that is the product of ranked momentum-correlation, a volume breakout signal, and a value screen based on PE ratio.",
+                "Create factor: multiply (ranked momentum * correlation) with (volume breakout), and then multiply by (value screen)."
+            ]
+        },
+        {
+            "test_name": "advanced_momentum_volume_value",
+            "factor_gt": "Rank((Delta($close, 10) / Ref($close, 10)) * Corr($close, $volume, 5), 20) * If(Mean($volume, 5) > Mean($volume, 20), 1, 0) * ($pe_ttm < Med($pe_ttm, 20))",
+            "base_prompt": "Calculate a factor that combines price momentum, price-volume correlation, a volume breakout filter, and a value screen. It ranks the product of the 10-day percentage price change and the 5-day price-volume correlation over N days (default 20). This is then multiplied by a boolean (1 or 0) indicating whether the 5-day average volume is greater than the 20-day average volume. Finally, this is multiplied by a boolean (1 or 0) indicating whether the price-to-earnings ratio is less than the median price-to-earnings ratio over the past N days (default 20).",
+            "synonym_prompts": [
+                "Compute a score based on (momentum * correlation), ranked over N days (default 20), filtered by (short-term volume exceeding long-term volume), and screened by (PE ratio below median).",
+                "Find a factor that combines (momentum strength), (price-volume relationship), (volume breakout confirmation), and (value investing) principles.",
+                "Derive a factor that is the product of (ranked momentum * correlation), (volume breakout), and (value screen).",
+                "Calculate Rank((Delta(close, 10) / Ref(close, 10)) * Corr(close, volume, 5), 20) * If(Mean(volume, 5) > Mean(volume, 20), 1, 0) * (pe_ttm < Med(pe_ttm, 20)).",
+                "Generate a factor that integrates ranked momentum-correlation, volume confirmation, and a PE ratio-based value screen.",
+                "Obtain a signal that is the combination of ranked momentum-correlation, a volume surge indicator, and a value screen based on PE ratio.",
+                "Formulate factor: Rank(momentum * correlation) * (volume breakout) * (value screen).",
+                "Get a factor that is the product of ranked momentum-correlation, a volume breakout signal, and a value screen based on PE ratio.",
+                "Create factor: multiply (ranked momentum * correlation) with (volume breakout), and then multiply by (value screen)."
+            ]
+        },
+    
+        {
+            "test_name": "complex_volatility_momentum_rank",
+            "factor_gt": "Rank(Std($high - $low, 10) / Mean($close, 20), 50) * (Delta($close, 5) / Ref($close, 5)) * If(Corr($close, $volume, 5) > 0.2, 1, 0)",
+            "base_prompt": "Calculate a factor that combines volatility, momentum, and a price-volume correlation filter. It ranks the ratio of the N-day (default 10) standard deviation of (high minus low) to the N-day (default 20) mean of close price over N days (default 50). This is multiplied by the N-day (default 5) percentage price change. Finally, this is multiplied by a boolean (1 or 0) indicating whether the N-day (default 5) price-volume correlation is greater than 0.2.",
+            "synonym_prompts": [
+                "Compute a score based on (volatility measure), (momentum), and a (price-volume correlation filter).",
+                "Find a factor that combines (volatility), (momentum), and (correlation) principles.",
+                "Derive a factor that is the product of (ranked volatility), (momentum), and (correlation filter).",
+                "Calculate Rank(Std(high - low, 10) / Mean(close, 20), 50) * (Delta(close, 5) / Ref(close, 5)) * If(Corr(close, volume, 5) > 0.2, 1, 0).",
+                "Generate a factor that integrates ranked volatility, momentum, and a correlation-based filter.",
+                "Obtain a signal that is the combination of ranked volatility, a momentum indicator, and a correlation filter.",
+                "Formulate factor: Rank(volatility measure) * (momentum) * (correlation filter).",
+                "Get a factor that is the product of ranked volatility, a momentum signal, and a correlation filter.",
+                "Create factor: multiply (ranked volatility) with (momentum), and then multiply by (correlation filter)."
+            ]
+        },
+        {
+            "test_name": "advanced_volatility_momentum_volume",
+            "factor_gt": "Rank(Std($close, 10) / Mean($close, 10), 20) * (Delta($close, 5) / Ref($close, 5)) * If($volume > Ref(Mean($volume, 20), 1), 1, 0)",
+            "base_prompt": "Calculate a factor that combines volatility, momentum, and a volume confirmation. It ranks the ratio of the N-day (default 10) standard deviation of the close price to the N-day (default 10) mean of the close price over N days (default 20). This is then multiplied by the N-day (default 5) percentage change in the close price. Finally, this is multiplied by a boolean (1 or 0) indicating whether the current volume is greater than the previous day's N-day (default 20) average volume.",
+            "synonym_prompts": [
+                "Compute a score based on (volatility relative to price), ranked over N days (default 20), combined with (recent momentum), and confirmed by (volume exceeding prior average).",
+                "Find a factor that integrates (price volatility), (short-term price momentum), and (volume breakout).",
+                "Derive a factor that is the product of (ranked volatility ratio), (momentum), and (volume confirmation).",
+                "Calculate Rank(Std(close, 10) / Mean(close, 10), 20) * (Delta(close, 5) / Ref(close, 5)) * If(volume > Ref(Mean(volume, 20), 1), 1, 0).",
+                "Generate a factor that combines ranked volatility ratio, recent momentum, and a volume breakout indicator.",
+                "Obtain a signal that is the combination of ranked volatility relative to price, short-term price momentum, and a volume surge indicator.",
+                "Formulate factor: Rank(volatility ratio) * (momentum) * (volume breakout).",
+                "Get a factor that is the product of ranked volatility ratio, momentum, and a volume breakout signal.",
+                "Create factor: multiply (ranked volatility ratio) with (momentum), and then multiply by (volume breakout)."
+            ]
+        }
+    
+    
+    ]

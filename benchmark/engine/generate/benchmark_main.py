@@ -50,7 +50,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--base_dir",
         type=Path,
-        default=Path("./runs/T1_Generate_deepseek"),
+        default=Path("./runs/T1_deepseek"),
         help="Base directory to save instructions, outputs, and scores.",
     )
     parser.add_argument(
@@ -262,38 +262,37 @@ def start_running_LLM_generation(
 
     os.makedirs(save_dir, exist_ok=True)
 
-    # print("Starting LLM generation current: Text2Alpha")
+    print("Starting LLM generation current: Text2Alpha")
 
-    # text2alpha_instr = load_level_instructions(
-    #     data_path, prefix="T1_1"
-    # )  # loads all T1_1_*
+    text2alpha_instr = load_level_instructions(
+        data_path, prefix="T1_1"
+    )  # loads all T1_1_*
 
-    # for level, instruction_lists in text2alpha_instr.items():
-    #     print(f"Processing level: {level}")
+    for level, instruction_lists in text2alpha_instr.items():
+        print(f"Processing level: {level}")
 
-    #     outputs = batch_call_gen_qlib_factors(
-    #         instructions=instruction_lists,
-    #         num_workers=num_workers,
-    #         verbose=True,
-    #         model=model,
-    #         enable_cot=enable_cot,
-    #         local=local_model,
-    #         local_port=local_port,
-    #     )
-    #     # Save results
-    #     output_path = os.path.join(save_dir, f"T1_1_{level}_results.pkl")
-    #     with open(output_path, "wb") as f_out:
-    #         pickle.dump(outputs, f_out)
+        outputs = batch_call_gen_qlib_factors(
+            instructions=instruction_lists,
+            num_workers=num_workers,
+            verbose=True,
+            model=model,
+            enable_cot=enable_cot,
+            local=local_model,
+            local_port=local_port,
+        )
+        # Save results
+        output_path = os.path.join(save_dir, f"T1_1_{level}_results.pkl")
+        with open(output_path, "wb") as f_out:
+            pickle.dump(outputs, f_out)
 
     print("Starting LLM generation current: Directional Mining")
     dirmining_instr = load_level_instructions(
         data_path, prefix="T1_2"
     )  # loads all T1_2_*
     for level, instruction_lists in dirmining_instr.items():
-        print(f"Processing level: {level}")
         if level != 'easy':
             continue
-
+        print(f"Processing level: {level}")
         outputs = batch_call_gen_qlib_factors(
             instructions=instruction_lists,
             num_workers=num_workers,
@@ -308,31 +307,31 @@ def start_running_LLM_generation(
         with open(output_path, "wb") as f_out:
             pickle.dump(outputs, f_out)
 
-    # print("Starting LLM generation current: Stability")
-    # pattern = "T1_stability_*.pkl"
+    print("Starting LLM generation current: Stability")
+    pattern = "T1_stability_*.pkl"
 
-    # for pkl_path in Path(data_path).glob(pattern):
-    #     # Extract the index number from file name
-    #     # Example: T1_stability_3.pkl -> 3
-    #     idx = int(pkl_path.stem.split("_")[-1])
-    #     with pkl_path.open("rb") as f:
-    #         instructions = pickle.load(f)
+    for pkl_path in Path(data_path).glob(pattern):
+        # Extract the index number from file name
+        # Example: T1_stability_3.pkl -> 3
+        idx = int(pkl_path.stem.split("_")[-1])
+        with pkl_path.open("rb") as f:
+            instructions = pickle.load(f)
 
-    #     print(f"Processing stability instructions: {idx}")
-    #     outputs = batch_call_gen_qlib_factors(
-    #         instructions=instructions,
-    #         num_workers=num_workers,
-    #         verbose=True,
-    #         model=model,
-    #         enable_cot=enable_cot,
-    #         local=local_model,
-    #         local_port=local_port,
-    #     )
+        print(f"Processing stability instructions: {idx}")
+        outputs = batch_call_gen_qlib_factors(
+            instructions=instructions,
+            num_workers=num_workers,
+            verbose=True,
+            model=model,
+            enable_cot=enable_cot,
+            local=local_model,
+            local_port=local_port,
+        )
 
-    #     # Save results
-    #     output_path = os.path.join(save_dir, f"T1_stability_{idx}_results.pkl")
-    #     with open(output_path, "wb") as f_out:
-    #         pickle.dump(outputs, f_out)
+        # Save results
+        output_path = os.path.join(save_dir, f"T1_stability_{idx}_results.pkl")
+        with open(output_path, "wb") as f_out:
+            pickle.dump(outputs, f_out)
 
     # print("Starting LLM generation current: Creative Generation")
     # selected_instruction = os.path.join(

@@ -40,7 +40,7 @@ def load_config():
     parser.add_argument(
         "--local_port", type=int, default=None, help="Override local port in config"
     )
-    parser.add_argument("--save_dir", type=str, default="./runs/T3_searching")
+    parser.add_argument("--save_dir", type=str, default="./runs/T3_deepseek")
 
     args = parser.parse_args()
 
@@ -217,6 +217,7 @@ def benchmark_main(
         # Start CoT searching
         cot_save_dir = os.path.join(save_dir, "CoT")
         os.makedirs(cot_save_dir, exist_ok=True)
+        filtered_performance_cot = [rec for rec in filtered_performance if rec['name'] in kbar_names + price_names]
 
         rounds = config.get("cot", {}).get("rounds", 10)
         cot_searcher = CoTSearcher(
@@ -232,7 +233,7 @@ def benchmark_main(
         common_cot = {"rounds": rounds, "verbose": True, "save_dir": cot_save_dir}
 
         results, errors = run_batch(
-            records=filtered_performance,
+            records=filtered_performance_cot,
             worker=cot_searcher,
             method="search_single_factor",
             record_to_kwargs=to_cot_kwargs,
@@ -308,8 +309,8 @@ def benchmark_main(
             batch_evaluate_factors_fn=batch_evaluate_factors_via_api,
             search_fn=call_qlib_search,
             model=model,
-            temperature=1.55,
-            enable_reason=True,
+            temperature=temperature,
+            enable_reason=enable_reason,
             local=local,
             local_port=local_port,
             save_dir=ea_save_dir,

@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--base_dir",
         type=Path,
-        default=Path("./runs/T2_Evaluate_deepseek"),
+        default=Path("./runs/T2_deepseek_cot"),
         help="Base directory to save instructions, outputs, and scores.",
     )
     parser.add_argument(

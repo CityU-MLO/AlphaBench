@@ -14,7 +14,7 @@ def similarity_factor_output(factor_expr, truth_expr, tol=1e-2, verbose=False):
             {"name": "truth_factor", "expression": truth_expr},
         ]
         df = compute_factor_data(
-            input_expr, start_time="2024-01-01", end_time="2025-03-01"
+            input_expr, start_time="2024-01-01", end_time="2024-03-01"
         )
 
         # Compute absolute difference

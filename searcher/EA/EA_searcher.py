@@ -94,6 +94,9 @@ class EA_Searcher:
         self.save_dir = save_dir
         self.seeds_top_k = int(seeds_top_k)
         os.makedirs(self.save_dir, exist_ok=True)
+        
+        self.save_log_dir = os.path.join(self.save_dir, "logs")
+        os.makedirs(self.save_log_dir, exist_ok=True)
 
     # ------------------------------ Public API -------------------------------- #
     def search_population(
@@ -308,8 +311,8 @@ Examples (illustrative only; you must produce new ones):
 Output format:
 Return a JSON array of length {n}. Each item MUST be an object with:
   - "name": a short unique name (string)
+  {"- 'reason': 1–2 sentences explaining the mutation (string)" if self.enable_reason else ''}
   - "expression": the full Qlib-style expression (string)
-  - "reason": 1–2 sentences explaining the mutation (string)
 
 No extra text. Output ONLY the JSON array.
 """
@@ -356,8 +359,8 @@ Examples (illustrative only; you must produce new ones):
 Output format:
 Return a JSON array of length {n}. Each item MUST be an object with:
   - "name": a short unique name (string)
+{"- 'reason': 1–2 sentences explaining the mutation (string)" if self.enable_reason else ''}
   - "expression": the full Qlib-style expression (string)
-  - "reason": 1–2 sentences explaining which traits were combined and why (string)
 
 No extra text. Output ONLY the JSON array.
 """
@@ -373,6 +376,12 @@ No extra text. Output ONLY the JSON array.
         """
         out: List[Dict[str, Any]] = []
         items = []
+        if isinstance(payload, dict):
+            if payload["quality"]:
+                quality_log_name = provenance + '_' + str(time.strftime("log_%Y%m%d_%H%M%S.json"))
+                with open(os.path.join(self.save_log_dir, quality_log_name), 'w') as f:
+                    json.dump(payload["quality"], f)  
+                    
         if (
             isinstance(payload, dict)
             and "factors" in payload
@@ -438,7 +447,7 @@ if __name__ == "__main__":
         enable_reason=True,
         local=False,
         local_port=8000,
-        save_dir="./runs/ea_search_unique",
+        save_dir="./runs/ea_search",
         seeds_top_k=12,
     )
 

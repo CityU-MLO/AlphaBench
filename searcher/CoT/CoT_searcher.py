@@ -1,3 +1,4 @@
+import json
 import os
 import time
 import pickle
@@ -49,6 +50,9 @@ class CoTSearcher:
         self.save_dir = save_dir
         os.makedirs(self.save_dir, exist_ok=True)
 
+        self.save_log_dir = os.path.join(self.save_dir, "logs")
+        os.makedirs(self.save_log_dir, exist_ok=True)
+
     def search_single_factor(
         self,
         seed: Dict[str, str],
@@ -61,6 +65,10 @@ class CoTSearcher:
     ) -> Dict[str, Any]:
         assert isinstance(seed, dict) and "name" in seed and "expression" in seed
         rounds = int(rounds)
+
+        self.save_log_dir = os.path.join(save_dir, "logs")
+        os.makedirs(self.save_log_dir, exist_ok=True)
+
 
         if verbose:
             print("Evaluating seed factor …")
@@ -260,9 +268,9 @@ class CoTSearcher:
 
         history_text = "".join(history_lines) if history_lines else "(no history)"
 
-        header = """
+        header = f"""
         You are an expert quantitative researcher refining a single alpha factor via chain-of-thought steps.,
-        Return EXACTLY ONE candidate as a JSON object with keys: name, expression, reason.,
+        Return EXACTLY ONE candidate as a JSON object with keys: name, {"reason," if self.enable_reason else ','} expression.,
         Objective: maximize IC (primary), then RankIC, then IR. Keep expressions computable.,
         """
 
@@ -287,15 +295,15 @@ class CoTSearcher:
         """
 
         if round_id == 1:
-            steering = """
+            steering = f"""
             Task: Propose ONE improved variant of the current best OR a fresh alternative.,
-            Provide a one-sentence reason describing why IC (and secondarily RankIC/IR) could improve.,
+            {"Provide a one-sentence reason describing why IC (and secondarily RankIC/IR) could improve." if self.enable_reason else ""}
             """
         else:
-            steering = """
+            steering = f"""
             Task: Given the full history, refine decisively — either stabilize the best structure or explore a new one.,
             If prior attempts plateaued, try bold parameter jumps or structural re-composition (e.g., add Corr/Rank gates).,
-            Provide a concise reason tied to expected IC/RankIC/IR effects.,
+            {"Provide a concise reason tied to expected IC/RankIC/IR effects." if self.enable_reason else ""}
             """
 
         return header + "\n" + context + "\n" + policy + "\n" + steering
@@ -303,6 +311,13 @@ class CoTSearcher:
     def _extract_single_candidate(self, payload: Dict[str, Any]):
         if not isinstance(payload, dict):
             return None
+        
+        if payload["quality"]:
+            quality_log_name = time.strftime("log_%Y%m%d_%H%M%S.json")
+            with open(os.path.join(self.save_log_dir, quality_log_name), 'w') as f:
+                json.dump(payload["quality"], f)    
+                        
+                        
         if isinstance(payload.get("factors"), list) and payload["factors"]:
             first = payload["factors"][0]
             expr = first.get("expression")
@@ -313,10 +328,15 @@ class CoTSearcher:
                     "expression": expr,
                     "reason": first.get("reason", ""),
                 }
+
+
         if isinstance(payload.get("results"), dict) and payload["results"]:
             name, expr = next(iter(payload["results"].items()))
             if expr:
                 return {"name": str(name), "expression": str(expr), "reason": ""}
+
+
+
         return None
 
     def _safe_eval(self, expr: str) -> Dict[str, float]:
@@ -361,7 +381,7 @@ if __name__ == "__main__":
     searcher = CoTSearcher(
         evaluate_factor_fn=evaluate_factor_via_api,
         search_fn=call_qlib_search,
-        model="gemini-2.5-flash",
+        model="gpt-5",
         temperature=1.0,
         enable_reason=False,
         local=False,

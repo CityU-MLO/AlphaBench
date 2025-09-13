@@ -1,3 +1,4 @@
+import json
 import os
 import time
 import pickle
@@ -62,7 +63,10 @@ class ToTSearcher:
         # I/O
         self.save_dir = save_dir
         os.makedirs(self.save_dir, exist_ok=True)
-
+        
+        self.save_log_dir = os.path.join(self.save_dir, "logs")
+        os.makedirs(self.save_log_dir, exist_ok=True)
+        
         # Global de-dup across whole run
         self._seen_exprs = set()
         self._seen_lock = threading.Lock()
@@ -97,6 +101,9 @@ class ToTSearcher:
         n_expand = max(1, int(N))
 
         t0 = time.time()
+
+        self.save_log_dir = os.path.join(save_dir, "logs")
+        os.makedirs(self.save_log_dir, exist_ok=True)
 
         # Evaluate seed (baseline)
         if verbose:
@@ -346,8 +353,9 @@ class ToTSearcher:
         lines.append(f"You are an expert quantitative researcher generating formulaic alpha factors.")
         lines.append(f"Return exactly {size} candidate factors as a JSON list of objects, each with:")
         lines.append(f'- "name": short CamelCase identifier')
+        if self.enable_reason:
+            lines.append(f'- "reason": one concise sentence (family + why it may improve IC)')
         lines.append(f'- "expression": Qlib-style expression string')
-        lines.append(f'- "reason": one concise sentence (family + why it may improve IC)')
         lines.append("")
         ctx = [f"- Seed: {seed['name']} => {seed['expression']}"]
         if parent is not None:
@@ -379,7 +387,10 @@ class ToTSearcher:
         lines.append("• Optional gating: If(Gt($close, Mean($close, L)), A, B) with L in {20,60}; keep A/B simple.")
         lines.append("")
         lines.append("**Output format (JSON list only)**")
-        lines.append('[{"name":"Momentum20Adj","expression":"Div(Delta($close,20), Add(Std($close,20), 1e-12))","reason":"Momentum with volatility scaling."}]')
+        if self.enable_reason:
+            lines.append('[{"name":"Momentum20Adj","reason":"Momentum with volatility scaling.","expression":"Div(Delta($close,20), Add(Std($close,20), 1e-12))"}]')
+        else:
+            lines.append('[{"name":"Momentum20Adj","expression":"Div(Delta($close,20), Add(Std($close,20), 1e-12))"}]')
 
         text = "\n".join(lines)
         # Ensure NO backslashes (user constraint)
@@ -426,7 +437,13 @@ class ToTSearcher:
         if not payload:
             return factors
 
+
         if isinstance(payload, dict):
+            if payload["quality"]:
+                quality_log_name = time.strftime("log_%Y%m%d_%H%M%S.json")
+                with open(os.path.join(self.save_log_dir, quality_log_name), 'w') as f:
+                    json.dump(payload["quality"], f)
+
             if isinstance(payload.get("factors"), list):
                 for item in payload["factors"]:
                     expr = item.get("expression")

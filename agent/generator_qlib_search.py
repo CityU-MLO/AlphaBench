@@ -115,8 +115,8 @@ def get_system_searcher_prompt(enable_reason) -> str:
         Example:
         {{ "generated":
         [
-            {{"name": "Momentum20", "expression": "Div(Sub($close, Ref($close, 20)), Ref($close, 20))", "reason": "Measures 20-day price momentum as percentage change."}},
-            {{"name": "VolumeVolatility10", "expression": "Std($volume, 10)", "reason": "Captures short-term fluctuations in trading volume."}}
+            {{"name": "Momentum20", "reason": "Measures 20-day price momentum as percentage change.", "expression": "Div(Sub($close, Ref($close, 20)), Ref($close, 20))"}},
+            {{"name": "VolumeVolatility10", "reason": "Captures short-term fluctuations in trading volume.", "expression": "Std($volume, 10)"}}
         ]
         }}"""
 
@@ -175,13 +175,26 @@ def _normalize_llm_output(parsed_output: dict) -> list[dict]:
     Returns a cleaned list of items or [] if schema invalid.
     """
     if not isinstance(parsed_output, dict):
-        return []
+        return [], 0
+
+    # hanlde case when single return:
+    if isinstance(parsed_output, dict) and "name" in parsed_output and "expression" in parsed_output:
+        cleaned = [
+            {
+                "name": parsed_output["name"],
+                "expression": parsed_output["expression"],
+                "reason": parsed_output.get("reason", ''),
+            }
+        ]
+        accept_rate = 1.0 if cleaned else 0.0
+        return cleaned, accept_rate
 
     items = parsed_output.get("generated")
     if not isinstance(items, list):
-        return []
+        return [], 0
 
     cleaned = []
+    accept_rate = 0
     for it in items:
         if not isinstance(it, dict):
             continue
@@ -200,7 +213,8 @@ def _normalize_llm_output(parsed_output: dict) -> list[dict]:
         cleaned.append(
             {"name": name.strip() + '_' + str(uuid.uuid4())[:6], "expression": expr.strip(), **({"reason": reason.strip()} if reason else {})}
         )
-    return cleaned
+    accept_rate = len(cleaned) / len(items)
+    return cleaned, accept_rate
 
 
 def _unique_name(base: str, used: Set[str]) -> str:
@@ -226,7 +240,7 @@ def call_qlib_search(
     verbose: bool = False,
     debug_mode: bool = False,
     temperature: float = 1.0,
-    enable_reason: bool = True,
+    enable_reason: bool = False,
     local: bool = False,
     local_port: int = 8000,
 ) -> Dict[str, Any]:
@@ -267,9 +281,17 @@ def call_qlib_search(
 
     min_N = int(N * 0.5) if N > 1 else 1
     attempt = 0
+    quality_info = {}
+    quality_info['request_num'] = 0
+    quality_info['generated_num'] = 0
+    quality_info['accepted_num'] = 0
+    quality_info['first_accept_rate'] = []
+    quality_info['error_record'] = []
+    quality_info['output_format_error'] = 0
     for attempt in range(1, max_try + 1):
-        time.sleep(0.1)  # small backoff to mitigate rate limits
+        time.sleep(0.5)  # small backoff to mitigate rate limits
 
+        quality_info['request_num'] += 1
         response = call_llm(
             instruction,
             model=model,
@@ -281,9 +303,10 @@ def call_qlib_search(
             service_provider='default'
         )
 
+        # print(response)
         if verbose and debug_mode:
             print(f"[{attempt}/{max_try}] Raw LLM output:\n{response}\n")
-
+        
         # Parse JSON
         try:
             parsed_output = json.loads(response)
@@ -297,33 +320,38 @@ def call_qlib_search(
                 f"one key is 'generated', and value is a list of objects with fields name/expression[/reason]."
                 f"{_anti_repeat_block()}"
             )
+            quality_info['output_format_error'] += 1
             continue
 
         # Normalize to (name, expr, reason?)
-        items = _normalize_llm_output(parsed_output)
+        items, accept_rate = _normalize_llm_output(parsed_output)
+        quality_info['first_accept_rate'].append(accept_rate)
+
         if not items:
             last_error = "No factors could be parsed from your JSON."
-            instruction = (
-                f"Base instruction:\n{base_instruction}\n\n"
-                "The last output contained no usable factors.\n"
-                "Return a JSON object with a single key 'generated' that maps to a list of factor objects.\n"
-                "Each object MUST have 'name' (string) and 'expression' (string); 'reason' is optional.\n"
-                "Do not include any extra keys or text outside of valid JSON.\n\n"
-                "Schema (informal):\n"
-                '{ "generated": [ { "name": str, "expression": str, "reason"?: str }, ... ] }\n\n'
-                "Example:\n"
-                '{ "generated": [\n'
-                '  {"name": "Momentum20", "expression": "Div(Sub($close, Ref($close, 20)), Ref($close, 20))", '
-                '"reason": "Measures 20-day price momentum as percentage change."},\n'
-                '  {"name": "VolumeVolatility10", "expression": "Std($volume, 10)", '
-                '"reason": "Captures short-term fluctuations in trading volume."}\n'
-                "] }\n"
-                f"{_anti_repeat_block()}"
-            )
-            continue
 
+            instruction = f"""
+            Base instruction:
+            {base_instruction}
+
+            The last output contained no usable factors.
+            Return a JSON object with a single key 'generated' that maps to a list of factor objects.
+            Each object MUST have 'name' (string) and 'expression' (string); 'reason' is optional.
+            Do not include any extra keys or text outside of valid JSON.
+
+            Schema (informal):
+            { '{ "generated": [ { "name": str, "reason"?: str, "expression": str }, ... ] }' if enable_reason else '{ "generated": [ { "name": str, "expression": str }, ... ] }' }
+
+            {_anti_repeat_block()}
+            """
+
+            quality_info['output_format_error'] += 1
+            continue
+        
         # Validate & collect
         for record in items:
+            quality_info['generated_num'] += 1
+            
             raw_name, expr, reason = record['name'], record['expression'], record.get('reason', '')
             expr = (expr or "").strip()
             if not expr:
@@ -340,9 +368,11 @@ def call_qlib_search(
             # Validate expression via API
             try:
                 result = check_factor_via_api(expr)
+                
             except Exception as e:
                 if verbose:
                     print(f"[WARN] check_factor_via_api failed: {e}")
+                quality_info['error_record'].appen((expr,"API_ERROR"))
                 continue
 
             if isinstance(result, dict) and result.get("success"):
@@ -352,14 +382,19 @@ def call_qlib_search(
                 used_exprs.add(expr)
                 expr_to_name[expr] = name
 
-                if len(collected) >= min_N:
+                quality_info['accepted_num'] += 1
+                if len(collected) >= N:
                     break  # early stop
+                
+            elif isinstance(result, dict) and not result.get("success"):
+                quality_info['error_record'].append((expr,result))
 
-        if len(collected) >= min_N:
+        if len(collected) >= N:
             break  # done
 
         # Prepare next self-healing instruction
         instruction = (
+            f"Origin instruction: {base_instruction}"
             "Regenerate factors.\n"
             "Return ONLY JSON (object or list). Allowed vars: $close, $open, $high, $low, $volume. "
             "Use Qlib-style operators only. If available, include a short 'reason' per factor.\n"
@@ -368,7 +403,7 @@ def call_qlib_search(
         )
 
     # If overfilled (rare, but possible), sample down to N.
-    if len(collected) > N:
+    if len(collected) >= N:
         items = list(collected.items())
         sampled = random.sample(items, N)
         collected = dict(sampled)
@@ -391,6 +426,7 @@ def call_qlib_search(
         "results": results_mapping,  # backward-compatible: {name: expr}
         "factors": factors_detailed,  # new: includes optional reasoning
         "trynum": attempt if attempt else 0,
+        "quality": quality_info,
     }
 
 

@@ -150,8 +150,10 @@ def call_gen_qlib_factors(
             temperature=temperature,
             local=local,
             local_port=local_port,
-            # service_provider='default'
+            service_provider='default'
         )
+        
+        # print(response)
 
         if verbose and debug_mode:
             print(f"[{attempt}/{max_try}] Raw LLM output:\n{response}\n")

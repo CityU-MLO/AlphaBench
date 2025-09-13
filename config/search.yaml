@@ -1,0 +1,22 @@
+model:
+  name: "deepseek-chat"   # replace with the model you want
+  local: false             # True if running locally, False if remote
+  local_port: 8000
+  temperature: 1
+
+cot:
+  enable: false
+  rounds: 10              # number of iterations for CoT search
+
+tot:
+  enable: false
+  rounds: 3              # number of iterations for ToT search
+  size: 6                # number of candidates per round
+
+ea:
+  enable: true
+  mutation_rate: 0.4
+  crossover_rate: 0.6
+  generations: 10               # number of iterations for EA search
+  generate_size: 30              # number of candidates per round
+  population_size: 30     # population size

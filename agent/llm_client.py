@@ -1,3 +1,5 @@
+import os
+import pickle
 from openai import OpenAI
 
 import time
@@ -33,6 +35,7 @@ def call_llm(
     max_try=5,
     timeout=120,
     service_provider='all', # 'all' use all-in-one, 'default' is default URL
+    save_raw_dir=None,
 ):
     # If local is True, send request to local server
     if local:
@@ -63,11 +66,11 @@ def call_llm(
                 api_key=api_key or OPENAI_API_KEY,
                 base_url=base_url or "https://api.openai-proxy.com/v1",
             )
-        elif model.startswith("gemini-"):
-            client = OpenAI(
-                api_key=api_key or GEMINI_API_KEY,
-                base_url=base_url or "https://gemini-openai-proxy.deno.dev/v1",
-            )
+        # elif model.startswith("gemini-"):
+        #     client = OpenAI(
+        #         api_key=api_key or GEMINI_API_KEY,
+        #         base_url=base_url or "https://gemini-openai-proxy.deno.dev/v1",
+        #     )
         elif model.startswith("deepseek-"):
             client = OpenAI(
                 api_key=api_key or DEEPSEEK_API_KEY,
@@ -106,10 +109,17 @@ def call_llm(
     for attempt in range(max_try):
         try:
             response = client.chat.completions.create(**request_params)
+            if save_raw_dir:
+                os.makedirs(save_raw_dir, exist_ok=True)
+                raw_response_name = time.strftime("%Y%m%d_%H%M%S", time.localtime()) + '.pkl'
+                with open(os.path.join(save_raw_dir, raw_response_name), 'wb') as f:
+                    pickle.dump(response, f)
+            
             if return_raw:
                 return response
             else:
                 return response.choices[0].message.content.strip()
+            
         except Exception as e:
             if "Too Many Requests" in str(e) and attempt < max_try - 1:
                 sleep_time = 0.25
@@ -232,7 +242,7 @@ def main():
 
     print("=== 🧪 Gemini Client Test ===")
     try:
-        result_gm = call_llm(prompt, model="gemini-2.5-pro")
+        result_gm = call_llm(prompt, model="gemini-2.5-flash")
         print(result_gm)
     except Exception as e:
         print(f"DeepSeek API Error: {e}")

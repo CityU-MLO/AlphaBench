@@ -5,6 +5,19 @@ FACTOR_DIR = "./factors/lib/alpha158"
 COMPILE_FILE = os.path.join(FACTOR_DIR, "qlib_compile_product.json")
 
 
+def load_factors_alpha158_names():
+
+    standard_factors = {}
+    for file_name in os.listdir(FACTOR_DIR):
+        if file_name.endswith(".json") and file_name != "qlib_compile_product.json":
+            file_path = os.path.join(FACTOR_DIR, file_name)
+            with open(file_path, "r") as f:
+                factors = json.load(f)
+                standard_factors[file_name.split(".")[0]] = factors
+
+    return standard_factors
+
+
 def load_factors_alpha158(exclude_var=None, collection=None):
     """
     Load standard factors and corresponding compiled factors,

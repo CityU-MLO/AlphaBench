@@ -1,0 +1,1830 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Factor Analysis Platform</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-3.1.0.min.js" charset="utf-8"></script>
+    <style>
+        :root {
+            --primary-color: #667eea;
+            --secondary-color: #764ba2;
+            --success-color: #28a745;
+            --danger-color: #dc3545;
+            --dark-bg: #1a1a2e;
+            --light-bg: #f8f9fa;
+        }
+        
+        body {
+            background-color: var(--light-bg);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        .main-container {
+            margin-top: 20px;
+            max-width: 1400px;
+        }
+        
+        .card {
+            box-shadow: 0 0 15px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            border: none;
+            border-radius: 10px;
+        }
+        
+        .card-header {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+            color: white;
+            border-radius: 10px 10px 0 0 !important;
+            padding: 15px 20px;
+        }
+        
+        .card-header h5 {
+            margin: 0;
+            font-weight: 600;
+        }
+        
+        .expression-input {
+            font-family: 'Courier New', monospace;
+            min-height: 80px;
+            border: 2px solid #e0e0e0;
+            transition: border-color 0.3s;
+        }
+        
+        .expression-input:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 5px rgba(102, 126, 234, 0.3);
+        }
+        
+        .stats-card {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+            color: white;
+        }
+        
+        .metric-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            transition: transform 0.3s;
+        }
+        
+        .metric-card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .metric-value {
+            font-size: 2rem;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        
+        .metric-label {
+            color: #666;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .positive {
+            color: var(--success-color);
+        }
+        
+        .negative {
+            color: var(--danger-color);
+        }
+        
+        .cached-expr-item {
+            cursor: pointer;
+            transition: all 0.3s;
+            border-left: 3px solid transparent;
+        }
+        
+        .cached-expr-item:hover {
+            background-color: #f0f0f0;
+            border-left-color: var(--primary-color);
+        }
+        
+        #loading {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 9999;
+        }
+        
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.3);
+            display: none;
+            z-index: 9998;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+            border: none;
+            transition: transform 0.3s;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .nav-tabs .nav-link {
+            color: #666;
+            border: none;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+        
+        .nav-tabs .nav-link.active {
+            color: var(--primary-color);
+            border-bottom-color: var(--primary-color);
+            background: none;
+        }
+        
+        .comparison-table {
+            margin-top: 20px;
+        }
+        
+        .comparison-table th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            letter-spacing: 1px;
+        }
+        
+        .factor-tag {
+            display: inline-block;
+            padding: 5px 15px;
+            margin: 5px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .factor-tag.selected {
+            background: var(--primary-color);
+            color: white;
+        }
+        
+        .factor-tag:not(.selected) {
+            background: #e0e0e0;
+            color: #333;
+        }
+        
+        .factor-tag:hover {
+            transform: scale(1.05);
+        }
+        
+        .export-buttons {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+        }
+        
+        .chart-container {
+            position: relative;
+        }
+        
+        /* Dark mode styles */
+        body.dark-mode {
+            background-color: var(--dark-bg);
+            color: #e0e0e0;
+        }
+        
+        body.dark-mode .card {
+            background-color: #16213e;
+            color: #e0e0e0;
+        }
+        
+        body.dark-mode .metric-card {
+            background-color: #0f3460;
+            color: #e0e0e0;
+        }
+        
+        body.dark-mode .form-control,
+        body.dark-mode .form-select {
+            background-color: #0f3460;
+            color: #e0e0e0;
+            border-color: #533483;
+        }
+        
+        .theme-toggle {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-overlay"></div>
+    <div id="loading">
+        <div class="text-center">
+            <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <div class="mt-3 text-primary fw-bold">Processing...</div>
+        </div>
+    </div>
+    
+    <div class="container main-container">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="display-4 fw-bold">
+                <i class="fas fa-chart-line text-primary"></i> Factor Analysis Platform
+            </h1>
+            <div>
+                <button class="btn btn-outline-primary" onclick="showCacheStats()">
+                    <i class="fas fa-database"></i> Cache Stats
+                </button>
+                <button class="btn btn-outline-info ms-2" onclick="loadCachedExpressions()">
+                    <i class="fas fa-history"></i> History
+                </button>
+            </div>
+        </div>
+        
+        <!-- Navigation Tabs -->
+        <ul class="nav nav-tabs mb-4" id="mainTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="single-tab" data-bs-toggle="tab" data-bs-target="#single" type="button">
+                    <i class="fas fa-chart-bar"></i> Single Factor Analysis
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="compare-tab" data-bs-toggle="tab" data-bs-target="#compare" type="button">
+                    <i class="fas fa-balance-scale"></i> Factor Comparison
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="performance-tab" data-bs-toggle="tab" data-bs-target="#performance" type="button">
+                    <i class="fas fa-tachometer-alt"></i> Performance Dashboard
+                </button>
+            </li>
+        </ul>
+        
+        <!-- Tab Content -->
+        <div class="tab-content" id="mainTabContent">
+            <!-- Single Factor Analysis Tab -->
+            <div class="tab-pane fade show active" id="single" role="tabpanel">
+                <!-- Query Form -->
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-search"></i> Query Factor Cache</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="queryForm">
+                            <div class="mb-3">
+                                <label for="expression" class="form-label fw-bold">Factor Expression:</label>
+                                <textarea class="form-control expression-input" id="expression" 
+                                          placeholder="e.g., Rank(Corr($close, $volume, 10), 252)"></textarea>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <label for="market" class="form-label">Market:</label>
+                                    <select class="form-select" id="market">
+                                        <option value="csi300">CSI300</option>
+                                        <option value="csi500">CSI500</option>
+                                        <option value="csi1000">CSI1000</option>
+                                        <option value="sp500">S&P500</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="col-md-3">
+                                    <label for="startDate" class="form-label">Start Date:</label>
+                                    <input type="date" class="form-control" id="startDate" value="2023-01-01">
+                                </div>
+                                
+                                <div class="col-md-3">
+                                    <label for="endDate" class="form-label">End Date:</label>
+                                    <input type="date" class="form-control" id="endDate" value="2024-01-01">
+                                </div>
+                                
+                                <div class="col-md-3">
+                                    <label class="form-label">&nbsp;</label>
+                                    <div>
+                                        <button type="submit" class="btn btn-primary w-100">
+                                            <i class="fas fa-search"></i> Search Cache
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="mt-3">
+                                <button type="button" class="btn btn-success" onclick="evaluateFactor()">
+                                    <i class="fas fa-play"></i> Evaluate New
+                                </button>
+                                <button type="button" class="btn btn-warning ms-2" onclick="exportCurrentData()">
+                                    <i class="fas fa-download"></i> Export Data
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+                
+                <!-- Performance Metrics -->
+                <div id="metricsCard" class="card" style="display: none;">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-pie"></i> Performance Metrics</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row" id="metricsRow">
+                            <!-- Metrics will be populated here -->
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Charts Section -->
+                <div class="row" id="chartsSection" style="display: none;">
+                    <div class="col-md-6">
+                        <!-- Daily Chart -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h5><i class="fas fa-chart-line"></i> Daily IC/Rank IC</h5>
+                            </div>
+                            <div class="card-body chart-container">
+                                <div class="export-buttons">
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="exportChart('dailyChart')">
+                                        <i class="fas fa-image"></i>
+                                    </button>
+                                </div>
+                                <div id="dailyChart"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-6">
+                        <!-- Distribution Chart -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h5><i class="fas fa-chart-area"></i> IC Distribution</h5>
+                            </div>
+                            <div class="card-body chart-container">
+                                <div class="export-buttons">
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="exportChart('distributionChart')">
+                                        <i class="fas fa-image"></i>
+                                    </button>
+                                </div>
+                                <div id="distributionChart"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-md-12 mt-3">
+                        <!-- Cumulative Chart -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h5><i class="fas fa-chart-bar"></i> Cumulative Performance</h5>
+                            </div>
+                            <div class="card-body chart-container">
+                                <div class="export-buttons">
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="exportChart('cumulativeChart')">
+                                        <i class="fas fa-image"></i>
+                                    </button>
+                                </div>
+                                <div id="cumulativeChart"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Daily Data Table -->
+                <div id="tableCard" class="card" style="display: none;">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5><i class="fas fa-table"></i> Daily Metrics Table</h5>
+                        <div>
+                            <button class="btn btn-sm btn-light" onclick="exportTableCSV()">
+                                <i class="fas fa-file-csv"></i> CSV
+                            </button>
+                            <button class="btn btn-sm btn-light ms-2" onclick="exportTableExcel()">
+                                <i class="fas fa-file-excel"></i> Excel
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-striped table-hover" id="dailyTable">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>IC</th>
+                                        <th>Rank IC</th>
+                                        <th>ICIR</th>
+                                        <th>Rank ICIR</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="dailyTableBody">
+                                    <!-- Data will be populated here -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Factor Comparison Tab -->
+            <div class="tab-pane fade" id="compare" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-balance-scale"></i> Compare Factors</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="comparisonFactors">
+                            <div class="factor-input-group mb-3">
+                                <label class="form-label fw-bold">Factor 1:</label>
+                                <input type="text" class="form-control expression-input comparison-expr" 
+                                       placeholder="Enter first factor expression">
+                            </div>
+                            <div class="factor-input-group mb-3">
+                                <label class="form-label fw-bold">Factor 2:</label>
+                                <input type="text" class="form-control expression-input comparison-expr" 
+                                       placeholder="Enter second factor expression">
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <button class="btn btn-outline-primary" onclick="addComparisonFactor()">
+                                <i class="fas fa-plus"></i> Add Factor
+                            </button>
+                            <button class="btn btn-success ms-2" onclick="compareFactors()">
+                                <i class="fas fa-chart-line"></i> Compare
+                            </button>
+                        </div>
+                        
+                        <!-- Comparison Settings -->
+                        <div class="row">
+                            <div class="col-md-4">
+                                <label class="form-label">Market:</label>
+                                <select class="form-select" id="compareMarket">
+                                    <option value="csi300">CSI300</option>
+                                    <option value="csi500">CSI500</option>
+                                    <option value="csi1000">CSI1000</option>
+                                    <option value="sp500">S&P500</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Start Date:</label>
+                                <input type="date" class="form-control" id="compareStartDate" value="2023-01-01">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">End Date:</label>
+                                <input type="date" class="form-control" id="compareEndDate" value="2024-01-01">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Comparison Results -->
+                <div id="comparisonResults" style="display: none;">
+                    <!-- Comparison Table -->
+                    <div class="card mt-3">
+                        <div class="card-header">
+                            <h5><i class="fas fa-table"></i> Performance Comparison</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table comparison-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Factor</th>
+                                            <th>IC</th>
+                                            <th>Rank IC</th>
+                                            <th>ICIR</th>
+                                            <th>Rank ICIR</th>
+                                            <th>Days</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="comparisonTableBody">
+                                        <!-- Data will be populated here -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Comparison Charts -->
+                    <div class="row mt-3">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5><i class="fas fa-chart-line"></i> IC Comparison</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div id="comparisonICChart"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5><i class="fas fa-chart-line"></i> Rank IC Comparison</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div id="comparisonRankICChart"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row mt-3">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5><i class="fas fa-chart-area"></i> Cumulative IC Comparison</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div id="comparisonCumulativeChart"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5><i class="fas fa-chart-bar"></i> Performance Metrics</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div id="comparisonMetricsChart"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Performance Dashboard Tab -->
+            <div class="tab-pane fade" id="performance" role="tabpanel">
+                <div class="row">
+                    <div class="col-md-12">
+                        <div class="card stats-card">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-center mb-4">
+                                    <h4 class="mb-0"><i class="fas fa-tachometer-alt"></i> System Performance</h4>
+                                    <button class="btn btn-sm btn-primary" onclick="refreshPerformanceDashboard()">
+                                        <i class="fas fa-sync-alt" id="refreshIcon"></i> Refresh
+                                    </button>
+                                </div>
+                                <div class="row" id="performanceMetrics">
+                                    <!-- Performance metrics will be populated here -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Top Performing Factors -->
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h5><i class="fas fa-trophy"></i> Top Performing Factors</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="topFactorsTable">
+                            <div class="text-center text-muted">
+                                <i class="fas fa-spinner fa-spin fa-2x"></i>
+                                <p class="mt-2">Loading top factors...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Recent Activity -->
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h5><i class="fas fa-clock"></i> Recent Activity</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="recentActivity">
+                            <div class="text-center text-muted">
+                                <i class="fas fa-spinner fa-spin fa-2x"></i>
+                                <p class="mt-2">Loading recent activity...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Cached Expressions List -->
+        <div id="cachedExpressionsCard" class="card" style="display: none;">
+            <div class="card-header">
+                <h5><i class="fas fa-history"></i> Cached Expressions</h5>
+            </div>
+            <div class="card-body">
+                <div class="list-group" id="cachedExpressionsList">
+                    <!-- List will be populated here -->
+                </div>
+            </div>
+        </div>
+        
+        <!-- Cache Statistics -->
+        <div id="cacheStatsCard" class="card stats-card" style="display: none;">
+            <div class="card-body">
+                <h5 class="card-title"><i class="fas fa-database"></i> Cache Statistics</h5>
+                <div class="row" id="cacheStatsRow">
+                    <!-- Stats will be populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Theme Toggle Button -->
+    <button class="btn btn-primary theme-toggle" onclick="toggleTheme()">
+        <i class="fas fa-moon" id="themeIcon"></i>
+    </button>
+    
+    <!-- Bootstrap 5 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        // Global variables
+        let currentFactorData = null;
+        let comparisonData = [];
+        let isDarkMode = false;
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            // Load cache stats on page load
+            showCacheStats();
+            
+            // Set up form submission
+            document.getElementById('queryForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                await searchCache();
+            });
+            
+            // Check for saved theme preference
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme === 'dark') {
+                toggleTheme();
+            }
+            
+            // Add tab event listener for Performance Dashboard
+            document.getElementById('performance-tab').addEventListener('shown.bs.tab', function() {
+                console.log('Performance tab clicked');
+                loadPerformanceDashboard();
+            });
+            
+            // Also load performance dashboard if it's the active tab on page load
+            if (document.getElementById('performance-tab').classList.contains('active')) {
+                console.log('Performance tab is active on load');
+                setTimeout(() => loadPerformanceDashboard(), 100);
+            }
+        });
+        
+        // Theme toggle
+        function toggleTheme() {
+            isDarkMode = !isDarkMode;
+            document.body.classList.toggle('dark-mode');
+            const icon = document.getElementById('themeIcon');
+            icon.className = isDarkMode ? 'fas fa-sun' : 'fas fa-moon';
+            localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
+            
+            // Update Plotly theme
+            if (typeof Plotly !== 'undefined') {
+                const plotElements = document.querySelectorAll('[id$="Chart"]');
+                plotElements.forEach(el => {
+                    if (el.data) {
+                        Plotly.relayout(el, {
+                            plot_bgcolor: isDarkMode ? '#1a1a2e' : 'white',
+                            paper_bgcolor: isDarkMode ? '#1a1a2e' : 'white',
+                            font: { color: isDarkMode ? '#e0e0e0' : '#333' }
+                        });
+                    }
+                });
+            }
+        }
+        
+        // Show notification helper
+        function showNotification(message, type = 'info') {
+            // Remove any existing notifications
+            const existingNotifications = document.querySelectorAll('.notification-toast');
+            existingNotifications.forEach(n => n.remove());
+            
+            const notification = document.createElement('div');
+            notification.className = `alert alert-${type} alert-dismissible fade show position-fixed notification-toast`;
+            notification.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 250px;';
+            
+            // Choose icon based on type
+            let icon = 'fas fa-info-circle';
+            if (type === 'success') icon = 'fas fa-check-circle';
+            else if (type === 'error' || type === 'danger') icon = 'fas fa-exclamation-circle';
+            else if (type === 'warning') icon = 'fas fa-exclamation-triangle';
+            
+            notification.innerHTML = `
+                <i class="${icon}"></i> ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => notification.remove(), 3000);
+        }
+        
+        // Loading functions
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+            document.querySelector('.loading-overlay').style.display = show ? 'block' : 'none';
+        }
+        
+        function hideAllResults() {
+            document.getElementById('metricsCard').style.display = 'none';
+            document.getElementById('chartsSection').style.display = 'none';
+            document.getElementById('tableCard').style.display = 'none';
+            document.getElementById('cachedExpressionsCard').style.display = 'none';
+            document.getElementById('cacheStatsCard').style.display = 'none';
+        }
+        
+        // Cache search
+        async function searchCache() {
+            const expression = document.getElementById('expression').value.trim();
+            if (!expression) {
+                alert('Please enter a factor expression');
+                return;
+            }
+            
+            showLoading(true);
+            hideAllResults();
+            
+            try {
+                const response = await axios.post('/api/search_cache', {
+                    expression: expression,
+                    market: document.getElementById('market').value,
+                    start_date: document.getElementById('startDate').value,
+                    end_date: document.getElementById('endDate').value
+                });
+                
+                if (response.data.success) {
+                    currentFactorData = response.data.data;
+                    displayResults(response.data.data);
+                } else {
+                    if (confirm('No cache found. Would you like to evaluate this factor?')) {
+                        await evaluateFactor();
+                    }
+                }
+            } catch (error) {
+                alert('Error searching cache: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        // Evaluate factor
+        async function evaluateFactor() {
+            const expression = document.getElementById('expression').value.trim();
+            if (!expression) {
+                alert('Please enter a factor expression');
+                return;
+            }
+            
+            showLoading(true);
+            hideAllResults();
+            
+            try {
+                const response = await axios.post('/api/evaluate_factor', {
+                    expression: expression,
+                    market: document.getElementById('market').value,
+                    start_date: document.getElementById('startDate').value,
+                    end_date: document.getElementById('endDate').value,
+                    use_cache: true
+                });
+                
+                if (response.data.success) {
+                    currentFactorData = response.data.data;
+                    displayResults(response.data.data);
+                } else {
+                    alert('Evaluation failed: ' + response.data.message);
+                }
+            } catch (error) {
+                alert('Error evaluating factor: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        // Display results
+        function displayResults(data) {
+            // Display metrics
+            if (data.metrics) {
+                displayMetrics(data.metrics);
+            }
+            
+            // Display charts
+            if (data.daily_metrics && data.daily_metrics.length > 0) {
+                document.getElementById('chartsSection').style.display = 'flex';
+                displayDailyChart(data);
+                displayDistributionChart(data);
+                displayCumulativeChart(data);
+                displayDailyTable(data.daily_metrics);
+            }
+            
+            // Get performance stats
+            getPerformanceStats();
+        }
+        
+        // Display metrics
+        function displayMetrics(metrics) {
+            const metricsRow = document.getElementById('metricsRow');
+            metricsRow.innerHTML = '';
+            
+            const metricItems = [
+                { label: 'IC', value: metrics.ic, format: 4, icon: 'fa-chart-line' },
+                { label: 'Rank IC', value: metrics.rank_ic, format: 4, icon: 'fa-sort-amount-up' },
+                { label: 'ICIR', value: metrics.icir, format: 3, icon: 'fa-percentage' },
+                { label: 'Rank ICIR', value: metrics.rank_icir, format: 3, icon: 'fa-signal' },
+                { label: 'Days', value: metrics.n_dates, format: 0, icon: 'fa-calendar' }
+            ];
+            
+            metricItems.forEach(item => {
+                const col = document.createElement('div');
+                col.className = 'col-md-2 mb-3';
+                
+                const valueClass = item.value > 0 ? 'positive' : (item.value < 0 ? 'negative' : '');
+                const formattedValue = typeof item.value === 'number' ? 
+                    item.value.toFixed(item.format) : 'N/A';
+                
+                col.innerHTML = `
+                    <div class="metric-card">
+                        <i class="fas ${item.icon} fa-2x mb-3 text-primary"></i>
+                        <div class="metric-label">${item.label}</div>
+                        <div class="metric-value ${valueClass}">${formattedValue}</div>
+                    </div>
+                `;
+                
+                metricsRow.appendChild(col);
+            });
+            
+            document.getElementById('metricsCard').style.display = 'block';
+        }
+        
+        // Display daily chart
+        function displayDailyChart(data) {
+            try {
+                if (!data.daily_metrics || data.daily_metrics.length === 0) {
+                    console.error('No daily metrics data available');
+                    return;
+                }
+                
+                // Extract dates and values
+                const dates = data.daily_metrics.map(d => d.date);
+                const icValues = data.daily_metrics.map(d => d.ic);
+                const rankIcValues = data.daily_metrics.map(d => d.rank_ic);
+                
+                // Create traces
+                const traces = [
+                    {
+                        x: dates,
+                        y: icValues,
+                        mode: 'lines+markers',
+                        name: 'IC',
+                        line: { color: 'blue', width: 2 },
+                        marker: { size: 4 }
+                    },
+                    {
+                        x: dates,
+                        y: rankIcValues,
+                        mode: 'lines+markers',
+                        name: 'Rank IC',
+                        line: { color: 'red', width: 2 },
+                        marker: { size: 4 }
+                    }
+                ];
+                
+                // Create layout
+                const layout = {
+                    title: `Daily IC and Rank IC - ${data.market ? data.market.toUpperCase() : ''}`,
+                    xaxis: { title: 'Date' },
+                    yaxis: { title: 'Correlation' },
+                    hovermode: 'x unified',
+                    template: 'plotly_white',
+                    height: 500,
+                    shapes: [{
+                        type: 'line',
+                        x0: dates[0],
+                        y0: 0,
+                        x1: dates[dates.length - 1],
+                        y1: 0,
+                        line: {
+                            color: 'gray',
+                            width: 1,
+                            dash: 'dash'
+                        }
+                    }]
+                };
+                
+                // Apply dark theme if needed
+                if (isDarkMode) {
+                    layout.plot_bgcolor = '#1a1a2e';
+                    layout.paper_bgcolor = '#1a1a2e';
+                    layout.font = { color: '#e0e0e0' };
+                }
+                
+                Plotly.newPlot('dailyChart', traces, layout);
+            } catch (error) {
+                console.error('Error displaying daily chart:', error);
+            }
+        }
+        
+        // Display distribution chart
+        function displayDistributionChart(data) {
+            try {
+                if (!data.daily_metrics || data.daily_metrics.length === 0) {
+                    console.error('No daily metrics data available');
+                    return;
+                }
+                
+                // Extract IC values (filter out null/undefined)
+                const icValues = data.daily_metrics
+                    .map(d => d.ic)
+                    .filter(v => v !== null && v !== undefined && !isNaN(v));
+                
+                if (icValues.length === 0) {
+                    console.error('No valid IC values for distribution');
+                    return;
+                }
+                
+                // Create histogram trace
+                const trace = {
+                    x: icValues,
+                    type: 'histogram',
+                    name: 'IC Distribution',
+                    nbinsx: 30,
+                    opacity: 0.7,
+                    marker: { color: 'blue' }
+                };
+                
+                // Create layout
+                const layout = {
+                    title: `IC Distribution - ${data.market ? data.market.toUpperCase() : ''}`,
+                    xaxis: { title: 'IC Value' },
+                    yaxis: { title: 'Frequency' },
+                    template: 'plotly_white',
+                    height: 400
+                };
+                
+                // Apply dark theme if needed
+                if (isDarkMode) {
+                    layout.plot_bgcolor = '#1a1a2e';
+                    layout.paper_bgcolor = '#1a1a2e';
+                    layout.font = { color: '#e0e0e0' };
+                }
+                
+                Plotly.newPlot('distributionChart', [trace], layout);
+            } catch (error) {
+                console.error('Error displaying distribution chart:', error);
+            }
+        }
+        
+        // Display cumulative chart
+        function displayCumulativeChart(data) {
+            try {
+                if (!data.daily_metrics || data.daily_metrics.length === 0) {
+                    console.error('No daily metrics data available');
+                    return;
+                }
+                
+                // Sort by date to ensure correct cumulative calculation
+                const sortedData = [...data.daily_metrics].sort((a, b) => 
+                    new Date(a.date) - new Date(b.date)
+                );
+                
+                // Calculate cumulative IC and Rank IC
+                let cumulativeIC = 0;
+                let cumulativeRankIC = 0;
+                const dates = [];
+                const cumulativeICValues = [];
+                const cumulativeRankICValues = [];
+                
+                sortedData.forEach(d => {
+                    cumulativeIC += d.ic || 0;
+                    cumulativeRankIC += d.rank_ic || 0;
+                    dates.push(d.date);
+                    cumulativeICValues.push(cumulativeIC);
+                    cumulativeRankICValues.push(cumulativeRankIC);
+                });
+                
+                // Create traces
+                const traces = [
+                    {
+                        x: dates,
+                        y: cumulativeICValues,
+                        mode: 'lines',
+                        name: 'Cumulative IC',
+                        line: { color: 'blue', width: 2 }
+                    },
+                    {
+                        x: dates,
+                        y: cumulativeRankICValues,
+                        mode: 'lines',
+                        name: 'Cumulative Rank IC',
+                        line: { color: 'red', width: 2 }
+                    }
+                ];
+                
+                // Create layout
+                const layout = {
+                    title: `Cumulative IC - ${data.market ? data.market.toUpperCase() : ''}`,
+                    xaxis: { title: 'Date' },
+                    yaxis: { title: 'Cumulative Value' },
+                    hovermode: 'x unified',
+                    template: 'plotly_white',
+                    height: 400
+                };
+                
+                // Apply dark theme if needed
+                if (isDarkMode) {
+                    layout.plot_bgcolor = '#1a1a2e';
+                    layout.paper_bgcolor = '#1a1a2e';
+                    layout.font = { color: '#e0e0e0' };
+                }
+                
+                Plotly.newPlot('cumulativeChart', traces, layout);
+            } catch (error) {
+                console.error('Error displaying cumulative chart:', error);
+            }
+        }
+        
+        // Display daily table
+        function displayDailyTable(dailyMetrics) {
+            const tbody = document.getElementById('dailyTableBody');
+            tbody.innerHTML = '';
+            
+            // Show only first 10 and last 10 rows for large datasets
+            const totalRows = dailyMetrics.length;
+            let rowsToShow = [];
+            
+            if (totalRows <= 20) {
+                rowsToShow = dailyMetrics;
+            } else {
+                rowsToShow = [
+                    ...dailyMetrics.slice(0, 10),
+                    { date: '...', ic: '...', rank_ic: '...', icir: '...', rank_icir: '...' },
+                    ...dailyMetrics.slice(-10)
+                ];
+            }
+            
+            rowsToShow.forEach(row => {
+                const tr = document.createElement('tr');
+                
+                if (row.date === '...') {
+                    tr.innerHTML = `<td colspan="5" class="text-center">...</td>`;
+                } else {
+                    const ic = typeof row.ic === 'number' ? row.ic.toFixed(4) : 'N/A';
+                    const rankIc = typeof row.rank_ic === 'number' ? row.rank_ic.toFixed(4) : 'N/A';
+                    const icir = typeof row.icir === 'number' ? row.icir.toFixed(3) : 'N/A';
+                    const rankIcir = typeof row.rank_icir === 'number' ? row.rank_icir.toFixed(3) : 'N/A';
+                    
+                    tr.innerHTML = `
+                        <td>${row.date}</td>
+                        <td class="${row.ic > 0 ? 'positive' : 'negative'}">${ic}</td>
+                        <td class="${row.rank_ic > 0 ? 'positive' : 'negative'}">${rankIc}</td>
+                        <td>${icir}</td>
+                        <td>${rankIcir}</td>
+                    `;
+                }
+                
+                tbody.appendChild(tr);
+            });
+            
+            document.getElementById('tableCard').style.display = 'block';
+        }
+        
+        // Factor comparison
+        function addComparisonFactor() {
+            const container = document.getElementById('comparisonFactors');
+            const factorCount = container.querySelectorAll('.factor-input-group').length + 1;
+            
+            const newFactor = document.createElement('div');
+            newFactor.className = 'factor-input-group mb-3';
+            newFactor.innerHTML = `
+                <label class="form-label fw-bold">Factor ${factorCount}:</label>
+                <div class="input-group">
+                    <input type="text" class="form-control expression-input comparison-expr" 
+                           placeholder="Enter factor expression">
+                    <button class="btn btn-outline-danger" onclick="this.parentElement.parentElement.remove()">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            `;
+            
+            container.appendChild(newFactor);
+        }
+        
+        async function compareFactors() {
+            const expressions = Array.from(document.querySelectorAll('.comparison-expr'))
+                .map(input => input.value.trim())
+                .filter(expr => expr !== '');
+            
+            if (expressions.length < 2) {
+                alert('Please enter at least 2 factor expressions to compare');
+                return;
+            }
+            
+            showLoading(true);
+            
+            try {
+                const response = await axios.post('/api/compare_factors', {
+                    expressions: expressions,
+                    market: document.getElementById('compareMarket').value,
+                    start_date: document.getElementById('compareStartDate').value,
+                    end_date: document.getElementById('compareEndDate').value
+                });
+                
+                if (response.data.success) {
+                    comparisonData = response.data.comparison;
+                    displayComparisonResults(response.data.comparison);
+                } else {
+                    alert('Comparison failed: ' + response.data.message);
+                }
+            } catch (error) {
+                alert('Error comparing factors: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function displayComparisonResults(comparison) {
+            // Display comparison table
+            const tbody = document.getElementById('comparisonTableBody');
+            tbody.innerHTML = '';
+            
+            comparison.forEach((factor, index) => {
+                const metrics = factor.metrics;
+                const tr = document.createElement('tr');
+                
+                // Truncate long expressions
+                const shortExpr = factor.expression.length > 50 ? 
+                    factor.expression.substring(0, 50) + '...' : factor.expression;
+                
+                tr.innerHTML = `
+                    <td title="${factor.expression}">${shortExpr}</td>
+                    <td class="${metrics.ic > 0 ? 'positive' : 'negative'}">${metrics.ic.toFixed(4)}</td>
+                    <td class="${metrics.rank_ic > 0 ? 'positive' : 'negative'}">${metrics.rank_ic.toFixed(4)}</td>
+                    <td>${metrics.icir !== null && !isNaN(metrics.icir) ? metrics.icir.toFixed(3) : 'N/A'}</td>
+                    <td>${metrics.rank_icir !== null && !isNaN(metrics.rank_icir) ? metrics.rank_icir.toFixed(3) : 'N/A'}</td>
+                    <td>${metrics.n_dates || 0}</td>
+                `;
+                
+                tbody.appendChild(tr);
+            });
+            
+            // Display multiple comparison charts
+            displayComparisonCharts(comparison);
+            
+            document.getElementById('comparisonResults').style.display = 'block';
+        }
+        
+        function displayComparisonCharts(comparison) {
+            // 1. IC Comparison Chart
+            displayICComparisonChart(comparison);
+            
+            // 2. Rank IC Comparison Chart
+            displayRankICComparisonChart(comparison);
+            
+            // 3. Cumulative IC Chart
+            displayCumulativeComparisonChart(comparison);
+            
+            // 4. Metrics Bar Chart
+            displayMetricsComparisonChart(comparison);
+        }
+        
+        function displayICComparisonChart(comparison) {
+            const traces = [];
+            const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b'];
+            
+            comparison.forEach((factor, index) => {
+                if (factor.daily_metrics && factor.daily_metrics.length > 0) {
+                    const shortExpr = factor.expression.length > 30 ? 
+                        factor.expression.substring(0, 30) + '...' : factor.expression;
+                    traces.push({
+                        x: factor.daily_metrics.map(d => d.date),
+                        y: factor.daily_metrics.map(d => d.ic),
+                        name: `Factor ${index + 1}: ${shortExpr}`,
+                        text: factor.expression,  // Full expression in tooltip
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        line: { color: colors[index % colors.length], width: 2 },
+                        marker: { size: 4 }
+                    });
+                }
+            });
+            
+            const layout = {
+                title: 'Daily IC Comparison',
+                xaxis: { title: 'Date' },
+                yaxis: { title: 'IC Value', zeroline: true },
+                hovermode: 'x unified',
+                template: 'plotly_white',
+                height: 400,
+                shapes: [{
+                    type: 'line',
+                    x0: 0,
+                    y0: 0,
+                    x1: 1,
+                    y1: 0,
+                    xref: 'paper',
+                    yref: 'y',
+                    line: { color: 'gray', width: 1, dash: 'dash' }
+                }]
+            };
+            
+            // Apply theme
+            if (isDarkMode) {
+                layout.plot_bgcolor = '#1a1a2e';
+                layout.paper_bgcolor = '#1a1a2e';
+                layout.font = { color: '#e0e0e0' };
+            }
+            
+            Plotly.newPlot('comparisonICChart', traces, layout);
+        }
+        
+        function displayRankICComparisonChart(comparison) {
+            const traces = [];
+            const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b'];
+            
+            comparison.forEach((factor, index) => {
+                if (factor.daily_metrics && factor.daily_metrics.length > 0) {
+                    const shortExpr = factor.expression.length > 30 ? 
+                        factor.expression.substring(0, 30) + '...' : factor.expression;
+                    traces.push({
+                        x: factor.daily_metrics.map(d => d.date),
+                        y: factor.daily_metrics.map(d => d.rank_ic),
+                        name: `Factor ${index + 1}: ${shortExpr}`,
+                        text: factor.expression,  // Full expression in tooltip
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        line: { color: colors[index % colors.length], width: 2 },
+                        marker: { size: 4 }
+                    });
+                }
+            });
+            
+            const layout = {
+                title: 'Daily Rank IC Comparison',
+                xaxis: { title: 'Date' },
+                yaxis: { title: 'Rank IC Value', zeroline: true },
+                hovermode: 'x unified',
+                template: 'plotly_white',
+                height: 400,
+                shapes: [{
+                    type: 'line',
+                    x0: 0,
+                    y0: 0,
+                    x1: 1,
+                    y1: 0,
+                    xref: 'paper',
+                    yref: 'y',
+                    line: { color: 'gray', width: 1, dash: 'dash' }
+                }]
+            };
+            
+            // Apply theme
+            if (isDarkMode) {
+                layout.plot_bgcolor = '#1a1a2e';
+                layout.paper_bgcolor = '#1a1a2e';
+                layout.font = { color: '#e0e0e0' };
+            }
+            
+            Plotly.newPlot('comparisonRankICChart', traces, layout);
+        }
+        
+        function displayCumulativeComparisonChart(comparison) {
+            const traces = [];
+            const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b'];
+            
+            comparison.forEach((factor, index) => {
+                if (factor.daily_metrics && factor.daily_metrics.length > 0) {
+                    // Sort by date
+                    const sortedMetrics = [...factor.daily_metrics].sort((a, b) => 
+                        new Date(a.date) - new Date(b.date)
+                    );
+                    
+                    // Calculate cumulative IC
+                    let cumulativeIC = 0;
+                    const cumulativeData = sortedMetrics.map(d => {
+                        cumulativeIC += d.ic || 0;
+                        return cumulativeIC;
+                    });
+                    
+                    const shortExpr = factor.expression.length > 30 ? 
+                        factor.expression.substring(0, 30) + '...' : factor.expression;
+                    traces.push({
+                        x: sortedMetrics.map(d => d.date),
+                        y: cumulativeData,
+                        name: `Factor ${index + 1}: ${shortExpr}`,
+                        text: factor.expression,  // Full expression in tooltip
+                        type: 'scatter',
+                        mode: 'lines',
+                        fill: 'tozeroy',
+                        line: { color: colors[index % colors.length], width: 2 },
+                        fillcolor: colors[index % colors.length] + '20'
+                    });
+                }
+            });
+            
+            const layout = {
+                title: 'Cumulative IC Comparison',
+                xaxis: { title: 'Date' },
+                yaxis: { title: 'Cumulative IC' },
+                hovermode: 'x unified',
+                template: 'plotly_white',
+                height: 400
+            };
+            
+            // Apply theme
+            if (isDarkMode) {
+                layout.plot_bgcolor = '#1a1a2e';
+                layout.paper_bgcolor = '#1a1a2e';
+                layout.font = { color: '#e0e0e0' };
+            }
+            
+            Plotly.newPlot('comparisonCumulativeChart', traces, layout);
+        }
+        
+        function displayMetricsComparisonChart(comparison) {
+            const factorNames = comparison.map((f, i) => `Factor ${i + 1}`);
+            const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'];
+            
+            // Create grouped bar chart for multiple metrics
+            const trace1 = {
+                x: factorNames,
+                y: comparison.map(f => f.metrics.ic),
+                name: 'IC',
+                type: 'bar',
+                marker: { color: colors[0] }
+            };
+            
+            const trace2 = {
+                x: factorNames,
+                y: comparison.map(f => f.metrics.rank_ic),
+                name: 'Rank IC',
+                type: 'bar',
+                marker: { color: colors[1] }
+            };
+            
+            const trace3 = {
+                x: factorNames,
+                y: comparison.map(f => f.metrics.icir !== null && !isNaN(f.metrics.icir) ? f.metrics.icir : 0),
+                name: 'ICIR',
+                type: 'bar',
+                marker: { color: colors[2] }
+            };
+            
+            const trace4 = {
+                x: factorNames,
+                y: comparison.map(f => f.metrics.rank_icir !== null && !isNaN(f.metrics.rank_icir) ? f.metrics.rank_icir : 0),
+                name: 'Rank ICIR',
+                type: 'bar',
+                marker: { color: colors[3] }
+            };
+            
+            const layout = {
+                title: 'Performance Metrics Comparison',
+                xaxis: { title: 'Factors' },
+                yaxis: { title: 'Value' },
+                barmode: 'group',
+                template: 'plotly_white',
+                height: 400,
+                showlegend: true,
+                legend: { orientation: 'h', y: -0.2 }
+            };
+            
+            // Apply theme
+            if (isDarkMode) {
+                layout.plot_bgcolor = '#1a1a2e';
+                layout.paper_bgcolor = '#1a1a2e';
+                layout.font = { color: '#e0e0e0' };
+            }
+            
+            Plotly.newPlot('comparisonMetricsChart', [trace1, trace2, trace3, trace4], layout);
+        }
+        
+        // Export functions
+        async function exportCurrentData() {
+            if (!currentFactorData) {
+                alert('No data to export. Please search or evaluate a factor first.');
+                return;
+            }
+            
+            const format = prompt('Export format (csv/excel):', 'csv');
+            if (!format) return;
+            
+            showLoading(true);
+            
+            try {
+                const response = await axios.post('/api/export_data', {
+                    expression: document.getElementById('expression').value,
+                    market: document.getElementById('market').value,
+                    start_date: document.getElementById('startDate').value,
+                    end_date: document.getElementById('endDate').value,
+                    format: format.toLowerCase()
+                });
+                
+                if (response.data.success) {
+                    // Download file
+                    const link = document.createElement('a');
+                    link.href = `data:${response.data.mime_type};base64,${response.data.data}`;
+                    link.download = response.data.filename;
+                    link.click();
+                } else {
+                    alert('Export failed: ' + response.data.message);
+                }
+            } catch (error) {
+                alert('Error exporting data: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function exportChart(chartId) {
+            Plotly.downloadImage(chartId, {
+                format: 'png',
+                width: 1200,
+                height: 600,
+                filename: `${chartId}_${new Date().toISOString().split('T')[0]}`
+            });
+        }
+        
+        function exportTableCSV() {
+            if (!currentFactorData || !currentFactorData.daily_metrics) {
+                alert('No data to export');
+                return;
+            }
+            
+            let csv = 'Date,IC,Rank IC,ICIR,Rank ICIR\n';
+            currentFactorData.daily_metrics.forEach(row => {
+                csv += `${row.date},${row.ic},${row.rank_ic},${row.icir || ''},${row.rank_icir || ''}\n`;
+            });
+            
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `factor_data_${new Date().toISOString().split('T')[0]}.csv`;
+            link.click();
+        }
+        
+        function exportTableExcel() {
+            exportCurrentData(); // Reuse the API export with Excel format
+        }
+        
+        // Cache management
+        async function loadCachedExpressions() {
+            showLoading(true);
+            
+            try {
+                const response = await axios.get('/api/get_cached_expressions?limit=50');
+                
+                if (response.data.success) {
+                    displayCachedExpressions(response.data.expressions);
+                }
+            } catch (error) {
+                alert('Error loading cached expressions: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function displayCachedExpressions(expressions) {
+            const list = document.getElementById('cachedExpressionsList');
+            list.innerHTML = '';
+            
+            expressions.forEach(expr => {
+                const item = document.createElement('div');
+                item.className = 'list-group-item cached-expr-item';
+                item.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="ms-2 me-auto">
+                            <div class="fw-bold">
+                                <i class="fas fa-fingerprint text-primary"></i> 
+                                ${expr.expr_hash.substring(0, 16)}...
+                            </div>
+                            <code style="font-size: 0.9rem;">
+                                ${expr.expression.substring(0, 100)}${expr.expression.length > 100 ? '...' : ''}
+                            </code>
+                        </div>
+                        <div class="text-end">
+                            <span class="badge bg-primary rounded-pill mb-1">${expr.access_count} uses</span>
+                            <br>
+                            <small class="text-muted">${new Date(expr.last_accessed).toLocaleString()}</small>
+                        </div>
+                    </div>
+                `;
+                
+                item.onclick = () => {
+                    document.getElementById('expression').value = expr.expression;
+                    document.getElementById('cachedExpressionsCard').style.display = 'none';
+                    // Switch to single factor tab
+                    bootstrap.Tab.getOrCreateInstance(document.getElementById('single-tab')).show();
+                };
+                
+                list.appendChild(item);
+            });
+            
+            document.getElementById('cachedExpressionsCard').style.display = 'block';
+        }
+        
+        async function showCacheStats() {
+            try {
+                const response = await axios.get('/api/cache_stats');
+                
+                if (response.data.success) {
+                    displayCacheStats(response.data.stats);
+                    updatePerformanceDashboard(response.data.stats);
+                }
+            } catch (error) {
+                console.error('Error loading cache stats:', error);
+            }
+        }
+        
+        function displayCacheStats(stats) {
+            const statsRow = document.getElementById('cacheStatsRow');
+            statsRow.innerHTML = '';
+            
+            const statItems = [
+                { label: 'Cached Expressions', value: stats.num_expressions, icon: 'fa-code' },
+                { label: 'Total Entries', value: stats.num_entries, icon: 'fa-database' },
+                { label: 'Total Accesses', value: stats.total_accesses, icon: 'fa-eye' },
+                { label: 'Cache Size (MB)', value: stats.total_size_mb.toFixed(2), icon: 'fa-hdd' }
+            ];
+            
+            statItems.forEach(item => {
+                const col = document.createElement('div');
+                col.className = 'col-md-3 text-center';
+                col.innerHTML = `
+                    <i class="fas ${item.icon} fa-2x mb-2"></i>
+                    <h6>${item.label}</h6>
+                    <div class="metric-value">${item.value}</div>
+                `;
+                statsRow.appendChild(col);
+            });
+            
+            document.getElementById('cacheStatsCard').style.display = 'block';
+        }
+        
+        // Performance dashboard
+        function updatePerformanceDashboard(stats) {
+            const metricsDiv = document.getElementById('performanceMetrics');
+            
+            // Calculate actual metrics
+            const hitRate = stats.total_accesses > 0 ? 
+                ((stats.total_accesses / stats.num_expressions) / stats.avg_data_points_per_expr * 100).toFixed(1) : '0.0';
+            
+            const dateRangeText = stats.date_range && stats.date_range.min && stats.date_range.max ? 
+                `${stats.date_range.min} to ${stats.date_range.max}` : 'No data';
+            
+            metricsDiv.innerHTML = `
+                <div class="col-md-3">
+                    <div class="text-center">
+                        <i class="fas fa-database fa-3x mb-3"></i>
+                        <h5>Cache Status</h5>
+                        <p class="mb-0">
+                            <span class="badge bg-success">Active</span>
+                        </p>
+                        <small class="text-muted">${stats.num_expressions} expressions cached</small>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="text-center">
+                        <i class="fas fa-chart-bar fa-3x mb-3"></i>
+                        <h5>Data Points</h5>
+                        <p class="mb-0 metric-value">${stats.num_entries.toLocaleString()}</p>
+                        <small class="text-muted">${stats.avg_data_points_per_expr.toFixed(0)} per factor</small>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="text-center">
+                        <i class="fas fa-hdd fa-3x mb-3"></i>
+                        <h5>Cache Size</h5>
+                        <p class="mb-0 metric-value">${stats.total_size_mb.toFixed(2)} MB</p>
+                        <small class="text-muted">${stats.num_markets || 1} market(s)</small>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="text-center">
+                        <i class="fas fa-calendar-alt fa-3x mb-3"></i>
+                        <h5>Date Coverage</h5>
+                        <p class="mb-0 metric-value" style="font-size: 0.9rem;">${dateRangeText}</p>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Get performance stats
+        async function getPerformanceStats() {
+            try {
+                const response = await axios.post('/api/get_performance_stats', {
+                    expression: document.getElementById('expression').value,
+                    market: document.getElementById('market').value,
+                    start_date: document.getElementById('startDate').value,
+                    end_date: document.getElementById('endDate').value
+                });
+                
+                if (response.data.success) {
+                    // Additional stats can be displayed in the UI
+                    console.log('Performance stats:', response.data.stats);
+                }
+            } catch (error) {
+                console.error('Error getting performance stats:', error);
+            }
+        }
+        
+        // Load Performance Dashboard data
+        async function loadPerformanceDashboard() {
+            console.log('Loading Performance Dashboard...');
+            
+            // Show loading states
+            document.getElementById('topFactorsTable').innerHTML = `
+                <div class="text-center text-muted">
+                    <i class="fas fa-spinner fa-spin fa-2x"></i>
+                    <p class="mt-2">Loading top factors...</p>
+                </div>
+            `;
+            document.getElementById('recentActivity').innerHTML = `
+                <div class="text-center text-muted">
+                    <i class="fas fa-spinner fa-spin fa-2x"></i>
+                    <p class="mt-2">Loading recent activity...</p>
+                </div>
+            `;
+            
+            // Load all performance data
+            try {
+                await showCacheStats();  // Updates performance metrics
+                await loadTopFactors();
+                await loadRecentActivity();
+            } catch (error) {
+                console.error('Error loading performance dashboard:', error);
+                showNotification('Failed to load dashboard data', 'error');
+            }
+        }
+        
+        // Refresh Performance Dashboard with animation
+        async function refreshPerformanceDashboard() {
+            const refreshIcon = document.getElementById('refreshIcon');
+            refreshIcon.classList.add('fa-spin');
+            
+            try {
+                await loadPerformanceDashboard();
+                showNotification('Dashboard refreshed successfully', 'success');
+            } catch (error) {
+                console.error('Error refreshing dashboard:', error);
+                showNotification('Failed to refresh dashboard', 'error');
+            } finally {
+                refreshIcon.classList.remove('fa-spin');
+            }
+        }
+        
+        async function loadTopFactors() {
+            try {
+                console.log('Loading top factors...');
+                const response = await axios.get('/api/get_top_factors?limit=10&metric=rank_ic');
+                
+                if (response.data.success) {
+                    console.log('Top factors loaded:', response.data.top_factors.length);
+                    displayTopFactors(response.data.top_factors);
+                } else {
+                    document.getElementById('topFactorsTable').innerHTML = '<p class="text-muted">Failed to load top factors</p>';
+                }
+            } catch (error) {
+                console.error('Error loading top factors:', error);
+                document.getElementById('topFactorsTable').innerHTML = `
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle"></i> Failed to load top factors. 
+                        Please check if factors have been evaluated.
+                    </div>
+                `;
+            }
+        }
+        
+        function displayTopFactors(factors) {
+            const tableDiv = document.getElementById('topFactorsTable');
+            
+            if (!factors || factors.length === 0) {
+                tableDiv.innerHTML = `
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> No factors have been evaluated yet.
+                        <br>Evaluate some factors using Single Factor Analysis or Factor Comparison first.
+                    </div>
+                `;
+                return;
+            }
+            
+            let html = `
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Expression</th>
+                                <th>IC</th>
+                                <th>Rank IC</th>
+                                <th>ICIR</th>
+                                <th>Evaluations</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+            
+            factors.forEach((factor, idx) => {
+                const metrics = factor.metrics;
+                html += `
+                    <tr>
+                        <td>
+                            <span class="badge bg-primary me-2">#${idx + 1}</span>
+                            <code>${factor.expression.substring(0, 60)}${factor.expression.length > 60 ? '...' : ''}</code>
+                            ${factor.market ? `<br><small class="text-muted">Market: ${factor.market.toUpperCase()}</small>` : ''}
+                        </td>
+                        <td class="${metrics.ic > 0 ? 'positive' : 'negative'}">${metrics.ic.toFixed(4)}</td>
+                        <td class="${metrics.rank_ic > 0 ? 'positive' : 'negative'}">${metrics.rank_ic.toFixed(4)}</td>
+                        <td>${metrics.icir !== null && !isNaN(metrics.icir) ? metrics.icir.toFixed(3) : 'N/A'}</td>
+                        <td>${factor.evaluation_count}</td>
+                    </tr>
+                `;
+            });
+            
+            html += '</tbody></table></div>';
+            tableDiv.innerHTML = html;
+        }
+        
+        async function loadRecentActivity() {
+            try {
+                console.log('Loading recent activity...');
+                const response = await axios.get('/api/get_recent_activity?limit=10');
+                
+                if (response.data.success) {
+                    console.log('Recent activity loaded:', response.data.recent_activity.length);
+                    displayRecentActivity(response.data.recent_activity);
+                } else {
+                    document.getElementById('recentActivity').innerHTML = '<p class="text-muted">Failed to load recent activity</p>';
+                }
+            } catch (error) {
+                console.error('Error loading recent activity:', error);
+                document.getElementById('recentActivity').innerHTML = `
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle"></i> Failed to load recent activity.
+                    </div>
+                `;
+            }
+        }
+        
+        function displayRecentActivity(activities) {
+            const activityDiv = document.getElementById('recentActivity');
+            
+            if (!activities || activities.length === 0) {
+                activityDiv.innerHTML = `
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> No recent activity recorded.
+                        <br>Activity will appear here after evaluating factors.
+                    </div>
+                `;
+                return;
+            }
+            
+            let html = '<div class="list-group">';
+            
+            activities.forEach(activity => {
+                const timeAgo = getTimeAgo(activity.last_accessed);
+                html += `
+                    <div class="list-group-item">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <h6 class="mb-1">
+                                    <i class="fas fa-chart-line text-primary"></i>
+                                    Factor Evaluated
+                                </h6>
+                                <code class="small">${activity.expression.substring(0, 80)}${activity.expression.length > 80 ? '...' : ''}</code>
+                            </div>
+                            <small class="text-muted">${timeAgo}</small>
+                        </div>
+                        <small class="text-muted">
+                            <i class="fas fa-clock"></i> ${new Date(activity.last_accessed).toLocaleString()}
+                            · <i class="fas fa-sync"></i> ${activity.access_count} evaluations
+                        </small>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            activityDiv.innerHTML = html;
+        }
+        
+        function getTimeAgo(dateString) {
+            const date = new Date(dateString);
+            const now = new Date();
+            const seconds = Math.floor((now - date) / 1000);
+            
+            if (seconds < 60) return 'just now';
+            if (seconds < 3600) return `${Math.floor(seconds / 60)} minutes ago`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
+            return `${Math.floor(seconds / 86400)} days ago`;
+        }
+    </script>
+</body>
+</html>

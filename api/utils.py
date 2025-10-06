@@ -32,13 +32,19 @@ import numpy as np
 # -----------------------------
 # Config (env-overridable)
 # -----------------------------
-DEFAULT_PROVIDER_URI = os.environ.get("QLIB_PROVIDER_URI", os.path.expanduser("~/.qlib/qlib_data/cn_data"))
+DEFAULT_PROVIDER_URI = os.environ.get(
+    "QLIB_PROVIDER_URI", os.path.expanduser("~/.qlib/qlib_data/cn_data")
+)
 DEFAULT_REGION = os.environ.get("QLIB_REGION", "cn")
 DEFAULT_INSTRUMENTS = os.environ.get("QLIB_INSTRUMENTS", "CSI300")
 
 CACHE_PATH = os.environ.get("FACTOR_API_CACHE_PATH", "factor_cache.sqlite")
-CACHE_MAX_ENTRIES = int(os.environ.get("FACTOR_API_CACHE_MAX_ENTRIES", "50000"))  # LRU target
-CACHE_PRUNE_BATCH = int(os.environ.get("FACTOR_API_CACHE_PRUNE_BATCH", "5000"))   # delete this many when over
+CACHE_MAX_ENTRIES = int(
+    os.environ.get("FACTOR_API_CACHE_MAX_ENTRIES", "50000")
+)  # LRU target
+CACHE_PRUNE_BATCH = int(
+    os.environ.get("FACTOR_API_CACHE_PRUNE_BATCH", "5000")
+)  # delete this many when over
 
 CPU_JOBS = max(1, int(os.environ.get("FACTOR_API_CPU_JOBS", str(os.cpu_count() or 4))))
 
@@ -50,13 +56,16 @@ def expr_hash(expr: str) -> str:
     h = hashlib.blake2b(expr.encode("utf-8"), digest_size=16)
     return h.hexdigest()
 
+
 def cache_key(expr: str, market: str, start: str, end: str, label: str) -> str:
     """Key = hash(expr) + params (keeps key short, ignores whitespace diffs)."""
     h = expr_hash(_normalize_expr(expr))
     return f"{h}|{market}|{start}|{end}|{label}"
 
+
 def _normalize_expr(expr: str) -> str:
     return " ".join(expr.strip().split())
+
 
 # -----------------------------
 # Persistent cache (SQLite + JSON)
@@ -70,7 +79,9 @@ class PersistentCache:
         self._init_db()
 
     def _connect(self):
-        conn = sqlite3.connect(self.path, timeout=30, isolation_level=None, check_same_thread=False)
+        conn = sqlite3.connect(
+            self.path, timeout=30, isolation_level=None, check_same_thread=False
+        )
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
         conn.execute("PRAGMA temp_store=MEMORY;")
@@ -90,7 +101,9 @@ class PersistentCache:
                 )
                 """
             )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_kv_last_access ON kv(last_access)")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_kv_last_access ON kv(last_access)"
+            )
         finally:
             conn.close()
 
@@ -103,7 +116,9 @@ class PersistentCache:
             if row is None:
                 return None
             v_json, hits = row
-            conn.execute("UPDATE kv SET last_access=?, hits=? WHERE k=?", (now, hits + 1, k))
+            conn.execute(
+                "UPDATE kv SET last_access=?, hits=? WHERE k=?", (now, hits + 1, k)
+            )
             return json.loads(v_json)
         finally:
             conn.close()
@@ -139,11 +154,21 @@ class PersistentCache:
         conn = self._connect()
         try:
             (n,) = conn.execute("SELECT COUNT(*) FROM kv").fetchone()
-            (min_ts,) = conn.execute("SELECT COALESCE(MIN(created_at),0) FROM kv").fetchone()
-            (max_ts,) = conn.execute("SELECT COALESCE(MAX(last_access),0) FROM kv").fetchone()
-            return {"entries": n, "created_min": int(min_ts), "last_access_max": int(max_ts), "path": self.path}
+            (min_ts,) = conn.execute(
+                "SELECT COALESCE(MIN(created_at),0) FROM kv"
+            ).fetchone()
+            (max_ts,) = conn.execute(
+                "SELECT COALESCE(MAX(last_access),0) FROM kv"
+            ).fetchone()
+            return {
+                "entries": n,
+                "created_min": int(min_ts),
+                "last_access_max": int(max_ts),
+                "path": self.path,
+            }
         finally:
             conn.close()
+
 
 # -----------------------------
 # Subprocess runner with hard timeout
@@ -153,6 +178,7 @@ class SubprocessResult:
     ok: bool
     payload: Any
     error_type: Optional[str] = None
+
 
 def _spawn_and_run(target, args: tuple, timeout: int) -> SubprocessResult:
     """
@@ -177,18 +203,29 @@ def _spawn_and_run(target, args: tuple, timeout: int) -> SubprocessResult:
         # Hard kill and clean
         p.terminate()
         p.join(5)
-        return SubprocessResult(ok=False, payload=f"Timeout: execution exceeded {timeout}s", error_type="TIMEOUT")
+        return SubprocessResult(
+            ok=False,
+            payload=f"Timeout: execution exceeded {timeout}s",
+            error_type="TIMEOUT",
+        )
 
     if q.empty():
-        return SubprocessResult(ok=False, payload="No result returned from subprocess.", error_type="NO_RESULT")
+        return SubprocessResult(
+            ok=False,
+            payload="No result returned from subprocess.",
+            error_type="NO_RESULT",
+        )
 
     ok, payload, err_type = q.get_nowait()
     return SubprocessResult(ok=ok, payload=payload, error_type=err_type)
 
+
 # -----------------------------
 # Vectorized IC / RankIC
 # -----------------------------
-def _daily_ic_rankic(feature_s: pd.Series, label_s: pd.Series) -> Tuple[pd.Series, pd.Series]:
+def _daily_ic_rankic(
+    feature_s: pd.Series, label_s: pd.Series
+) -> Tuple[pd.Series, pd.Series]:
     """
     Compute daily IC (Pearson) and RankIC (Spearman via ranks) by date.
     Both inputs are aligned Series with a MultiIndex containing 'datetime'.
@@ -211,12 +248,16 @@ def _daily_ic_rankic(feature_s: pd.Series, label_s: pd.Series) -> Tuple[pd.Serie
     rankic_daily = g.apply(_rankic)
     return ic_daily, rankic_daily
 
+
 def _ir(mean_val: float, std_val: float) -> float:
     if std_val is None or not np.isfinite(std_val) or std_val <= 0:
         return float(0)
     return float(mean_val / std_val)
 
-def summarize_ic_rankic(ic_daily: pd.Series, rankic_daily: pd.Series) -> Dict[str, float]:
+
+def summarize_ic_rankic(
+    ic_daily: pd.Series, rankic_daily: pd.Series
+) -> Dict[str, float]:
     ic_mean = float(ic_daily.mean()) if len(ic_daily) else float(0)
     ic_std = float(ic_daily.std(ddof=1)) if len(ic_daily) > 1 else float(0)
     rankic_mean = float(rankic_daily.mean()) if len(rankic_daily) else float(0)
@@ -229,10 +270,13 @@ def summarize_ic_rankic(ic_daily: pd.Series, rankic_daily: pd.Series) -> Dict[st
         "n_dates": int(len(ic_daily.index.unique())),
     }
 
+
 # -----------------------------
 # Child-process workers
 # -----------------------------
-def _child_eval_expr(expr: str, market: str, start: str, end: str, label: str) -> Dict[str, Any]:
+def _child_eval_expr(
+    expr: str, market: str, start: str, end: str, label: str
+) -> Dict[str, Any]:
     """
     Runs inside child process. Heavy libs are imported here, so the parent can hard-kill safely.
     """
@@ -243,7 +287,13 @@ def _child_eval_expr(expr: str, market: str, start: str, end: str, label: str) -
     qlib.init(provider_uri=DEFAULT_PROVIDER_URI, region=DEFAULT_REGION)
 
     factor_list = [{"name": "api_factor", "expression": expr}]
-    out = compute_factor_data(factor_list, label=label, instruments=market.lower(), start_time=start, end_time=end)
+    out = compute_factor_data(
+        factor_list,
+        label=label,
+        instruments=market.lower(),
+        start_time=start,
+        end_time=end,
+    )
 
     if (
         out is None
@@ -269,7 +319,7 @@ def _child_eval_expr(expr: str, market: str, start: str, end: str, label: str) -
         "metrics": {
             "ic": metrics["ic"],
             "rank_ic": metrics["rank_ic"],
-            "ir": metrics["icir"],       # backward compatible alias
+            "ir": metrics["icir"],  # backward compatible alias
             "icir": metrics["icir"],
             "rank_icir": metrics["rank_icir"],
             "turnover": 0.0,
@@ -278,12 +328,14 @@ def _child_eval_expr(expr: str, market: str, start: str, end: str, label: str) -
         "timestamp": pd.Timestamp.utcnow().isoformat(),
     }
 
-def _child_check_expr(expr: str, instruments: str, start_time: str, end_time: str) -> Dict[str, Any]:
+
+def _child_check_expr(
+    expr: str, instruments: str, start_time: str, end_time: str
+) -> Dict[str, Any]:
     import qlib
     from qlib.data.dataset.loader import QlibDataLoader
 
     qlib.init(provider_uri=DEFAULT_PROVIDER_URI, region=DEFAULT_REGION)
-
 
     cfg = {"feature": ([expr], ["test_expr"])}
     dl = QlibDataLoader(config=cfg)
@@ -294,35 +346,48 @@ def _child_check_expr(expr: str, instruments: str, start_time: str, end_time: st
         error_message = str(e)
         # Read error message from Qlib
         if re.search(r"missing \d+ required positional argument", error_message):
-            return  {
-                        "success": False,
-                        "error_message": error_message,
-                        "error_type": "INVALID_PARA",
-                    }
-            
+            return {
+                "success": False,
+                "error_message": error_message,
+                "error_type": "INVALID_PARA",
+            }
+
         elif re.search(r"The operator \[.*?\] is not registered", error_message):
             return {
-                        "success": False,
-                        "error_message": error_message,
-                        "error_type": "UNREGISTERED_OPERATOR",
-                    }
+                "success": False,
+                "error_message": error_message,
+                "error_type": "UNREGISTERED_OPERATOR",
+            }
         else:
-            return  {
-                        "success": False,
-                        "error_message": error_message,
-                        "error_type": "UNKNOWN_ERROR",
-                    }
+            return {
+                "success": False,
+                "error_message": error_message,
+                "error_type": "UNKNOWN_ERROR",
+            }
 
     if feat.empty:
-        return {"success": False, "error_message": "Empty feature matrix", "error_type": "EMPTY_DATA"}
+        return {
+            "success": False,
+            "error_message": "Empty feature matrix",
+            "error_type": "EMPTY_DATA",
+        }
 
     nan_ratio = float(feat.isna().mean().mean())
     if nan_ratio > 0.01:
-        return {"success": False, "error_message": f"High NaN ratio: {nan_ratio:.2%}", "error_type": "HIGH_NAN_RATIO"}
+        return {
+            "success": False,
+            "error_message": f"High NaN ratio: {nan_ratio:.2%}",
+            "error_type": "HIGH_NAN_RATIO",
+        }
     return {"success": True, "nan_ratio": nan_ratio}
 
+
 def _child_batch_eval(
-    factors: List[Dict[str, str]], instruments: str, start: str, end: str, label_spec: str
+    factors: List[Dict[str, str]],
+    instruments: str,
+    start: str,
+    end: str,
+    label_spec: str,
 ) -> Dict[str, Any]:
     """
     Efficient batch IC/RankIC:
@@ -337,10 +402,7 @@ def _child_batch_eval(
     names = [f["name"] for f in factors]
     fields = [f["expression"] for f in factors]
 
-    cfg = {
-        "feature": (fields, names),
-        "label": ([label_spec], ["RET"]),
-    }
+    cfg = {"feature": (fields, names), "label": ([label_spec], ["RET"])}
     dl = QlibDataLoader(config=cfg)
     data = dl.load(instruments=instruments, start_time=start, end_time=end)
 
@@ -369,7 +431,7 @@ def _child_batch_eval(
 
     # Process each date; vectorized within the date
     for d in uniq_dates:
-        mask = (groups == d)
+        mask = groups == d
         Xd = X.loc[mask]
         yd = y.loc[mask]
 
@@ -385,7 +447,7 @@ def _child_batch_eval(
         ric.index.name = "factor"
         ric_rows.append(ric)
 
-    ic_table = pd.concat(ic_rows, axis=1).T    # shape: n_dates x n_factors
+    ic_table = pd.concat(ic_rows, axis=1).T  # shape: n_dates x n_factors
     ric_table = pd.concat(ric_rows, axis=1).T
 
     # Summaries
@@ -417,18 +479,37 @@ def _child_batch_eval(
             }
         )
 
-    return {"success": True, "count": len(results), "results": results, "timestamp": pd.Timestamp.utcnow().isoformat()}
+    return {
+        "success": True,
+        "count": len(results),
+        "results": results,
+        "timestamp": pd.Timestamp.utcnow().isoformat(),
+    }
+
 
 # -----------------------------
 # Public API (used by server)
 # -----------------------------
-def run_eval_with_timeout(expr: str, market: str, start: str, end: str, label: str, timeout: int) -> SubprocessResult:
+def run_eval_with_timeout(
+    expr: str, market: str, start: str, end: str, label: str, timeout: int
+) -> SubprocessResult:
     return _spawn_and_run(_child_eval_expr, (expr, market, start, end, label), timeout)
 
-def run_check_with_timeout(expr: str, instruments: str, start: str, end: str, timeout: int) -> SubprocessResult:
+
+def run_check_with_timeout(
+    expr: str, instruments: str, start: str, end: str, timeout: int
+) -> SubprocessResult:
     return _spawn_and_run(_child_check_expr, (expr, instruments, start, end), timeout)
 
+
 def run_batch_with_timeout(
-    factors: List[Dict[str, str]], instruments: str, start: str, end: str, label_spec: str, timeout: int
+    factors: List[Dict[str, str]],
+    instruments: str,
+    start: str,
+    end: str,
+    label_spec: str,
+    timeout: int,
 ) -> SubprocessResult:
-    return _spawn_and_run(_child_batch_eval, (factors, instruments, start, end, label_spec), timeout)
+    return _spawn_and_run(
+        _child_batch_eval, (factors, instruments, start, end, label_spec), timeout
+    )

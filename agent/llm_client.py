@@ -34,7 +34,7 @@ def call_llm(
     return_raw=False,
     max_try=5,
     timeout=120,
-    service_provider='all', # 'all' use all-in-one, 'default' is default URL
+    service_provider="all",  # 'all' use all-in-one, 'default' is default URL
     save_raw_dir=None,
 ):
     # If local is True, send request to local server
@@ -60,7 +60,7 @@ def call_llm(
             raise RuntimeError(f"Local model server error: {e}")
 
     # Otherwise, use API-based client
-    if service_provider == 'default':
+    if service_provider == "default":
         if model.startswith("gpt-"):
             client = OpenAI(
                 api_key=api_key or OPENAI_API_KEY,
@@ -83,7 +83,7 @@ def call_llm(
                 base_url="https://api2.aigcbest.top/v1",
                 timeout=timeout,
             )
-    elif service_provider == 'all':
+    elif service_provider == "all":
         # General API
         client = OpenAI(
             api_key="sk-qXQzDPMjBw0fMHSQtb7s1JO68IKrAMPwTjVOeJ2f19SEv2PZ",
@@ -93,7 +93,7 @@ def call_llm(
 
     else:
         raise ValueError(f"Unknown service_provider: {service_provider}")
-    
+
     request_params = {
         "model": model,
         "messages": [
@@ -111,15 +111,17 @@ def call_llm(
             response = client.chat.completions.create(**request_params)
             if save_raw_dir:
                 os.makedirs(save_raw_dir, exist_ok=True)
-                raw_response_name = time.strftime("%Y%m%d_%H%M%S", time.localtime()) + '.pkl'
-                with open(os.path.join(save_raw_dir, raw_response_name), 'wb') as f:
+                raw_response_name = (
+                    time.strftime("%Y%m%d_%H%M%S", time.localtime()) + ".pkl"
+                )
+                with open(os.path.join(save_raw_dir, raw_response_name), "wb") as f:
                     pickle.dump(response, f)
-            
+
             if return_raw:
                 return response
             else:
                 return response.choices[0].message.content.strip()
-            
+
         except Exception as e:
             if "Too Many Requests" in str(e) and attempt < max_try - 1:
                 sleep_time = 0.25
@@ -164,7 +166,7 @@ def batch_call_llm(
     return_raw=False,
     verbose=False,
     timeout=None,
-    service_provider='all',
+    service_provider="all",
 ):
     """
     Batch call LLM with multiple prompts while keeping the result order.

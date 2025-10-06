@@ -150,14 +150,14 @@ def call_gen_qlib_factors(
             temperature=temperature,
             local=local,
             local_port=local_port,
-            service_provider='default'
+            service_provider="default",
         )
-        
+
         # print(response)
 
         if verbose and debug_mode:
             print(f"[{attempt}/{max_try}] Raw LLM output:\n{response}\n")
-        
+
         # ── JSON parsing ────────────────────────────────────────────────────
         try:
             # Clean up common LLM formatting like ```json ... ```
@@ -207,8 +207,8 @@ def call_gen_qlib_factors(
 
             # Depth check
             fs = FactorParser()
-            ast = fs.parse(expr) 
-            depth = fs.get_complexity(ast)['depth']
+            ast = fs.parse(expr)
+            depth = fs.get_complexity(ast)["depth"]
             if depth > 5:
                 last_error = f"Too complex factor with depth {depth}"
                 instruction = (
@@ -216,9 +216,9 @@ def call_gen_qlib_factors(
                     f"Error: {last_error}\nOutput was: {json.dumps(parsed_output, indent=2)}\n\n"
                     f"Please simplify and regenerate."
                 )
-                error_records.append('COMPLEX')
+                error_records.append("COMPLEX")
                 continue
-                
+
         except ValidationError as e:
             last_error = f"Schema validation error: {e.message}"
             instruction = (
@@ -226,9 +226,9 @@ def call_gen_qlib_factors(
                 f"Error: {e.message}\nOutput was: {json.dumps(parsed_output, indent=2)}\n\n"
                 f"Please fix and regenerate."
             )
-            error_records.append('WRONG_SCHEMA')
+            error_records.append("WRONG_SCHEMA")
             continue
-        
+
         except Exception as e:
             last_error = f"Unexpected error: {e}"
             instruction = (
@@ -236,7 +236,7 @@ def call_gen_qlib_factors(
                 f"Error: {e}\nOutput was: {json.dumps(parsed_output, indent=2)}\n\n"
                 f"Please fix and regenerate."
             )
-            error_records.append('UNKNOWN_ERROR')
+            error_records.append("UNKNOWN_ERROR")
             continue
 
         # ── Qlib runtime check ────────────────────────────────────────
@@ -248,7 +248,7 @@ def call_gen_qlib_factors(
             if verbose:
                 print(f"[WARN] check_factor_via_api failed: {e}")
             continue
-        
+
         if verbose and debug_mode:
             print(f"[{attempt}/{max_try}] Qlib validation result: {result}")
         if result.get("success"):
@@ -343,13 +343,19 @@ def batch_call_gen_qlib_factors(
 
 if __name__ == "__main__":
     instructions = [
-    "Design a factor that ranks stocks by z-scored 10-day cumulative return, then multiplies the rank by the inverse of rolling volume volatility (default return window = 10, volume vol window = 20).",
-    "Generate a signal that outputs 1 if close is above its 30-day rolling maximum and today’s volume exceeds its 90th percentile, otherwise −1; the result is then standardized cross-sectionally each day (default price window = 30, volume window = 30).",
-    "Create a factor equal to the beta of 15-day price returns regressed on 15-day volume changes, divided by the rolling standard deviation of those betas (default window = 15).",
-    "Compute the percentage distance of close from its 60-day rolling median, winsorize at ±3σ, multiply by volume percentile rank, and finally rank the result cross-sectionally (default median window = 60).",
-    "Construct an indicator that counts consecutive up closes longer than 3 days while volume is below its 20-day SMA; output the count divided by rolling ATR (default ATR window = 14).",
-    "Return the skewness of 21-day close returns minus the skewness of 21-day log-volume changes, then divide by their pooled standard deviation (default window = 21).",
+        "Design a factor that ranks stocks by z-scored 10-day cumulative return, then multiplies the rank by the inverse of rolling volume volatility (default return window = 10, volume vol window = 20).",
+        "Generate a signal that outputs 1 if close is above its 30-day rolling maximum and today’s volume exceeds its 90th percentile, otherwise −1; the result is then standardized cross-sectionally each day (default price window = 30, volume window = 30).",
+        "Create a factor equal to the beta of 15-day price returns regressed on 15-day volume changes, divided by the rolling standard deviation of those betas (default window = 15).",
+        "Compute the percentage distance of close from its 60-day rolling median, winsorize at ±3σ, multiply by volume percentile rank, and finally rank the result cross-sectionally (default median window = 60).",
+        "Construct an indicator that counts consecutive up closes longer than 3 days while volume is below its 20-day SMA; output the count divided by rolling ATR (default ATR window = 14).",
+        "Return the skewness of 21-day close returns minus the skewness of 21-day log-volume changes, then divide by their pooled standard deviation (default window = 21).",
     ]
     for instruction in instructions:
-        output = call_gen_qlib_factors(instruction, model='gemini-2.5-pro', verbose=True, max_try=5, debug_mode=True)
+        output = call_gen_qlib_factors(
+            instruction,
+            model="gemini-2.5-pro",
+            verbose=True,
+            max_try=5,
+            debug_mode=True,
+        )
         print(output)

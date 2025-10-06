@@ -19,7 +19,7 @@ import agent.qlib_contrib.qlib_extend_ops
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
-from utils import (
+from api.utils import (
     PersistentCache,
     cache_key,
     run_eval_with_timeout,
@@ -79,6 +79,7 @@ def _fail_result(expr: str, market: str, start: str, end: str, msg: str):
         "timestamp": datetime.utcnow().isoformat(),
     }
 
+
 # -----------------------------
 # Routes
 # -----------------------------
@@ -92,6 +93,7 @@ def health():
             "cache": CACHE.stats(),
         }
     )
+
 
 @app.route("/check", methods=["POST"])
 def check():
@@ -110,7 +112,16 @@ def check():
     data = request.get_json(force=True, silent=True) or {}
     expr = (data.get("expression") or "").strip()
     if not expr:
-        return jsonify({"success": False, "error_message": "Missing 'expression'", "error_type": "EMPTY_EXPR"}), 400
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error_message": "Missing 'expression'",
+                    "error_type": "EMPTY_EXPR",
+                }
+            ),
+            400,
+        )
 
     instruments = data.get("instruments", DEFAULT_INSTRUMENTS)
     start = data.get("start", DEFAULTS["check_start"])
@@ -121,7 +132,19 @@ def check():
 
     print(f"Expression: {expr} Result: {res}")
     status = 200 if res.ok else 500
-    return jsonify(res.payload if res.ok else {"success": False, "error_message": res.payload, "error_type": res.error_type}), status
+    return (
+        jsonify(
+            res.payload
+            if res.ok
+            else {
+                "success": False,
+                "error_message": res.payload,
+                "error_type": res.error_type,
+            }
+        ),
+        status,
+    )
+
 
 @app.route("/eval", methods=["GET", "POST"])
 def eval_once():
@@ -143,12 +166,21 @@ def eval_once():
     """
     try:
         if request.method == "GET":
-            expr = unquote((request.args.get("expression") or "").strip().strip("'").strip('"'))
-            start = (request.args.get("start") or DEFAULTS["start"]).strip("'").strip('"')
+            expr = unquote(
+                (request.args.get("expression") or "").strip().strip("'").strip('"')
+            )
+            start = (
+                (request.args.get("start") or DEFAULTS["start"]).strip("'").strip('"')
+            )
             end = (request.args.get("end") or DEFAULTS["end"]).strip("'").strip('"')
-            market = (request.args.get("market") or DEFAULTS["market"]).strip("'").strip('"').lower()
+            market = (
+                (request.args.get("market") or DEFAULTS["market"])
+                .strip("'")
+                .strip('"')
+                .lower()
+            )
             label = (request.args.get("label") or DEFAULTS["label"]).strip()
-            use_cache = (request.args.get("use_cache", "true").lower() == "true")
+            use_cache = request.args.get("use_cache", "true").lower() == "true"
             timeout = int(request.args.get("timeout", DEFAULTS["timeout_eval"]))
         else:
             data = request.get_json(force=True, silent=True) or {}
@@ -169,7 +201,9 @@ def eval_once():
             if cached:
                 return jsonify(cached), 200
 
-        logger.info("Evaluating expr (market=%s, %s→%s, label=%s)", market, start, end, label)
+        logger.info(
+            "Evaluating expr (market=%s, %s→%s, label=%s)", market, start, end, label
+        )
         res = run_eval_with_timeout(expr, market, start, end, label, timeout)
 
         if res.ok:
@@ -177,11 +211,28 @@ def eval_once():
                 CACHE.set(key, res.payload)
             return jsonify(res.payload), 200
         else:
-            return jsonify(_fail_result(expr, market, start, end, f"{res.error_type}: {res.payload}")), 200
+            return (
+                jsonify(
+                    _fail_result(
+                        expr, market, start, end, f"{res.error_type}: {res.payload}"
+                    )
+                ),
+                200,
+            )
 
     except Exception as e:
         logger.exception("eval error")
-        return jsonify({"success": False, "error": f"{type(e).__name__}: {e}", "timestamp": datetime.utcnow().isoformat()}), 500
+        return (
+            jsonify(
+                {
+                    "success": False,
+                    "error": f"{type(e).__name__}: {e}",
+                    "timestamp": datetime.utcnow().isoformat(),
+                }
+            ),
+            500,
+        )
+
 
 @app.route("/batch_eval", methods=["POST"])
 def batch_eval():
@@ -200,35 +251,63 @@ def batch_eval():
     """
     data = request.get_json(force=True, silent=True) or {}
     factors = data.get("factors") or []
-    if not isinstance(factors, list) or not all(isinstance(f, dict) and "name" in f and "expression" in f for f in factors):
+    if not isinstance(factors, list) or not all(
+        isinstance(f, dict) and "name" in f and "expression" in f for f in factors
+    ):
         return jsonify({"success": False, "error": "Invalid 'factors' format"}), 400
 
     start = data.get("start", DEFAULTS["start"])
     end = data.get("end", DEFAULTS["end"])
-    market = (data.get("market", DEFAULTS["market"]) or "csi300").upper()  # instruments name for loader
+    market = (
+        data.get("market", DEFAULTS["market"]) or "csi300"
+    ).upper()  # instruments name for loader
     label = data.get("label", DEFAULTS["label"])
     timeout = int(data.get("timeout", DEFAULTS["timeout_batch"]))
 
     # QlibDataLoader expects a label expression. For common 'close_return', we use next day's return.
     # Adjust here if your setup defines labels differently.
-    label_spec = {
-        "close_return": "Ref($close, -1) / $close - 1",
-    }.get(label, "Ref($close, -1) / $close - 1")
+    label_spec = {"close_return": "Ref($close, -1) / $close - 1"}.get(
+        label, "Ref($close, -1) / $close - 1"
+    )
 
     res = run_batch_with_timeout(factors, market, start, end, label_spec, timeout)
     status = 200 if res.ok else 500
     if res.ok:
         return jsonify(res.payload), status
-    return jsonify({"success": False, "error": f"{res.error_type}: {res.payload}", "timestamp": datetime.utcnow().isoformat()}), status
+    return (
+        jsonify(
+            {
+                "success": False,
+                "error": f"{res.error_type}: {res.payload}",
+                "timestamp": datetime.utcnow().isoformat(),
+            }
+        ),
+        status,
+    )
+
 
 @app.route("/clear_cache", methods=["POST"])
 def clear_cache():
     CACHE.clear()
-    return jsonify({"success": True, "message": "Cache cleared", "timestamp": datetime.utcnow().isoformat()})
+    return jsonify(
+        {
+            "success": True,
+            "message": "Cache cleared",
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    )
+
 
 @app.route("/cache_stats", methods=["GET"])
 def cache_stats():
-    return jsonify({"success": True, "stats": CACHE.stats(), "timestamp": datetime.utcnow().isoformat()})
+    return jsonify(
+        {
+            "success": True,
+            "stats": CACHE.stats(),
+            "timestamp": datetime.utcnow().isoformat(),
+        }
+    )
+
 
 # -----------------------------
 # Entrypoint
@@ -239,7 +318,9 @@ if __name__ == "__main__":
 
     print(f"Starting Factor Evaluation API on port {port}")
     print(f"Debug mode: {debug}")
-    print(f"Example: http://localhost:{port}/eval?expr=%22Rank(Corr($close,$volume,10),252)%22&start=2023-01-01&end=2024-01-01&market=csi300")
+    print(
+        f"Example: http://localhost:{port}/eval?expr=%22Rank(Corr($close,$volume,10),252)%22&start=2023-01-01&end=2024-01-01&market=csi300"
+    )
 
     # threaded=True is fine: all heavy work is pushed to subprocesses with hard timeouts
     app.run(host="0.0.0.0", port=port, debug=debug, threaded=True)

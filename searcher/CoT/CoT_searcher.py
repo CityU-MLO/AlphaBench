@@ -69,7 +69,6 @@ class CoTSearcher:
         self.save_log_dir = os.path.join(save_dir, "logs")
         os.makedirs(self.save_log_dir, exist_ok=True)
 
-
         if verbose:
             print("Evaluating seed factor …")
         seed_metrics = self._safe_eval(seed["expression"])["metrics"]
@@ -162,7 +161,7 @@ class CoTSearcher:
             else:
                 if verbose:
                     print("⬇️  Not improved — keeping previous best.")
-            
+
             chain.append(
                 {
                     "round": r,
@@ -264,7 +263,6 @@ class CoTSearcher:
             history_lines.append(
                 f"r{rec['round']} best: {rec['name']} => {rec['expression']} | {fmt_m(rec)}\n"
             )
-            
 
         history_text = "".join(history_lines) if history_lines else "(no history)"
 
@@ -311,13 +309,12 @@ class CoTSearcher:
     def _extract_single_candidate(self, payload: Dict[str, Any]):
         if not isinstance(payload, dict):
             return None
-        
+
         if payload["quality"]:
             quality_log_name = time.strftime("log_%Y%m%d_%H%M%S.json")
-            with open(os.path.join(self.save_log_dir, quality_log_name), 'w') as f:
-                json.dump(payload["quality"], f)    
-                        
-                        
+            with open(os.path.join(self.save_log_dir, quality_log_name), "w") as f:
+                json.dump(payload["quality"], f)
+
         if isinstance(payload.get("factors"), list) and payload["factors"]:
             first = payload["factors"][0]
             expr = first.get("expression")
@@ -329,13 +326,10 @@ class CoTSearcher:
                     "reason": first.get("reason", ""),
                 }
 
-
         if isinstance(payload.get("results"), dict) and payload["results"]:
             name, expr = next(iter(payload["results"].items()))
             if expr:
                 return {"name": str(name), "expression": str(expr), "reason": ""}
-
-
 
         return None
 

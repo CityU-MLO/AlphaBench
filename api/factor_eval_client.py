@@ -360,16 +360,16 @@ if __name__ == "__main__":
     print("API server is healthy!")
 
     from agent.qlib_contrib.qlib_expr_parsing import FactorParser, print_tree
-    
+
     fs = FactorParser()
 
     # Test single factor evaluation
     test_expr = "Less($volume, Quantile($volume, 21, 0.8))"
-    ast = fs.parse(test_expr) 
+    ast = fs.parse(test_expr)
     copx = fs.get_complexity(ast)
     print_tree(ast)
     print("Complex:", copx)
-    
+
     # Check factor if wrong
     print(check_factor_via_api("Les($volume, Quantile($volume, 21, 0.8))"))
     print(check_factor_via_api("Less($volume, Quantile($volume, 21))"))

@@ -13,7 +13,6 @@ from api.factor_eval_client import batch_evaluate_factors_via_api
 # Utility helpers
 # ---------------------------------------------------------------------------
 
-
 def _safe_metric(f: Dict[str, Any], key: str, default: float = 0.0) -> float:
     return float(f.get("metrics", {}).get(key, default))
 
@@ -46,7 +45,8 @@ def _seed_block_json(seeds: List[Dict[str, Any]]) -> str:
         compact.append(
             {
                 "name": s.get("name"),
-                "expression": s.get("expression") or s.get("expression"),  # <- keep key "expression" for LLM
+                "expression": s.get("expression")
+                or s.get("expression"),  # <- keep key "expression" for LLM
                 "metrics": _format_metrics(s),
             }
         )
@@ -94,7 +94,7 @@ class EA_Searcher:
         self.save_dir = save_dir
         self.seeds_top_k = int(seeds_top_k)
         os.makedirs(self.save_dir, exist_ok=True)
-        
+
         self.save_log_dir = os.path.join(self.save_dir, "logs")
         os.makedirs(self.save_log_dir, exist_ok=True)
 
@@ -125,7 +125,7 @@ class EA_Searcher:
         if verbose:
             print("Evaluating initial pool …")
         # perf = self.batch_evaluate_factors_fn(pool)
-        
+
         # for i, p in enumerate(perf):
         #     pool[i]["metrics"] = p.get("metrics", {})
 
@@ -378,10 +378,12 @@ No extra text. Output ONLY the JSON array.
         items = []
         if isinstance(payload, dict):
             if payload["quality"]:
-                quality_log_name = provenance + '_' + str(time.strftime("log_%Y%m%d_%H%M%S.json"))
-                with open(os.path.join(self.save_log_dir, quality_log_name), 'w') as f:
-                    json.dump(payload["quality"], f)  
-                    
+                quality_log_name = (
+                    provenance + "_" + str(time.strftime("log_%Y%m%d_%H%M%S.json"))
+                )
+                with open(os.path.join(self.save_log_dir, quality_log_name), "w") as f:
+                    json.dump(payload["quality"], f)
+
         if (
             isinstance(payload, dict)
             and "factors" in payload

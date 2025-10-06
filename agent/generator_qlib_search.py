@@ -162,7 +162,6 @@ def _extract_expression(payload: Any) -> Optional[str]:
     return None
 
 
-
 def _normalize_llm_output(parsed_output: dict) -> list[dict]:
     """
     Enforce the unified schema:
@@ -178,12 +177,16 @@ def _normalize_llm_output(parsed_output: dict) -> list[dict]:
         return [], 0
 
     # hanlde case when single return:
-    if isinstance(parsed_output, dict) and "name" in parsed_output and "expression" in parsed_output:
+    if (
+        isinstance(parsed_output, dict)
+        and "name" in parsed_output
+        and "expression" in parsed_output
+    ):
         cleaned = [
             {
                 "name": parsed_output["name"],
                 "expression": parsed_output["expression"],
-                "reason": parsed_output.get("reason", ''),
+                "reason": parsed_output.get("reason", ""),
             }
         ]
         accept_rate = 1.0 if cleaned else 0.0
@@ -211,7 +214,11 @@ def _normalize_llm_output(parsed_output: dict) -> list[dict]:
             reason = None
 
         cleaned.append(
-            {"name": name.strip() + '_' + str(uuid.uuid4())[:6], "expression": expr.strip(), **({"reason": reason.strip()} if reason else {})}
+            {
+                "name": name.strip() + "_" + str(uuid.uuid4())[:6],
+                "expression": expr.strip(),
+                **({"reason": reason.strip()} if reason else {}),
+            }
         )
     accept_rate = len(cleaned) / len(items)
     return cleaned, accept_rate
@@ -282,16 +289,16 @@ def call_qlib_search(
     min_N = int(N * 0.5) if N > 1 else 1
     attempt = 0
     quality_info = {}
-    quality_info['request_num'] = 0
-    quality_info['generated_num'] = 0
-    quality_info['accepted_num'] = 0
-    quality_info['first_accept_rate'] = []
-    quality_info['error_record'] = []
-    quality_info['output_format_error'] = 0
+    quality_info["request_num"] = 0
+    quality_info["generated_num"] = 0
+    quality_info["accepted_num"] = 0
+    quality_info["first_accept_rate"] = []
+    quality_info["error_record"] = []
+    quality_info["output_format_error"] = 0
     for attempt in range(1, max_try + 1):
         time.sleep(0.5)  # small backoff to mitigate rate limits
 
-        quality_info['request_num'] += 1
+        quality_info["request_num"] += 1
         response = call_llm(
             instruction,
             model=model,
@@ -300,13 +307,13 @@ def call_qlib_search(
             temperature=temperature,
             local=local,
             local_port=local_port,
-            service_provider='default'
+            service_provider="default",
         )
 
         # print(response)
         if verbose and debug_mode:
             print(f"[{attempt}/{max_try}] Raw LLM output:\n{response}\n")
-        
+
         # Parse JSON
         try:
             parsed_output = json.loads(response)
@@ -320,12 +327,12 @@ def call_qlib_search(
                 f"one key is 'generated', and value is a list of objects with fields name/expression[/reason]."
                 f"{_anti_repeat_block()}"
             )
-            quality_info['output_format_error'] += 1
+            quality_info["output_format_error"] += 1
             continue
 
         # Normalize to (name, expr, reason?)
         items, accept_rate = _normalize_llm_output(parsed_output)
-        quality_info['first_accept_rate'].append(accept_rate)
+        quality_info["first_accept_rate"].append(accept_rate)
 
         if not items:
             last_error = "No factors could be parsed from your JSON."
@@ -345,14 +352,18 @@ def call_qlib_search(
             {_anti_repeat_block()}
             """
 
-            quality_info['output_format_error'] += 1
+            quality_info["output_format_error"] += 1
             continue
-        
+
         # Validate & collect
         for record in items:
-            quality_info['generated_num'] += 1
-            
-            raw_name, expr, reason = record['name'], record['expression'], record.get('reason', '')
+            quality_info["generated_num"] += 1
+
+            raw_name, expr, reason = (
+                record["name"],
+                record["expression"],
+                record.get("reason", ""),
+            )
             expr = (expr or "").strip()
             if not expr:
                 continue
@@ -368,11 +379,11 @@ def call_qlib_search(
             # Validate expression via API
             try:
                 result = check_factor_via_api(expr)
-                
+
             except Exception as e:
                 if verbose:
                     print(f"[WARN] check_factor_via_api failed: {e}")
-                quality_info['error_record'].appen((expr,"API_ERROR"))
+                quality_info["error_record"].appen((expr, "API_ERROR"))
                 continue
 
             if isinstance(result, dict) and result.get("success"):
@@ -382,12 +393,12 @@ def call_qlib_search(
                 used_exprs.add(expr)
                 expr_to_name[expr] = name
 
-                quality_info['accepted_num'] += 1
+                quality_info["accepted_num"] += 1
                 if len(collected) >= N:
                     break  # early stop
-                
+
             elif isinstance(result, dict) and not result.get("success"):
-                quality_info['error_record'].append((expr,result))
+                quality_info["error_record"].append((expr, result))
 
         if len(collected) >= N:
             break  # done

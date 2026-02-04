@@ -489,7 +489,7 @@ class ToTSearcher:
     # ----------------------------- Ranking Logic --------------------------- #
     @staticmethod
     def _rank_by_objective(
-        evaluations: Dict[str, Dict[str, float]]
+        evaluations: Dict[str, Dict[str, float]],
     ) -> List[Tuple[str, Dict[str, float]]]:
         """Rank candidates primarily by IC, then RankIC, then IR (descending)."""
 

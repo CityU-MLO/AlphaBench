@@ -13,6 +13,7 @@ from api.factor_eval_client import batch_evaluate_factors_via_api
 # Utility helpers
 # ---------------------------------------------------------------------------
 
+
 def _safe_metric(f: Dict[str, Any], key: str, default: float = 0.0) -> float:
     return float(f.get("metrics", {}).get(key, default))
 

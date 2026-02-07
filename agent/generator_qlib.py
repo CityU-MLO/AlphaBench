@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing as mp
 
 from agent.prompts_qlib_instruction import QLIB_GENERATE_INSTRUCTION
-from api.factor_eval_client import check_factor_via_api
+from ffo.client.factor_eval_client import check_factor_via_api
 from agent.qlib_contrib.qlib_expr_parsing import FactorParser, print_tree
 
 DEFAULT_API_URL = "http://localhost:9888"

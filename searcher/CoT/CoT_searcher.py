@@ -4,7 +4,7 @@ import time
 import pickle
 from typing import Any, Dict, List, Optional
 from agent.generator_qlib_search import call_qlib_search
-from api.factor_eval_client import (
+from ffo.client.factor_eval_client import (
     batch_evaluate_factors_via_api,
     evaluate_factor_via_api,
 )

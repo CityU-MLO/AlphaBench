@@ -1,0 +1,30 @@
+{
+  "name": "Alpha158 Test - Fixed Period (Periods Format)",
+  "description": "Category A test using the same periods array format as Category B",
+  "periods": [
+    {
+      "start": "2020-01-01",
+      "end": "2020-12-31",
+      "factors": [
+        "$close",
+        "Mean($close, 20)",
+        "Std($close, 20)",
+        "$close/Mean($close, 20)",
+        "($close-Mean($close, 20))/Mean($close, 20)",
+        "$volume/Mean($volume, 20)",
+        "($high-$low)/$close",
+        "Corr($close, Log($volume+1), 20)",
+        "Delta($close, 20)",
+        "Rank($close, 20)"
+      ]
+    }
+  ],
+  "market": "csi300",
+  "alpha": 0.001,
+  "methods": ["baseline", "lasso", "ic_optimization"],
+  "metadata": {
+    "created": "2025-11-10",
+    "purpose": "Test Category A with periods array format",
+    "note": "Category A will use the first (and only) period from the array"
+  }
+}

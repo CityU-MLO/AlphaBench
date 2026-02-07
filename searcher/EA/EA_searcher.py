@@ -1,13 +1,20 @@
 import os
+import sys
 import time
 import json
 import pickle
 from typing import Any, Dict, List, Optional, Tuple
 import uuid
+from pathlib import Path
+
+# Ensure AlphaBench root is on sys.path
+_ALPHABENCH_ROOT = Path(__file__).resolve().parent.parent.parent
+if str(_ALPHABENCH_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ALPHABENCH_ROOT))
 
 from factors.lib.alpha158 import load_factors_alpha158
 from agent.generator_qlib_search import call_qlib_search
-from api.factor_eval_client import batch_evaluate_factors_via_api
+from ffo.client.factor_eval_client import batch_evaluate_factors_via_api
 
 # ---------------------------------------------------------------------------
 # Utility helpers

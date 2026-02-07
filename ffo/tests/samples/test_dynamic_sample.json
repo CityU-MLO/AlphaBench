@@ -1,0 +1,60 @@
+{
+  "name": "Alpha158 Test - Dynamic Periods",
+  "description": "Test configuration with dynamic period-based backtesting using selected Alpha158 factors",
+  "total_factors": 10,
+  "periods": [
+    {
+      "start": "2020-01-01",
+      "end": "2020-12-31",
+      "factors": [
+        "$close",
+        "Mean($close, 20)",
+        "Std($close, 20)",
+        "$close/Mean($close, 20)",
+        "($close-Mean($close, 20))/Mean($close, 20)",
+        "$volume/Mean($volume, 20)",
+        "($high-$low)/$close",
+        "Corr($close, Log($volume+1), 20)",
+        "Delta($close, 20)",
+        "Rank($close, 20)"
+      ]
+    },
+    {
+      "start": "2021-01-01",
+      "end": "2021-12-31",
+      "factors": [
+        "$close",
+        "Mean($close, 20)",
+        "Std($close, 20)",
+        "$close/Mean($close, 20)",
+        "($close-Mean($close, 20))/Mean($close, 20)",
+        "$volume/Mean($volume, 20)",
+        "($high-$low)/$close",
+        "Corr($close, Log($volume+1), 20)",
+        "Delta($close, 20)",
+        "Rank($close, 20)"
+      ]
+    },
+    {
+      "start": "2022-01-01",
+      "end": "2022-12-31",
+      "factors": [
+        "$close",
+        "Mean($close, 20)",
+        "Std($close, 20)",
+        "$close/Mean($close, 20)",
+        "($close-Mean($close, 20))/Mean($close, 20)",
+        "$volume/Mean($volume, 20)",
+        "($high-$low)/$close",
+        "Corr($close, Log($volume+1), 20)",
+        "Delta($close, 20)",
+        "Rank($close, 20)"
+      ]
+    }
+  ],
+  "metadata": {
+    "created": "2025-11-10",
+    "purpose": "Dynamic backtesting with multiple periods",
+    "note": "Each period will be optimized separately and then used for backtesting"
+  }
+}

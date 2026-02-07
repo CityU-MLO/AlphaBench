@@ -13,7 +13,8 @@ Key features:
 
 from __future__ import annotations
 import re
-import agent.qlib_contrib.qlib_extend_ops
+
+# import agent.qlib_contrib.qlib_extend_ops
 import os
 import json
 import time
@@ -28,6 +29,10 @@ from dataclasses import dataclass
 
 import pandas as pd
 import numpy as np
+import re
+from zss import Node
+import ast
+
 
 # -----------------------------
 # Config (env-overridable)
@@ -48,6 +53,7 @@ CACHE_PRUNE_BATCH = int(
 
 CPU_JOBS = max(1, int(os.environ.get("FACTOR_API_CPU_JOBS", str(os.cpu_count() or 4))))
 
+
 # -----------------------------
 # Helpers: hashing & keys
 # -----------------------------
@@ -57,14 +63,197 @@ def expr_hash(expr: str) -> str:
     return h.hexdigest()
 
 
-def cache_key(expr: str, market: str, start: str, end: str, label: str) -> str:
+def cache_key(
+    expr: str, market: str, start: str, end: str, label: str, topk: int, n_drop: int
+) -> str:
     """Key = hash(expr) + params (keeps key short, ignores whitespace diffs)."""
     h = expr_hash(_normalize_expr(expr))
-    return f"{h}|{market}|{start}|{end}|{label}"
+    return f"{h}|{market}|{start}|{end}|{label}|{topk}|{n_drop}"
 
 
 def _normalize_expr(expr: str) -> str:
     return " ".join(expr.strip().split())
+
+
+class FactorNode(Node):
+    def __init__(self, label):
+        super().__init__(label)
+        self.label = label
+        self._children = []
+
+    def addkid(self, node):
+        self._children.append(node)
+        return super().addkid(node)
+
+    def get_children(self):
+        return self._children
+
+
+class FactorParser:
+    def __init__(self):
+        self.param_map = {}
+        self.param_counter = 1
+        self.var_map = {}
+        self.var_counter = 1
+
+    def preprocess(self, expr):
+        # Replace variables like $close
+        def replace_var(match):
+            var = match.group()
+            safe = f"var{self.var_counter}"
+            self.var_map[safe] = var
+            self.var_counter += 1
+            return safe
+
+        expr = re.sub(r"\$\w+", replace_var, expr)
+
+        # Replace parameters like {lag}
+        def replace_param(match):
+            param = match.group()
+            if param not in self.param_map:
+                cname = f"C{self.param_counter}"
+                self.param_map[param] = cname
+                self.param_counter += 1
+            return self.param_map[param]
+
+        expr = re.sub(r"\{\w+\}", replace_param, expr)
+        return expr
+
+    def parse(self, expr):
+        pre_expr = self.preprocess(expr)
+        tree = ast.parse(pre_expr, mode="eval")
+        return self._convert(tree.body)
+
+    def _convert(self, node):
+        if isinstance(node, ast.BinOp):
+            op_name = self._get_op_name(node.op)
+            root = FactorNode(op_name)
+            root.addkid(self._convert(node.left))
+            root.addkid(self._convert(node.right))
+            return root
+        elif isinstance(node, ast.Call):
+            func_name = node.func.id
+            root = FactorNode(func_name)
+            for arg in node.args:
+                root.addkid(self._convert(arg))
+            return root
+        elif isinstance(node, ast.Name):
+            if node.id in self.var_map:
+                return FactorNode(self.var_map[node.id])
+            elif node.id in self.param_map.values():
+                return FactorNode(node.id)
+            else:
+                return FactorNode(node.id)
+        elif isinstance(node, ast.Constant):
+            return FactorNode(str(node.value))
+        elif isinstance(node, ast.UnaryOp):
+            op_name = self._get_op_name(node.op)
+            root = FactorNode(op_name)
+            root.addkid(self._convert(node.operand))
+            return root
+        elif isinstance(node, ast.Compare):
+            if len(node.ops) != 1 or len(node.comparators) != 1:
+                raise ValueError("Only simple comparisons supported")
+            op_name = self._get_op_name(node.ops[0])
+            root = FactorNode(op_name)
+            root.addkid(self._convert(node.left))
+            root.addkid(self._convert(node.comparators[0]))
+            return root
+        else:
+            raise ValueError(f"Unsupported AST node: {node}")
+
+    def _get_op_name(self, op):
+        if isinstance(op, ast.Add):
+            return "Add"
+        elif isinstance(op, ast.Sub):
+            return "Sub"
+        elif isinstance(op, ast.Mult):
+            return "Mul"
+        elif isinstance(op, ast.Div):
+            return "Div"
+        elif isinstance(op, ast.USub):
+            return "Neg"
+        elif isinstance(op, ast.Gt):
+            return "Gt"
+        elif isinstance(op, ast.Lt):
+            return "Lt"
+        elif isinstance(op, ast.GtE):
+            return "GtE"
+        elif isinstance(op, ast.LtE):
+            return "LtE"
+        elif isinstance(op, ast.Eq):
+            return "Eq"
+        elif isinstance(op, ast.NotEq):
+            return "NotEq"
+        else:
+            raise ValueError(f"Unsupported operator: {op}")
+
+    # --- New Feature: Complexity Analysis ---
+    def get_complexity(self, root: FactorNode):
+        stats = {
+            "node_count": 0,
+            "depth": 0,
+            "operator_count": 0,
+            "function_count": 0,
+            "var_count": 0,
+            "param_count": 0,
+        }
+
+        vars_seen, params_seen = set(), set()
+
+        def traverse(node, depth=1):
+            stats["node_count"] += 1
+            stats["depth"] = max(stats["depth"], depth)
+
+            if node.label in [
+                "Add",
+                "Sub",
+                "Mul",
+                "Div",
+                "Neg",
+                "Gt",
+                "Lt",
+                "GtE",
+                "LtE",
+                "Eq",
+                "NotEq",
+            ]:
+                stats["operator_count"] += 1
+            elif node.label.startswith("C"):  # parameter
+                params_seen.add(node.label)
+            elif node.label.startswith("var"):  # variable
+                vars_seen.add(node.label)
+            elif (
+                node.get_children()
+            ):  # function call (if has children and not an operator)
+                stats["function_count"] += 1
+
+            for child in node.get_children():
+                traverse(child, depth + 1)
+
+        traverse(root)
+
+        stats["var_count"] = len(vars_seen)
+        stats["param_count"] = len(params_seen)
+
+        # Composite score (simple heuristic)
+        stats["complexity_score"] = (
+            stats["node_count"]
+            + 2 * stats["operator_count"]
+            + 2 * stats["function_count"]
+            + stats["depth"]
+        )
+
+        return stats
+
+
+def print_tree(node, level=0):
+    """
+    Nicely print the tree.
+    """
+    print("  " * level + node.label)
+    for child in node.children:
+        print_tree(child, level + 1)
 
 
 # -----------------------------
@@ -180,22 +369,26 @@ class SubprocessResult:
     error_type: Optional[str] = None
 
 
+def _subprocess_wrapper(q: Queue, target, args):
+    """
+    Wrapper function for subprocess execution.
+    Moved to module level to be picklable in Python 3.12+
+    """
+    try:
+        payload = target(*args)
+        q.put((True, payload, None))
+    except Exception as e:
+        # pass back a trimmed error string + type
+        q.put((False, f"{type(e).__name__}: {e}", type(e).__name__))
+
+
 def _spawn_and_run(target, args: tuple, timeout: int) -> SubprocessResult:
     """
     Run `target(*args)` in a separate process, return its (ok, payload).
     If timeout exceeded, kill the process and return TIMEOUT.
     """
     q: Queue = Queue(maxsize=1)
-
-    def _wrap(q: Queue, target, args):
-        try:
-            payload = target(*args)
-            q.put((True, payload, None))
-        except Exception as e:
-            # pass back a trimmed error string + type
-            q.put((False, f"{type(e).__name__}: {e}", type(e).__name__))
-
-    p = Process(target=_wrap, args=(q, target, args), daemon=True)
+    p = Process(target=_subprocess_wrapper, args=(q, target, args), daemon=True)
     p.start()
     p.join(timeout)
 
@@ -284,6 +477,9 @@ def _child_eval_expr(
     from backtest.qlib.dataloader import compute_factor_data
 
     # Per-process init (safer across OS / forks)
+    import logging
+
+    logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
     qlib.init(provider_uri=DEFAULT_PROVIDER_URI, region=DEFAULT_REGION)
 
     factor_list = [{"name": "api_factor", "expression": expr}]
@@ -310,6 +506,30 @@ def _child_eval_expr(
     ic_d, rankic_d = _daily_ic_rankic(f_s, y_s)
     metrics = summarize_ic_rankic(ic_d, rankic_d)
 
+    # Format daily metrics for response
+    daily_metrics = []
+    if not ic_d.empty and not rankic_d.empty:
+        for date_val in ic_d.index.unique():
+            daily_metrics.append(
+                {
+                    "date": (
+                        date_val.strftime("%Y-%m-%d")
+                        if hasattr(date_val, "strftime")
+                        else str(date_val)
+                    ),
+                    "ic": (
+                        float(ic_d.get(date_val, 0.0))
+                        if date_val in ic_d.index
+                        else 0.0
+                    ),
+                    "rank_ic": (
+                        float(rankic_d.get(date_val, 0.0))
+                        if date_val in rankic_d.index
+                        else 0.0
+                    ),
+                }
+            )
+
     return {
         "success": True,
         "expression": expr,
@@ -325,6 +545,7 @@ def _child_eval_expr(
             "turnover": 0.0,
             "n_dates": metrics["n_dates"],
         },
+        "daily_metrics": daily_metrics,
         "timestamp": pd.Timestamp.utcnow().isoformat(),
     }
 
@@ -335,6 +556,9 @@ def _child_check_expr(
     import qlib
     from qlib.data.dataset.loader import QlibDataLoader
 
+    import logging
+
+    logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
     qlib.init(provider_uri=DEFAULT_PROVIDER_URI, region=DEFAULT_REGION)
 
     cfg = {"feature": ([expr], ["test_expr"])}
@@ -388,6 +612,7 @@ def _child_batch_eval(
     start: str,
     end: str,
     label_spec: str,
+    n_jobs: int = 1,
 ) -> Dict[str, Any]:
     """
     Efficient batch IC/RankIC:
@@ -396,7 +621,17 @@ def _child_batch_eval(
     """
     import qlib
     from qlib.data.dataset.loader import QlibDataLoader
+    import os
 
+    # Configure parallel loading
+    if n_jobs > 1:
+        os.environ["QLIB_ENABLE_PARALLEL"] = str(n_jobs)
+    else:
+        os.environ["QLIB_ENABLE_PARALLEL"] = "0"
+
+    import logging
+
+    logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
     qlib.init(provider_uri=DEFAULT_PROVIDER_URI, region=DEFAULT_REGION)
 
     names = [f["name"] for f in factors]
@@ -509,7 +744,105 @@ def run_batch_with_timeout(
     end: str,
     label_spec: str,
     timeout: int,
+    n_jobs: int = 1,
 ) -> SubprocessResult:
     return _spawn_and_run(
-        _child_batch_eval, (factors, instruments, start, end, label_spec), timeout
+        _child_batch_eval,
+        (factors, instruments, start, end, label_spec, n_jobs),
+        timeout,
+    )
+
+
+def normalize_factors_from_expression_field(data: dict):
+    """
+    Normalize request data into a list of factors:
+    Returns: List[{"name": str, "expression": str}]
+
+    Supported "expression":
+      - "xxx"                                   (single, no name)
+      - {"n1": "e1", "n2": "e2"}                (one or many, with name)
+      - ["e1", "e2", ...]                       (many, no name)
+      - (optional) mixed list: ["e1", {"n2":"e2"}]
+    """
+    expr_field = data.get("expression", None)
+    if expr_field is None:
+        expr_field = data.get("expr", None)  # optional legacy alias
+
+    if expr_field is None:
+        return None, ("Missing 'expression'", "EMPTY_EXPR")
+
+    def _push(name: str, expr: str):
+        expr = (expr or "").strip()
+        if not expr:
+            raise ValueError("EMPTY_EXPR")
+        return {"name": name or "", "expression": expr}
+
+    factors = []
+
+    # case 1: string
+    if isinstance(expr_field, str):
+        expr = expr_field.strip()
+        if not expr:
+            return None, ("Missing 'expression'", "EMPTY_EXPR")
+        return [{"name": "", "expression": expr}], None
+
+    # case 2: dict name -> expr
+    if isinstance(expr_field, dict):
+        if len(expr_field) == 0:
+            return None, ("Missing 'expression'", "EMPTY_EXPR")
+        for name, expr in expr_field.items():
+            if not isinstance(expr, str):
+                return None, (
+                    "Invalid 'expression' dict value (must be string)",
+                    "BAD_EXPR_FORMAT",
+                )
+            expr = expr.strip()
+            if not expr:
+                return None, (f"Empty expression for name='{name}'", "EMPTY_EXPR")
+            factors.append({"name": str(name), "expression": expr})
+        return factors, None
+
+    # case 3: list
+    if isinstance(expr_field, list):
+        if len(expr_field) == 0:
+            return None, ("Missing 'expression'", "EMPTY_EXPR")
+
+        for i, item in enumerate(expr_field):
+            # list of strings
+            if isinstance(item, str):
+                s = item.strip()
+                if not s:
+                    return None, (f"Empty expression at index {i}", "EMPTY_EXPR")
+                factors.append({"name": "", "expression": s})
+                continue
+
+            # list of dicts: {"name": "expr"} (allow one or many pairs)
+            if isinstance(item, dict):
+                if len(item) == 0:
+                    return None, (f"Empty dict at index {i}", "BAD_EXPR_FORMAT")
+                for name, expr in item.items():
+                    if not isinstance(expr, str):
+                        return None, (
+                            f"Invalid expression at index {i} (must be string)",
+                            "BAD_EXPR_FORMAT",
+                        )
+                    expr = expr.strip()
+                    if not expr:
+                        return None, (
+                            f"Empty expression for name='{name}' at index {i}",
+                            "EMPTY_EXPR",
+                        )
+                    factors.append({"name": str(name), "expression": expr})
+                continue
+
+            return None, (
+                f"Invalid item type in expression list at index {i}",
+                "BAD_EXPR_FORMAT",
+            )
+
+        return factors, None
+
+    return None, (
+        "Invalid 'expression' type (must be string, dict, or list)",
+        "BAD_EXPR_FORMAT",
     )

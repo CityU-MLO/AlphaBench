@@ -46,7 +46,7 @@ searching:
   diversity_rounds: 2        # Accept by |IC| in next N rounds
 
 backtesting:
-  ffo_server: "127.0.0.1:19350"
+  ffo_server: "127.0.0.1:19320"
   market: "csi300"
   benchmark: "SH000300"
   period_start: "2022-01-01"

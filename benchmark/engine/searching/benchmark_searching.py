@@ -3,7 +3,7 @@ import os
 from pathlib import Path
 from factors.lib.alpha158 import load_factors_alpha158, load_factors_alpha158_names
 from agent.generator_qlib_search import call_qlib_search
-from api.factor_eval_client import (
+from ffo.client.factor_eval_client import (
     batch_evaluate_factors_via_api,
     evaluate_factor_via_api,
 )

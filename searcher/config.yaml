@@ -1,0 +1,59 @@
+# ============================================================================
+# AlphaBench Factor Search Configuration
+# ============================================================================
+#
+# Two start modes:
+#   - Cold start: leave seed_file empty → LLM generates initial factors randomly
+#   - Warm start: set seed_file to a text file (one expression per line) or JSON
+#
+# Backtesting always uses the FFO server (no local backtest logic).
+# ============================================================================
+
+savedir: "./results/search_001"
+
+searching:
+  algo:
+    name: ea            # Evolutionary Algorithm
+    param: {}
+    seed_file: ""       # Empty = cold start; set path for warm start
+    seed_top_k: 50      # Use top 50 seeds from pool
+
+  model:
+    name: "deepseek-chat"
+    base_url: "https://api.deepseek.com"
+    key: "${DEEPSEEK_API_KEY}"
+    temperature: 0.7
+
+  # Search parameters
+  num_rounds: 10
+  mutation_rate: 0.3
+  crossover_rate: 0.7
+
+  # Batch settings
+  window_size: 5             # Seeds fed to LLM per batch
+  factors_per_batch: 10      # Factors requested per LLM call
+  num_workers: 3             # Parallel batches per round
+  batch_max_retries: 3
+  batch_failure_threshold: 0.7
+
+  # Threshold settings
+  min_ic: 0.005
+  min_rank_ic: 0.01
+  adaptive_threshold: true
+  threshold_mode: "or"       # "and" or "or"
+  adaptive_threshold_ratio: 0.8
+  start_rounds: 2            # Accept ALL factors in first N rounds
+  diversity_rounds: 2        # Accept by |IC| in next N rounds
+
+backtesting:
+  ffo_server: "127.0.0.1:19320"
+  market: "csi300"
+  benchmark: "SH000300"
+  period_start: "2022-01-01"
+  period_end: "2023-01-01"
+
+  top_k: 30
+  n_drop: 5
+
+  fast: true                 # true = IC only (~1-2s); false = full (~10-30s)
+  n_jobs: 4

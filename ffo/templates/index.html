@@ -1,0 +1,3993 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Factor Analysis Platform</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <script src="https://cdn.plot.ly/plotly-3.1.0.min.js" charset="utf-8"></script>
+    <style>
+        :root {
+            --primary-color: #667eea;
+            --secondary-color: #764ba2;
+            --success-color: #28a745;
+            --danger-color: #dc3545;
+            --dark-bg: #1a1a2e;
+            --light-bg: #f8f9fa;
+        }
+        
+        body {
+            background-color: var(--light-bg);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        .main-container {
+            margin-top: 20px;
+            max-width: 1400px;
+        }
+        
+        .card {
+            box-shadow: 0 0 15px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            border: none;
+            border-radius: 10px;
+        }
+        
+        .card-header {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+            color: white;
+            border-radius: 10px 10px 0 0 !important;
+            padding: 15px 20px;
+        }
+        
+        .card-header h5 {
+            margin: 0;
+            font-weight: 600;
+        }
+        
+        .expression-input {
+            font-family: 'Courier New', monospace;
+            min-height: 80px;
+            border: 2px solid #e0e0e0;
+            transition: border-color 0.3s;
+        }
+        
+        .expression-input:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 5px rgba(102, 126, 234, 0.3);
+        }
+        
+        .stats-card {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+            color: white;
+        }
+        
+        .metric-card {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            transition: transform 0.3s;
+        }
+        
+        .metric-card:hover {
+            transform: translateY(-5px);
+        }
+        
+        .metric-value {
+            font-size: 2rem;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+        
+        .metric-label {
+            color: #666;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .positive {
+            color: var(--success-color);
+        }
+        
+        .negative {
+            color: var(--danger-color);
+        }
+        
+        .cached-expr-item {
+            cursor: pointer;
+            transition: all 0.3s;
+            border-left: 3px solid transparent;
+        }
+        
+        .cached-expr-item:hover {
+            background-color: #f0f0f0;
+            border-left-color: var(--primary-color);
+        }
+        
+        #loading {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            z-index: 9999;
+        }
+        
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.3);
+            display: none;
+            z-index: 9998;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, var(--primary-color) 0%, var(--secondary-color) 100%);
+            border: none;
+            transition: transform 0.3s;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+        
+        .nav-tabs .nav-link {
+            color: #666;
+            border: none;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+        
+        .nav-tabs .nav-link.active {
+            color: var(--primary-color);
+            border-bottom-color: var(--primary-color);
+            background: none;
+        }
+        
+        .comparison-table {
+            margin-top: 20px;
+        }
+        
+        .comparison-table th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+            text-transform: uppercase;
+            font-size: 0.85rem;
+            letter-spacing: 1px;
+        }
+        
+        .factor-tag {
+            display: inline-block;
+            padding: 5px 15px;
+            margin: 5px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .factor-tag.selected {
+            background: var(--primary-color);
+            color: white;
+        }
+        
+        .factor-tag:not(.selected) {
+            background: #e0e0e0;
+            color: #333;
+        }
+        
+        .factor-tag:hover {
+            transform: scale(1.05);
+        }
+        
+        .export-buttons {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+        }
+        
+        .chart-container {
+            position: relative;
+        }
+        
+        /* Action buttons in card header */
+        .btn-sm {
+            font-size: 0.875rem;
+            padding: 0.25rem 0.75rem;
+        }
+        
+        #resultActionButtons .btn {
+            white-space: nowrap;
+        }
+        
+        /* Dark mode styles */
+        body.dark-mode {
+            background-color: var(--dark-bg);
+            color: #e0e0e0;
+        }
+        
+        body.dark-mode .card {
+            background-color: #16213e;
+            color: #e0e0e0;
+        }
+        
+        body.dark-mode .metric-card {
+            background-color: #0f3460;
+            color: #e0e0e0;
+        }
+        
+        body.dark-mode .form-control,
+        body.dark-mode .form-select {
+            background-color: #0f3460;
+            color: #e0e0e0;
+            border-color: #533483;
+        }
+        
+        .theme-toggle {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-overlay"></div>
+    <div id="loading">
+        <div class="text-center">
+            <div class="spinner-border text-primary" style="width: 3rem; height: 3rem;" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <div class="mt-3 text-primary fw-bold">Processing...</div>
+        </div>
+    </div>
+    
+    <div class="container main-container">
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h1 class="display-4 fw-bold">
+                <i class="fas fa-chart-line text-primary"></i> Factor Analysis Platform
+            </h1>
+            <div>
+                <button class="btn btn-outline-info" onclick="loadCachedExpressions()">
+                    <i class="fas fa-history"></i> History
+                </button>
+            </div>
+        </div>
+        
+        <!-- Navigation Tabs -->
+        <ul class="nav nav-tabs mb-4" id="mainTabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="single-tab" data-bs-toggle="tab" data-bs-target="#single" type="button">
+                    <i class="fas fa-chart-bar"></i> Single Factor Analysis
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="compare-tab" data-bs-toggle="tab" data-bs-target="#compare" type="button">
+                    <i class="fas fa-balance-scale"></i> Factor Comparison
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="combination-tab" data-bs-toggle="tab" data-bs-target="#combination" type="button">
+                    <i class="fas fa-layer-group"></i> Factor Combination
+                </button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="performance-tab" data-bs-toggle="tab" data-bs-target="#performance" type="button">
+                    <i class="fas fa-tachometer-alt"></i> Performance Dashboard
+                </button>
+            </li>
+        </ul>
+        
+        <!-- Tab Content -->
+        <div class="tab-content" id="mainTabContent">
+            <!-- Single Factor Analysis Tab -->
+            <div class="tab-pane fade show active" id="single" role="tabpanel">
+                <!-- Query Form -->
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-search"></i> Query Factor Cache</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="queryForm">
+                            <div class="mb-3">
+                                <label for="expression" class="form-label fw-bold">Factor Expression:</label>
+                                <textarea class="form-control expression-input" id="expression" 
+                                          placeholder="e.g., Rank(Corr($close, $volume, 10), 252)"></textarea>
+                            </div>
+                            
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <label for="market" class="form-label">Market:</label>
+                                    <select class="form-select" id="market">
+                                        <option value="csi300">CSI300</option>
+                                        <option value="csi500">CSI500</option>
+                                        <option value="csi1000">CSI1000</option>
+                                        <option value="sp500">S&P500</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="col-md-3">
+                                    <label for="startDate" class="form-label">Start Date:</label>
+                                    <input type="date" class="form-control" id="startDate" value="2023-01-01">
+                                </div>
+                                
+                                <div class="col-md-3">
+                                    <label for="endDate" class="form-label">End Date:</label>
+                                    <input type="date" class="form-control" id="endDate" value="2024-01-01">
+                                </div>
+                                
+                                <div class="col-md-3">
+                                    <label class="form-label">&nbsp;</label>
+                                    <div>
+                                        <button type="submit" class="btn btn-primary w-100">
+                                            <i class="fas fa-search"></i> Search Cache
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="mt-3">
+                                <button type="button" class="btn btn-success" onclick="evaluateFactor()">
+                                    <i class="fas fa-play"></i> Evaluate New
+                                </button>
+                                <button type="button" class="btn btn-warning ms-2" onclick="exportCurrentData()">
+                                    <i class="fas fa-download"></i> Export Data
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+                
+                <!-- Performance Metrics -->
+                <div id="metricsCard" class="card" style="display: none;">
+                    <div class="card-header">
+                        <h5><i class="fas fa-chart-pie"></i> Performance Metrics</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="row justify-content-center" id="metricsRow">
+                            <!-- Metrics will be populated here -->
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Portfolio Backtest Metrics -->
+                <div id="portfolioMetricsCard" class="card" style="display: none;">
+                    <div class="card-header">
+                        <h5><i class="fas fa-wallet"></i> Portfolio Backtest Performance</h5>
+                    </div>
+                    <div class="card-body">
+                        <ul class="nav nav-pills mb-3 justify-content-center" id="portfolioTabs" role="tablist">
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link active" id="portfolio-pure-tab" data-bs-toggle="pill" data-bs-target="#portfolio-pure" type="button">
+                                    Pure Return
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="portfolio-excess-tab" data-bs-toggle="pill" data-bs-target="#portfolio-excess" type="button">
+                                    Excess Return
+                                </button>
+                            </li>
+                            <li class="nav-item" role="presentation">
+                                <button class="nav-link" id="portfolio-benchmark-tab" data-bs-toggle="pill" data-bs-target="#portfolio-benchmark" type="button">
+                                    Benchmark
+                                </button>
+                            </li>
+                        </ul>
+                        <div class="tab-content" id="portfolioTabContent">
+                            <div class="tab-pane fade show active" id="portfolio-pure" role="tabpanel">
+                                <div class="row justify-content-center" id="portfolioPureMetrics">
+                                    <!-- Pure return metrics will be populated here -->
+                                </div>
+                            </div>
+                            <div class="tab-pane fade" id="portfolio-excess" role="tabpanel">
+                                <div class="row justify-content-center" id="portfolioExcessMetrics">
+                                    <!-- Excess return metrics will be populated here -->
+                                </div>
+                            </div>
+                            <div class="tab-pane fade" id="portfolio-benchmark" role="tabpanel">
+                                <div class="row justify-content-center" id="portfolioBenchmarkMetrics">
+                                    <!-- Benchmark metrics will be populated here -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Charts Section -->
+                <div class="row justify-content-center" id="chartsSection" style="display: none;">
+                    <div class="col-lg-10 col-md-12">
+                        <!-- Daily Chart -->
+                        <div class="card">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0"><i class="fas fa-chart-line"></i> Daily IC/Rank IC</h5>
+                                <div>
+                                    <button class="btn btn-sm btn-success" onclick="exportOverallReport()">
+                                        <i class="fas fa-file-pdf"></i> Export Report
+                                    </button>
+                                    <button class="btn btn-sm btn-primary ms-2" onclick="exportDailyCSV()">
+                                        <i class="fas fa-file-csv"></i> Export Daily CSV
+                                    </button>
+                                    <button class="btn btn-sm btn-outline-secondary ms-2" onclick="exportChart('dailyChart')">
+                                        <i class="fas fa-image"></i> Export Chart
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="card-body chart-container">
+                                <div id="dailyChart"></div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="col-lg-10 col-md-12 mt-3">
+                        <!-- Cumulative Chart -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h5><i class="fas fa-chart-bar"></i> Cumulative Performance</h5>
+                            </div>
+                            <div class="card-body chart-container">
+                                <div class="export-buttons">
+                                    <button class="btn btn-sm btn-outline-secondary" onclick="exportChart('cumulativeChart')">
+                                        <i class="fas fa-image"></i>
+                                    </button>
+                                </div>
+                                <div id="cumulativeChart"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Factor Comparison Tab -->
+            <div class="tab-pane fade" id="compare" role="tabpanel">
+                <div class="card">
+                    <div class="card-header">
+                        <h5><i class="fas fa-balance-scale"></i> Compare Factors</h5>
+                    </div>
+                    <div class="card-body">
+                        <div id="comparisonFactors">
+                            <div class="factor-input-group mb-3">
+                                <label class="form-label fw-bold">Factor 1:</label>
+                                <input type="text" class="form-control expression-input comparison-expr" 
+                                       placeholder="Enter first factor expression">
+                            </div>
+                            <div class="factor-input-group mb-3">
+                                <label class="form-label fw-bold">Factor 2:</label>
+                                <input type="text" class="form-control expression-input comparison-expr" 
+                                       placeholder="Enter second factor expression">
+                            </div>
+                        </div>
+                        
+                        <div class="mb-3">
+                            <button class="btn btn-outline-primary" onclick="addComparisonFactor()">
+                                <i class="fas fa-plus"></i> Add Factor
+                            </button>
+                            <button class="btn btn-success ms-2" onclick="compareFactors()">
+                                <i class="fas fa-chart-line"></i> Compare
+                            </button>
+                        </div>
+                        
+                        <!-- Comparison Settings -->
+                        <div class="row">
+                            <div class="col-md-4">
+                                <label class="form-label">Market:</label>
+                                <select class="form-select" id="compareMarket">
+                                    <option value="csi300">CSI300</option>
+                                    <option value="csi500">CSI500</option>
+                                    <option value="csi1000">CSI1000</option>
+                                    <option value="sp500">S&P500</option>
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">Start Date:</label>
+                                <input type="date" class="form-control" id="compareStartDate" value="2023-01-01">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label">End Date:</label>
+                                <input type="date" class="form-control" id="compareEndDate" value="2024-01-01">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Comparison Results -->
+                <div id="comparisonResults" style="display: none;">
+                    <!-- Comparison Table -->
+                    <div class="card mt-3">
+                        <div class="card-header">
+                            <h5><i class="fas fa-table"></i> Performance Comparison</h5>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table comparison-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Factor</th>
+                                            <th>IC</th>
+                                            <th>Rank IC</th>
+                                            <th>ICIR</th>
+                                            <th>Rank ICIR</th>
+                                            <th>Days</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="comparisonTableBody">
+                                        <!-- Data will be populated here -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- Comparison Charts -->
+                    <div class="row mt-3">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5><i class="fas fa-chart-line"></i> IC Comparison</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div id="comparisonICChart"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5><i class="fas fa-chart-line"></i> Rank IC Comparison</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div id="comparisonRankICChart"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row mt-3">
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5><i class="fas fa-chart-area"></i> Cumulative IC Comparison</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div id="comparisonCumulativeChart"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-6">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h5><i class="fas fa-chart-bar"></i> Performance Metrics</h5>
+                                </div>
+                                <div class="card-body">
+                                    <div id="comparisonMetricsChart"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Factor Combination Tab -->
+            <div class="tab-pane fade" id="combination" role="tabpanel">
+                
+                <!-- Optimization Method Tabs -->
+                <ul class="nav nav-pills mb-4" id="optimizationTabs" role="tablist">
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link active" id="fixed-opt-tab" data-bs-toggle="tab" data-bs-target="#fixed-optimization" type="button" role="tab">
+                            <i class="fas fa-calendar-day"></i> Category A: Fixed Period
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="dynamic-opt-tab" data-bs-toggle="tab" data-bs-target="#dynamic-optimization" type="button" role="tab">
+                            <i class="fas fa-calendar-alt"></i> Category B: Dynamic Periods
+                        </button>
+                    </li>
+                    <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="review-opt-tab" data-bs-toggle="tab" data-bs-target="#review-optimization" type="button" role="tab">
+                            <i class="fas fa-eye"></i> Category C: Review & Export
+                        </button>
+                    </li>
+                </ul>
+
+                <!-- Optimization Methods Tab Content -->
+                <div class="tab-content" id="optimizationTabContent">
+                    
+                    <!-- ==================== CATEGORY A: FIXED PERIOD ==================== -->
+                    <div class="tab-pane fade show active" id="fixed-optimization" role="tabpanel">
+                        <div class="row">
+                            <!-- Fixed Period Configuration -->
+                            <div class="col-lg-6">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h5><i class="fas fa-cog"></i> Fixed Period Configuration</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="mb-3">
+                                            <label class="form-label fw-bold">Period Type</label>
+                                            <div class="form-text mb-2">Single continuous period with train/test separation</div>
+                                        </div>
+
+                                        <div class="row">
+                                            <div class="col-md-6">
+                                                <label class="form-label">Market:</label>
+                                                <select class="form-select" id="fixedMarket">
+                                                    <option value="csi300">CSI300</option>
+                                                    <option value="csi500">CSI500</option>
+                                                    <option value="csi1000">CSI1000</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label class="form-label">Alpha (LASSO):</label>
+                                                <input type="number" class="form-control" id="fixedAlpha" value="0.01" step="0.001" min="0">
+                                            </div>
+                                        </div>
+
+                                        <div class="row mt-3">
+                                            <div class="col-md-6">
+                                                <label class="form-label"><i class="fas fa-graduation-cap"></i> Training Start:</label>
+                                                <input type="date" class="form-control" id="fixedTrainStart" value="2020-01-01">
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label class="form-label"><i class="fas fa-graduation-cap"></i> Training End:</label>
+                                                <input type="date" class="form-control" id="fixedTrainEnd" value="2020-12-31">
+                                            </div>
+                                        </div>
+
+                                        <div class="row mt-3">
+                                            <div class="col-md-6">
+                                                <label class="form-label"><i class="fas fa-flask"></i> Testing Start:</label>
+                                                <input type="date" class="form-control" id="fixedTestStart" value="2021-01-01">
+                                            </div>
+                                            <div class="col-md-6">
+                                                <label class="form-label"><i class="fas fa-flask"></i> Testing End:</label>
+                                                <input type="date" class="form-control" id="fixedTestEnd" value="2021-12-31">
+                                            </div>
+                                        </div>
+
+                                        <div class="mt-3">
+                                            <label class="form-label fw-bold">Factor Expressions</label>
+                                            <div class="mb-2">
+                                                <button class="btn btn-sm btn-outline-primary" onclick="document.getElementById('fixedJsonUpload').click()">
+                                                    <i class="fas fa-upload"></i> Load from JSON
+                                                </button>
+                                                <input type="file" id="fixedJsonUpload" accept=".json" style="display: none;" onchange="loadFixedFactorsFromJson(event)">
+                                                <small class="form-text text-muted ms-2">Upload JSON with periods array (like Category B format)</small>
+                                            </div>
+                                            <textarea class="form-control expression-input" id="fixedFactors" rows="8" 
+                                                      placeholder="Enter factor expressions, one per line:&#10;Momentum($close, 10)&#10;Div($close, Mean($close, 5))&#10;Mean($volume, 5)"></textarea>
+                                            <small class="form-text text-muted">All three methods will run automatically: Baseline, LASSO, and IC Optimization</small>
+                                        </div>
+
+                                        <div class="mt-4">
+                                            <button class="btn btn-success w-100" onclick="runFixedOptimization()">
+                                                <i class="fas fa-play"></i> Run Fixed Optimization
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Fixed Results -->
+                            <div class="col-lg-6">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h5><i class="fas fa-chart-bar"></i> Results</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="fixedStatus" class="text-center text-muted py-5">
+                                            <i class="fas fa-info-circle fa-2x mb-3"></i>
+                                            <p>Configure and run optimization to see results</p>
+                                        </div>
+                                        <div id="fixedResults" style="display: none;">
+                                            <div class="row">
+                                                <div class="col-md-6">
+                                                    <div class="metric-card">
+                                                        <div class="metric-label">Baseline</div>
+                                                        <div id="fixedBaselineMetric" class="metric-value">-</div>
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <div class="metric-card">
+                                                        <div class="metric-label">LASSO</div>
+                                                        <div id="fixedLassoMetric" class="metric-value">-</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="mt-3">
+                                                <div class="metric-card">
+                                                    <div class="metric-label">IC Optimization</div>
+                                                    <div id="fixedIcMetric" class="metric-value">-</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        
+                                        <!-- Export Button -->
+                                        <div class="mt-3" id="fixedExportSection" style="display: none;">
+                                            <button class="btn btn-primary w-100" onclick="exportFixedResults()">
+                                                <i class="fas fa-download"></i> Export Results for Backtesting
+                                            </button>
+                                            <small class="form-text text-muted text-center d-block mt-2">
+                                                Download JSON file compatible with Category C backtesting
+                                            </small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Chart -->
+                                <div class="card mt-3">
+                                    <div class="card-header">
+                                        <h5><i class="fas fa-chart-bar"></i> Factor Weights Comparison</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="fixedChart" style="min-height: 400px;">
+                                            <div class="text-center text-muted py-5">
+                                                <i class="fas fa-chart-bar fa-2x mb-3"></i>
+                                                <p>Chart will appear here after running optimization</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ==================== CATEGORY B: DYNAMIC PERIODS ==================== -->
+                    <div class="tab-pane fade" id="dynamic-optimization" role="tabpanel">
+                        <!-- INPUT SECTION -->
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5 style="margin: 0;"><i class="fas fa-cog"></i> INPUT - Dynamic Periods Configuration</h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label class="form-label fw-bold">Multiple Continuous Periods</label>
+                                            <div class="form-text mb-2">Each period's start = previous period's end + 1 day (continuous)</div>
+                                        </div>
+
+                                        <div class="mb-3">
+                                            <label class="form-label">Market:</label>
+                                            <select class="form-select" id="dynamicMarket">
+                                                <option value="csi300">CSI300</option>
+                                                <option value="csi500">CSI500</option>
+                                                <option value="csi1000">CSI1000</option>
+                                            </select>
+                                        </div>
+
+                                        <div class="mb-3">
+                                            <label class="form-label">Lookback Window (T):</label>
+                                            <input type="number" class="form-control" id="dynamicLookback" value="60" min="10" max="252">
+                                            <small class="form-text text-muted">Days before period for weight computation</small>
+                                        </div>
+
+                                        <div class="mb-3">
+                                            <label class="form-label">Alpha (LASSO):</label>
+                                            <input type="number" class="form-control" id="dynamicAlpha" value="0.01" step="0.001" min="0">
+                                            <small class="form-text text-muted">All three methods will run automatically: Baseline, LASSO, and IC Optimization</small>
+                                        </div>
+                                    </div>
+
+                                    <div class="col-md-6">
+                                        <div class="mb-3">
+                                            <label class="form-label fw-bold"><i class="fas fa-graduation-cap"></i> Global Training Period (Optional)</label>
+                                            <div class="form-text mb-2">Override training periods from JSON if provided</div>
+                                        </div>
+
+                                        <div class="mb-3">
+                                            <label class="form-label">Training Start:</label>
+                                            <input type="date" class="form-control" id="dynamicTrainStart">
+                                            <small class="form-text text-muted">Leave empty to use JSON values</small>
+                                        </div>
+
+                                        <div class="mb-3">
+                                            <label class="form-label">Training End:</label>
+                                            <input type="date" class="form-control" id="dynamicTrainEnd">
+                                            <small class="form-text text-muted">Leave empty to use JSON values</small>
+                                        </div>
+
+                                        <div class="mb-3">
+                                            <label class="form-label fw-bold">Upload Periods Configuration</label>
+                                            <input type="file" class="form-control" id="dynamicPeriodFile" accept=".json">
+                                            <small class="form-text text-muted">JSON file with periods array</small>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="mt-3">
+                                    <button class="btn btn-success btn-lg w-100" onclick="runDynamicOptimization()">
+                                        <i class="fas fa-play"></i> Run Dynamic Optimization
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- RESULT SECTION -->
+                        <div class="card mb-4">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5 style="margin: 0;"><i class="fas fa-check-circle"></i> RESULT - Optimization Results</h5>
+                                <div id="resultActionButtons" style="display: none;">
+                                    <button class="btn btn-sm btn-outline-info" onclick="saveResultsToRecord()" title="Save complete results to records">
+                                        <i class="fas fa-save"></i> Save to Records
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <div id="dynamicStatus" class="text-center text-muted py-5">
+                                    <i class="fas fa-info-circle fa-2x mb-3"></i>
+                                    <p>Upload periods configuration and run optimization</p>
+                                </div>
+                                <div id="dynamicResults" style="display: none;">
+                                    <div class="row mb-4">
+                                        <div class="col-md-6">
+                                            <div class="metric-card">
+                                                <div class="metric-label">Total Periods</div>
+                                                <div id="dynamicTotalPeriods" class="metric-value">-</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div id="dynamicResultsJSON" style="max-height: 400px; overflow-y: auto;">
+                                        <!-- JSON results will be inserted here -->
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- MODEL METRICS SECTION -->
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h5 style="margin: 0;"><i class="fas fa-chart-bar"></i> MODEL METRICS - Performance Evaluation</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="dynamicModelMetrics" style="display: none;">
+                                    <!-- Metrics will be populated here -->
+                                </div>
+                                <div id="dynamicModelMetricsPlaceholder" class="text-center text-muted py-5">
+                                    <i class="fas fa-chart-bar fa-2x mb-3"></i>
+                                    <p>Model metrics will appear here after running optimization</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- PLOT SECTION -->
+                        <div class="card">
+                            <div class="card-header">
+                                <h5 style="margin: 0;"><i class="fas fa-chart-line"></i> PLOT - Visualizations</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="dynamicCharts" style="display: none;">
+                                    <div id="dynamicWeightsChart" style="min-height: 400px; margin-bottom: 30px;"></div>
+                                </div>
+                                <div id="dynamicChartsPlaceholder" class="text-center text-muted py-5">
+                                    <i class="fas fa-chart-line fa-2x mb-3"></i>
+                                    <p>Charts will appear here after running optimization</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- ==================== CATEGORY C: BACKTEST WITH WEIGHTS ==================== -->
+                    <div class="tab-pane fade" id="review-optimization" role="tabpanel">
+                        <div class="row">
+                            <!-- LEFT: Configuration -->
+                            <div class="col-lg-6">
+                                <div class="card">
+                                    <div class="card-header">
+                                        <h5><i class="fas fa-play"></i> Run Backtest with Saved Weights</h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <!-- Upload Weights -->
+                                        <div class="mb-3">
+                                            <label class="form-label fw-bold">1. Upload Weights JSON</label>
+                                            <input type="file" class="form-control" id="backtestWeightsFile" accept=".json">
+                                            <small class="form-text text-muted">From Category A or B optimization results</small>
+                                        </div>
+                                        
+                                        <div id="loadedWeightsInfo" style="display: none;" class="alert alert-success mb-3">
+                                            <strong><i class="fas fa-check-circle"></i> Weights Loaded</strong>
+                                            <div id="loadedWeightsDetails" class="small mt-2"></div>
+                                        </div>
+
+                                        <!-- Backtest Config -->
+                                        <div class="mb-3">
+                                            <label class="form-label fw-bold">2. Configure Backtest</label>
+                                        </div>
+
+                                        <div class="row mb-3">
+                                            <div class="col-6">
+                                                <label class="form-label">Market:</label>
+                                                <select class="form-select" id="backtestMarket">
+                                                    <option value="csi300">CSI300</option>
+                                                    <option value="csi500">CSI500</option>
+                                                    <option value="csi1000">CSI1000</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-6">
+                                                <label class="form-label">Method:</label>
+                                                <select class="form-select" id="backtestMethod" onchange="clearBacktestResults()">
+                                                    <option value="lasso">LASSO</option>
+                                                    <option value="baseline">Baseline</option>
+                                                    <option value="ic_optimization">IC Optimization</option>
+                                                </select>
+                                            </div>
+                                        </div>
+
+                                        <!-- Date inputs - only shown for fixed mode -->
+                                        <div id="backtestDateInputs" class="row mb-3">
+                                            <div class="col-6">
+                                                <label class="form-label">Start Date:</label>
+                                                <input type="date" class="form-control" id="backtestStartDate" value="2023-07-01">
+                                            </div>
+                                            <div class="col-6">
+                                                <label class="form-label">End Date:</label>
+                                                <input type="date" class="form-control" id="backtestEndDate" value="2023-12-31">
+                                            </div>
+                                        </div>
+
+                                        <!-- Period info - shown for dynamic mode -->
+                                        <div id="backtestPeriodInfo" style="display: none;" class="alert alert-info mb-3">
+                                            <small><i class="fas fa-info-circle"></i> Dynamic mode: Using period dates from JSON</small>
+                                        </div>
+
+                                        <button class="btn btn-success w-100 mb-2" onclick="runBacktestWithWeights()">
+                                            <i class="fas fa-play"></i> Run Backtest
+                                        </button>
+                                        
+                                        <button class="btn btn-outline-primary w-100" onclick="loadWeightsForBacktest()">
+                                            <i class="fas fa-sync-alt"></i> Reload Weights File
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- RIGHT: Results -->
+                            <div class="col-lg-6">
+                                <div class="card">
+                                    <div class="card-header d-flex justify-content-between align-items-center">
+                                        <h5 class="mb-0"><i class="fas fa-chart-line"></i> Backtest Results</h5>
+                                        <span id="backtestModebadge" class="badge bg-secondary" style="display: none;">Mode</span>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="backtestStatus" class="text-center text-muted py-5">
+                                            <i class="fas fa-info-circle fa-2x mb-3"></i>
+                                            <p>Upload weights and run backtest</p>
+                                        </div>
+                                        
+                                        <div id="backtestResults" style="display: none;">
+                                            <!-- Metrics -->
+                                            <div class="row mb-3">
+                                                <div class="col-6">
+                                                    <div class="metric-card">
+                                                        <div class="metric-label">Annual Return</div>
+                                                        <div id="backtestAnnualReturn" class="metric-value">-</div>
+                                                    </div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <div class="metric-card">
+                                                        <div class="metric-label">Sharpe Ratio</div>
+                                                        <div id="backtestSharpe" class="metric-value">-</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div class="row mb-3">
+                                                <div class="col-6">
+                                                    <div class="metric-card">
+                                                        <div class="metric-label">Max Drawdown</div>
+                                                        <div id="backtestMaxDD" class="metric-value">-</div>
+                                                    </div>
+                                                </div>
+                                                <div class="col-6">
+                                                    <div class="metric-card">
+                                                        <div class="metric-label">Win Rate</div>
+                                                        <div id="backtestWinRate" class="metric-value">-</div>
+                                                    </div>
+                                                </div>
+                                            </div>
+
+                                            <!-- Chart -->
+                                            <div id="backtestChart" style="min-height: 300px;"></div>
+
+                                            <!-- Export -->
+                                            <div class="mt-3">
+                                                <input type="text" class="form-control mb-2" id="reviewExperimentName" placeholder="Experiment name (optional)">
+                                                <button class="btn btn-outline-success w-100" onclick="exportOptimizationResults()">
+                                                    <i class="fas fa-download"></i> Export Results
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Performance Dashboard Tab -->
+            <div class="tab-pane fade" id="performance" role="tabpanel">
+                <div class="row">
+                    <div class="col-md-12">
+                        <div class="card stats-card">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-center mb-4">
+                                    <h4 class="mb-0"><i class="fas fa-tachometer-alt"></i> System Performance</h4>
+                                    <button class="btn btn-sm btn-primary" onclick="refreshPerformanceDashboard()">
+                                        <i class="fas fa-sync-alt" id="refreshIcon"></i> Refresh
+                                    </button>
+                                </div>
+                                <div class="row" id="performanceMetrics">
+                                    <!-- Performance metrics will be populated here -->
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Top Performing Factors -->
+                <div class="card mt-3">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0"><i class="fas fa-trophy"></i> Top Performing Factors</h5>
+                        <div class="btn-group btn-group-sm" role="group">
+                            <button type="button" class="btn btn-outline-light metric-btn" data-metric="ic" onclick="loadTopFactorsByMetric('ic')">IC</button>
+                            <button type="button" class="btn btn-outline-light metric-btn active" data-metric="rank_ic" onclick="loadTopFactorsByMetric('rank_ic')">Rank IC</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="topFactorsTable">
+                            <div class="text-center text-muted">
+                                <i class="fas fa-spinner fa-spin fa-2x"></i>
+                                <p class="mt-2">Loading top factors...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Recent Activity -->
+                <div class="card mt-3">
+                    <div class="card-header">
+                        <h5><i class="fas fa-clock"></i> Recent Activity</h5>
+                    </div>
+                    <div class="card-body">
+                        <div class="mb-3">
+                            <div class="input-group">
+                                <input type="text" class="form-control" id="recentActivitySearch" 
+                                       placeholder="Search by expression..." />
+                                <button class="btn btn-outline-secondary" onclick="searchRecentActivity()">
+                                    <i class="fas fa-search"></i>
+                                </button>
+                                <button class="btn btn-outline-danger" onclick="clearRecentActivitySearch()">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="recentActivity">
+                            <div class="text-center text-muted">
+                                <i class="fas fa-spinner fa-spin fa-2x"></i>
+                                <p class="mt-2">Loading recent activity...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Cached Expressions List -->
+        <div id="cachedExpressionsCard" class="card" style="display: none;">
+            <div class="card-header">
+                <h5><i class="fas fa-history"></i> Cached Expressions</h5>
+            </div>
+            <div class="card-body">
+                <div class="list-group" id="cachedExpressionsList">
+                    <!-- List will be populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Theme Toggle Button -->
+    <button class="btn btn-primary theme-toggle" onclick="toggleTheme()">
+        <i class="fas fa-moon" id="themeIcon"></i>
+    </button>
+    
+    <!-- Bootstrap 5 JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        // Global variables
+        let currentFactorData = null;
+        let currentPortfolioMetrics = null;
+        let comparisonData = [];
+        let isDarkMode = false;
+        let currentDynamicResults = null; // Store dynamic optimization results
+        let currentFixedResults = null; // Store fixed optimization results
+        let loadedWeightsData = null; // Store loaded weights for Category C backtest
+        let currentBacktestResults = null; // Store current backtest results for export
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            // Note: Cache stats are loaded when the Performance Dashboard tab is opened
+            
+            // Set up form submission
+            document.getElementById('queryForm').addEventListener('submit', async (e) => {
+                e.preventDefault();
+                await searchCache();
+            });
+            
+            // Recent Activity search with debounce
+            const searchInput = document.getElementById('recentActivitySearch');
+            if (searchInput) {
+                searchInput.addEventListener('keyup', searchRecentActivity);
+            }
+            
+            // Check for saved theme preference
+            const savedTheme = localStorage.getItem('theme');
+            if (savedTheme === 'dark') {
+                toggleTheme();
+            }
+            
+            // Add tab event listener for Performance Dashboard
+            document.getElementById('performance-tab').addEventListener('shown.bs.tab', function() {
+                loadPerformanceDashboard();
+            });
+            
+            // Also load performance dashboard if it's the active tab on page load
+            if (document.getElementById('performance-tab').classList.contains('active')) {
+                setTimeout(() => loadPerformanceDashboard(), 100);
+            }
+        });
+        
+        // Theme toggle
+        function toggleTheme() {
+            isDarkMode = !isDarkMode;
+            document.body.classList.toggle('dark-mode');
+            const icon = document.getElementById('themeIcon');
+            icon.className = isDarkMode ? 'fas fa-sun' : 'fas fa-moon';
+            localStorage.setItem('theme', isDarkMode ? 'dark' : 'light');
+            
+            // Update Plotly theme
+            if (typeof Plotly !== 'undefined') {
+                const plotElements = document.querySelectorAll('[id$="Chart"]');
+                plotElements.forEach(el => {
+                    if (el.data) {
+                        Plotly.relayout(el, {
+                            plot_bgcolor: isDarkMode ? '#1a1a2e' : 'white',
+                            paper_bgcolor: isDarkMode ? '#1a1a2e' : 'white',
+                            font: { color: isDarkMode ? '#e0e0e0' : '#333' }
+                        });
+                    }
+                });
+            }
+        }
+        
+        // Show notification helper
+        function showNotification(message, type = 'info') {
+            // Remove any existing notifications
+            const existingNotifications = document.querySelectorAll('.notification-toast');
+            existingNotifications.forEach(n => n.remove());
+            
+            const notification = document.createElement('div');
+            notification.className = `alert alert-${type} alert-dismissible fade show position-fixed notification-toast`;
+            notification.style.cssText = 'top: 20px; right: 20px; z-index: 9999; min-width: 250px;';
+            
+            // Choose icon based on type
+            let icon = 'fas fa-info-circle';
+            if (type === 'success') icon = 'fas fa-check-circle';
+            else if (type === 'error' || type === 'danger') icon = 'fas fa-exclamation-circle';
+            else if (type === 'warning') icon = 'fas fa-exclamation-triangle';
+            
+            notification.innerHTML = `
+                <i class="${icon}"></i> ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => notification.remove(), 3000);
+        }
+        
+        // Loading functions
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+            document.querySelector('.loading-overlay').style.display = show ? 'block' : 'none';
+        }
+        
+        function hideAllResults() {
+            document.getElementById('metricsCard').style.display = 'none';
+            document.getElementById('portfolioMetricsCard').style.display = 'none';
+            document.getElementById('chartsSection').style.display = 'none';
+            document.getElementById('cachedExpressionsCard').style.display = 'none';
+        }
+        
+        // Cache search
+        async function searchCache() {
+            const expression = document.getElementById('expression').value.trim();
+            if (!expression) {
+                alert('Please enter a factor expression');
+                return;
+            }
+            
+            showLoading(true);
+            hideAllResults();
+            
+            try {
+                const response = await axios.post('/api/search_cache', {
+                    expression: expression,
+                    market: document.getElementById('market').value,
+                    start_date: document.getElementById('startDate').value,
+                    end_date: document.getElementById('endDate').value
+                });
+                
+                if (response.data.success) {
+                    currentFactorData = response.data.data;
+                    displayResults(response.data.data);
+                } else {
+                    if (confirm('No cache found. Would you like to evaluate this factor?')) {
+                        await evaluateFactor();
+                    }
+                }
+            } catch (error) {
+                alert('Error searching cache: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        // Evaluate factor
+        async function evaluateFactor() {
+            const expression = document.getElementById('expression').value.trim();
+            if (!expression) {
+                alert('Please enter a factor expression');
+                return;
+            }
+            
+            showLoading(true);
+            hideAllResults();
+            
+            try {
+                const response = await axios.post('/api/evaluate_factor', {
+                    expression: expression,
+                    market: document.getElementById('market').value,
+                    start_date: document.getElementById('startDate').value,
+                    end_date: document.getElementById('endDate').value,
+                    use_cache: true
+                });
+                
+                if (response.data.success) {
+                    currentFactorData = response.data.data;
+                    displayResults(response.data.data);
+                } else {
+                    alert('Evaluation failed: ' + response.data.message);
+                }
+            } catch (error) {
+                alert('Error evaluating factor: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        // Display results
+        function displayResults(data) {
+            // Display metrics
+            if (data.metrics) {
+                displayMetrics(data.metrics);
+            }
+            
+            // Display charts
+            if (data.daily_metrics && data.daily_metrics.length > 0) {
+                document.getElementById('chartsSection').style.display = 'flex';
+                displayDailyChart(data);
+                displayCumulativeChart(data);
+            }
+            
+            // Get performance stats
+            getPerformanceStats();
+            
+            // Display portfolio metrics if available (now included in the response)
+            if (data.portfolio_metrics) {
+                currentPortfolioMetrics = data.portfolio_metrics;
+                displayPortfolioMetrics(data.portfolio_metrics);
+                showNotification('Factor evaluation and portfolio backtest completed!', 'success');
+            } else {
+                // Portfolio metrics not available in response
+                document.getElementById('portfolioMetricsCard').style.display = 'none';
+            }
+        }
+        
+        // Display metrics
+        function displayMetrics(metrics) {
+            const metricsRow = document.getElementById('metricsRow');
+            metricsRow.innerHTML = '';
+            
+            const metricItems = [
+                { label: 'IC', value: metrics.ic, format: 4, icon: 'fa-chart-line' },
+                { label: 'Rank IC', value: metrics.rank_ic, format: 4, icon: 'fa-sort-amount-up' },
+                { label: 'ICIR', value: metrics.icir, format: 3, icon: 'fa-percentage' },
+                { label: 'Rank ICIR', value: metrics.rank_icir, format: 3, icon: 'fa-signal' },
+                { label: 'Days', value: metrics.n_dates, format: 0, icon: 'fa-calendar' }
+            ];
+            
+            metricItems.forEach(item => {
+                const col = document.createElement('div');
+                col.className = 'col-md-2 col-sm-4 col-6 mb-3';
+                
+                const valueClass = item.value > 0 ? 'positive' : (item.value < 0 ? 'negative' : '');
+                const formattedValue = typeof item.value === 'number' ? 
+                    item.value.toFixed(item.format) : 'N/A';
+                
+                col.innerHTML = `
+                    <div class="metric-card">
+                        <i class="fas ${item.icon} fa-2x mb-3 text-primary"></i>
+                        <div class="metric-label">${item.label}</div>
+                        <div class="metric-value ${valueClass}">${formattedValue}</div>
+                    </div>
+                `;
+                
+                metricsRow.appendChild(col);
+            });
+            
+            document.getElementById('metricsCard').style.display = 'block';
+        }
+        
+            // Display daily chart
+        function displayDailyChart(data) {
+            try {
+                if (!data.daily_metrics || data.daily_metrics.length === 0) {
+                    console.error('No daily metrics data available');
+                    return;
+                }
+                
+                // Extract dates and values
+                const dates = data.daily_metrics.map(d => d.date);
+                const icValues = data.daily_metrics.map(d => d.ic);
+                const rankIcValues = data.daily_metrics.map(d => d.rank_ic);
+                
+                // Create traces
+                const traces = [
+                    {
+                        x: dates,
+                        y: icValues,
+                        mode: 'lines+markers',
+                        name: 'IC',
+                        line: { color: 'blue', width: 2 },
+                        marker: { size: 4 }
+                    },
+                    {
+                        x: dates,
+                        y: rankIcValues,
+                        mode: 'lines+markers',
+                        name: 'Rank IC',
+                        line: { color: 'red', width: 2 },
+                        marker: { size: 4 }
+                    }
+                ];
+                
+                // Create layout
+                const layout = {
+                    title: `Daily IC and Rank IC - ${data.market ? data.market.toUpperCase() : ''}`,
+                    xaxis: { title: 'Date' },
+                    yaxis: { title: 'Correlation' },
+                    hovermode: 'x unified',
+                    template: 'plotly_white',
+                    height: 500,
+                    shapes: [{
+                        type: 'line',
+                        x0: dates[0],
+                        y0: 0,
+                        x1: dates[dates.length - 1],
+                        y1: 0,
+                        line: {
+                            color: 'gray',
+                            width: 1,
+                            dash: 'dash'
+                        }
+                    }]
+                };
+                
+                // Apply dark theme if needed
+                if (isDarkMode) {
+                    layout.plot_bgcolor = '#1a1a2e';
+                    layout.paper_bgcolor = '#1a1a2e';
+                    layout.font = { color: '#e0e0e0' };
+                }
+                
+                Plotly.newPlot('dailyChart', traces, layout);
+            } catch (error) {
+                console.error('Error displaying daily chart:', error);
+            }
+        }
+        
+        // Display distribution chart - REMOVED (not needed)
+        // function displayDistributionChart(data) { ... }
+        
+        // Display cumulative chart
+        function displayCumulativeChart(data) {
+            try {
+                if (!data.daily_metrics || data.daily_metrics.length === 0) {
+                    console.error('No daily metrics data available');
+                    return;
+                }
+                
+                // Sort by date to ensure correct cumulative calculation
+                const sortedData = [...data.daily_metrics].sort((a, b) => 
+                    new Date(a.date) - new Date(b.date)
+                );
+                
+                // Calculate cumulative IC and Rank IC
+                let cumulativeIC = 0;
+                let cumulativeRankIC = 0;
+                const dates = [];
+                const cumulativeICValues = [];
+                const cumulativeRankICValues = [];
+                
+                sortedData.forEach(d => {
+                    cumulativeIC += d.ic || 0;
+                    cumulativeRankIC += d.rank_ic || 0;
+                    dates.push(d.date);
+                    cumulativeICValues.push(cumulativeIC);
+                    cumulativeRankICValues.push(cumulativeRankIC);
+                });
+                
+                // Create traces
+                const traces = [
+                    {
+                        x: dates,
+                        y: cumulativeICValues,
+                        mode: 'lines',
+                        name: 'Cumulative IC',
+                        line: { color: 'blue', width: 2 }
+                    },
+                    {
+                        x: dates,
+                        y: cumulativeRankICValues,
+                        mode: 'lines',
+                        name: 'Cumulative Rank IC',
+                        line: { color: 'red', width: 2 }
+                    }
+                ];
+                
+                // Create layout
+                const layout = {
+                    title: `Cumulative IC - ${data.market ? data.market.toUpperCase() : ''}`,
+                    xaxis: { title: 'Date' },
+                    yaxis: { title: 'Cumulative Value' },
+                    hovermode: 'x unified',
+                    template: 'plotly_white',
+                    height: 400
+                };
+                
+                // Apply dark theme if needed
+                if (isDarkMode) {
+                    layout.plot_bgcolor = '#1a1a2e';
+                    layout.paper_bgcolor = '#1a1a2e';
+                    layout.font = { color: '#e0e0e0' };
+                }
+                
+                Plotly.newPlot('cumulativeChart', traces, layout);
+            } catch (error) {
+                console.error('Error displaying cumulative chart:', error);
+            }
+        }
+        
+        // Display daily table - REMOVED (not needed)
+        // function displayDailyTable(dailyMetrics) { ... }
+        
+        // Factor comparison
+        function addComparisonFactor() {
+            const container = document.getElementById('comparisonFactors');
+            const factorCount = container.querySelectorAll('.factor-input-group').length + 1;
+            
+            const newFactor = document.createElement('div');
+            newFactor.className = 'factor-input-group mb-3';
+            newFactor.innerHTML = `
+                <label class="form-label fw-bold">Factor ${factorCount}:</label>
+                <div class="input-group">
+                    <input type="text" class="form-control expression-input comparison-expr" 
+                           placeholder="Enter factor expression">
+                    <button class="btn btn-outline-danger" onclick="this.parentElement.parentElement.remove()">
+                        <i class="fas fa-trash"></i>
+                    </button>
+                </div>
+            `;
+            
+            container.appendChild(newFactor);
+        }
+        
+        async function compareFactors() {
+            const expressions = Array.from(document.querySelectorAll('.comparison-expr'))
+                .map(input => input.value.trim())
+                .filter(expr => expr !== '');
+            
+            if (expressions.length < 2) {
+                alert('Please enter at least 2 factor expressions to compare');
+                return;
+            }
+            
+            showLoading(true);
+            
+            try {
+                const response = await axios.post('/api/compare_factors', {
+                    expressions: expressions,
+                    market: document.getElementById('compareMarket').value,
+                    start_date: document.getElementById('compareStartDate').value,
+                    end_date: document.getElementById('compareEndDate').value
+                });
+                
+                if (response.data.success) {
+                    comparisonData = response.data.comparison;
+                    displayComparisonResults(response.data.comparison);
+                } else {
+                    alert('Comparison failed: ' + response.data.message);
+                }
+            } catch (error) {
+                alert('Error comparing factors: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function displayComparisonResults(comparison) {
+            // Display comparison table
+            const tbody = document.getElementById('comparisonTableBody');
+            tbody.innerHTML = '';
+            
+            comparison.forEach((factor, index) => {
+                const metrics = factor.metrics;
+                const tr = document.createElement('tr');
+                
+                // Truncate long expressions
+                const shortExpr = factor.expression.length > 50 ? 
+                    factor.expression.substring(0, 50) + '...' : factor.expression;
+                
+                tr.innerHTML = `
+                    <td title="${factor.expression}">${shortExpr}</td>
+                    <td class="${metrics.ic > 0 ? 'positive' : 'negative'}">${metrics.ic.toFixed(4)}</td>
+                    <td class="${metrics.rank_ic > 0 ? 'positive' : 'negative'}">${metrics.rank_ic.toFixed(4)}</td>
+                    <td>${metrics.icir !== null && !isNaN(metrics.icir) ? metrics.icir.toFixed(3) : 'N/A'}</td>
+                    <td>${metrics.rank_icir !== null && !isNaN(metrics.rank_icir) ? metrics.rank_icir.toFixed(3) : 'N/A'}</td>
+                    <td>${metrics.n_dates || 0}</td>
+                `;
+                
+                tbody.appendChild(tr);
+            });
+            
+            // Display multiple comparison charts
+            displayComparisonCharts(comparison);
+            
+            document.getElementById('comparisonResults').style.display = 'block';
+        }
+        
+        function displayComparisonCharts(comparison) {
+            // 1. IC Comparison Chart
+            displayICComparisonChart(comparison);
+            
+            // 2. Rank IC Comparison Chart
+            displayRankICComparisonChart(comparison);
+            
+            // 3. Cumulative IC Chart
+            displayCumulativeComparisonChart(comparison);
+            
+            // 4. Metrics Bar Chart
+            displayMetricsComparisonChart(comparison);
+        }
+        
+        function displayICComparisonChart(comparison) {
+            const traces = [];
+            const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b'];
+            
+            comparison.forEach((factor, index) => {
+                if (factor.daily_metrics && factor.daily_metrics.length > 0) {
+                    const shortExpr = factor.expression.length > 30 ? 
+                        factor.expression.substring(0, 30) + '...' : factor.expression;
+                    traces.push({
+                        x: factor.daily_metrics.map(d => d.date),
+                        y: factor.daily_metrics.map(d => d.ic),
+                        name: `Factor ${index + 1}: ${shortExpr}`,
+                        text: factor.expression,  // Full expression in tooltip
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        line: { color: colors[index % colors.length], width: 2 },
+                        marker: { size: 4 }
+                    });
+                }
+            });
+            
+            const layout = {
+                title: 'Daily IC Comparison',
+                xaxis: { title: 'Date' },
+                yaxis: { title: 'IC Value', zeroline: true },
+                hovermode: 'x unified',
+                template: 'plotly_white',
+                height: 400,
+                shapes: [{
+                    type: 'line',
+                    x0: 0,
+                    y0: 0,
+                    x1: 1,
+                    y1: 0,
+                    xref: 'paper',
+                    yref: 'y',
+                    line: { color: 'gray', width: 1, dash: 'dash' }
+                }]
+            };
+            
+            // Apply theme
+            if (isDarkMode) {
+                layout.plot_bgcolor = '#1a1a2e';
+                layout.paper_bgcolor = '#1a1a2e';
+                layout.font = { color: '#e0e0e0' };
+            }
+            
+            Plotly.newPlot('comparisonICChart', traces, layout);
+        }
+        
+        function displayRankICComparisonChart(comparison) {
+            const traces = [];
+            const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b'];
+            
+            comparison.forEach((factor, index) => {
+                if (factor.daily_metrics && factor.daily_metrics.length > 0) {
+                    const shortExpr = factor.expression.length > 30 ? 
+                        factor.expression.substring(0, 30) + '...' : factor.expression;
+                    traces.push({
+                        x: factor.daily_metrics.map(d => d.date),
+                        y: factor.daily_metrics.map(d => d.rank_ic),
+                        name: `Factor ${index + 1}: ${shortExpr}`,
+                        text: factor.expression,  // Full expression in tooltip
+                        type: 'scatter',
+                        mode: 'lines+markers',
+                        line: { color: colors[index % colors.length], width: 2 },
+                        marker: { size: 4 }
+                    });
+                }
+            });
+            
+            const layout = {
+                title: 'Daily Rank IC Comparison',
+                xaxis: { title: 'Date' },
+                yaxis: { title: 'Rank IC Value', zeroline: true },
+                hovermode: 'x unified',
+                template: 'plotly_white',
+                height: 400,
+                shapes: [{
+                    type: 'line',
+                    x0: 0,
+                    y0: 0,
+                    x1: 1,
+                    y1: 0,
+                    xref: 'paper',
+                    yref: 'y',
+                    line: { color: 'gray', width: 1, dash: 'dash' }
+                }]
+            };
+            
+            // Apply theme
+            if (isDarkMode) {
+                layout.plot_bgcolor = '#1a1a2e';
+                layout.paper_bgcolor = '#1a1a2e';
+                layout.font = { color: '#e0e0e0' };
+            }
+            
+            Plotly.newPlot('comparisonRankICChart', traces, layout);
+        }
+        
+        function displayCumulativeComparisonChart(comparison) {
+            const traces = [];
+            const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b'];
+            
+            comparison.forEach((factor, index) => {
+                if (factor.daily_metrics && factor.daily_metrics.length > 0) {
+                    // Sort by date
+                    const sortedMetrics = [...factor.daily_metrics].sort((a, b) => 
+                        new Date(a.date) - new Date(b.date)
+                    );
+                    
+                    // Calculate cumulative IC
+                    let cumulativeIC = 0;
+                    const cumulativeData = sortedMetrics.map(d => {
+                        cumulativeIC += d.ic || 0;
+                        return cumulativeIC;
+                    });
+                    
+                    const shortExpr = factor.expression.length > 30 ? 
+                        factor.expression.substring(0, 30) + '...' : factor.expression;
+                    traces.push({
+                        x: sortedMetrics.map(d => d.date),
+                        y: cumulativeData,
+                        name: `Factor ${index + 1}: ${shortExpr}`,
+                        text: factor.expression,  // Full expression in tooltip
+                        type: 'scatter',
+                        mode: 'lines',
+                        fill: 'tozeroy',
+                        line: { color: colors[index % colors.length], width: 2 },
+                        fillcolor: colors[index % colors.length] + '20'
+                    });
+                }
+            });
+            
+            const layout = {
+                title: 'Cumulative IC Comparison',
+                xaxis: { title: 'Date' },
+                yaxis: { title: 'Cumulative IC' },
+                hovermode: 'x unified',
+                template: 'plotly_white',
+                height: 400
+            };
+            
+            // Apply theme
+            if (isDarkMode) {
+                layout.plot_bgcolor = '#1a1a2e';
+                layout.paper_bgcolor = '#1a1a2e';
+                layout.font = { color: '#e0e0e0' };
+            }
+            
+            Plotly.newPlot('comparisonCumulativeChart', traces, layout);
+        }
+        
+        function displayMetricsComparisonChart(comparison) {
+            const factorNames = comparison.map((f, i) => `Factor ${i + 1}`);
+            const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728'];
+            
+            // Create grouped bar chart for multiple metrics
+            const trace1 = {
+                x: factorNames,
+                y: comparison.map(f => f.metrics.ic),
+                name: 'IC',
+                type: 'bar',
+                marker: { color: colors[0] }
+            };
+            
+            const trace2 = {
+                x: factorNames,
+                y: comparison.map(f => f.metrics.rank_ic),
+                name: 'Rank IC',
+                type: 'bar',
+                marker: { color: colors[1] }
+            };
+            
+            const trace3 = {
+                x: factorNames,
+                y: comparison.map(f => f.metrics.icir !== null && !isNaN(f.metrics.icir) ? f.metrics.icir : 0),
+                name: 'ICIR',
+                type: 'bar',
+                marker: { color: colors[2] }
+            };
+            
+            const trace4 = {
+                x: factorNames,
+                y: comparison.map(f => f.metrics.rank_icir !== null && !isNaN(f.metrics.rank_icir) ? f.metrics.rank_icir : 0),
+                name: 'Rank ICIR',
+                type: 'bar',
+                marker: { color: colors[3] }
+            };
+            
+            const layout = {
+                title: 'Performance Metrics Comparison',
+                xaxis: { title: 'Factors' },
+                yaxis: { title: 'Value' },
+                barmode: 'group',
+                template: 'plotly_white',
+                height: 400,
+                showlegend: true,
+                legend: { orientation: 'h', y: -0.2 }
+            };
+            
+            // Apply theme
+            if (isDarkMode) {
+                layout.plot_bgcolor = '#1a1a2e';
+                layout.paper_bgcolor = '#1a1a2e';
+                layout.font = { color: '#e0e0e0' };
+            }
+            
+            Plotly.newPlot('comparisonMetricsChart', [trace1, trace2, trace3, trace4], layout);
+        }
+        
+        // Export functions
+        async function exportCurrentData() {
+            if (!currentFactorData) {
+                alert('No data to export. Please search or evaluate a factor first.');
+                return;
+            }
+            
+            const format = prompt('Export format (csv/excel):', 'csv');
+            if (!format) return;
+            
+            showLoading(true);
+            
+            try {
+                const response = await axios.post('/api/export_data', {
+                    expression: document.getElementById('expression').value,
+                    market: document.getElementById('market').value,
+                    start_date: document.getElementById('startDate').value,
+                    end_date: document.getElementById('endDate').value,
+                    format: format.toLowerCase()
+                });
+                
+                if (response.data.success) {
+                    // Download file
+                    const link = document.createElement('a');
+                    link.href = `data:${response.data.mime_type};base64,${response.data.data}`;
+                    link.download = response.data.filename;
+                    link.click();
+                } else {
+                    alert('Export failed: ' + response.data.message);
+                }
+            } catch (error) {
+                alert('Error exporting data: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function exportChart(chartId) {
+            Plotly.downloadImage(chartId, {
+                format: 'png',
+                width: 1200,
+                height: 600,
+                filename: `${chartId}_${new Date().toISOString().split('T')[0]}`
+            });
+        }
+        
+        function exportTableCSV() {
+            if (!currentFactorData || !currentFactorData.daily_metrics) {
+                alert('No data to export');
+                return;
+            }
+            
+            let csv = 'Date,IC,Rank IC,ICIR,Rank ICIR\n';
+            currentFactorData.daily_metrics.forEach(row => {
+                csv += `${row.date},${row.ic},${row.rank_ic},${row.icir || ''},${row.rank_icir || ''}\n`;
+            });
+            
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `factor_data_${new Date().toISOString().split('T')[0]}.csv`;
+            link.click();
+        }
+        
+        function exportTableExcel() {
+            exportCurrentData(); // Reuse the API export with Excel format
+        }
+        
+        // Export overall report (Option 1)
+        function exportOverallReport() {
+            if (!currentFactorData || !currentFactorData.metrics) {
+                alert('No data to export. Please evaluate a factor first.');
+                return;
+            }
+            
+            const metrics = currentFactorData.metrics;
+            const expression = document.getElementById('expression').value;
+            const market = document.getElementById('market').value;
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+            
+            // Create CSV content for overall report
+            let csv = 'Factor Analysis Report\n';
+            csv += '='.repeat(50) + '\n\n';
+            csv += `Expression:,${expression}\n`;
+            csv += `Market:,${market.toUpperCase()}\n`;
+            csv += `Period:,${startDate} to ${endDate}\n`;
+            csv += `Analysis Date:,${new Date().toISOString().split('T')[0]}\n\n`;
+            csv += 'Performance Metrics\n';
+            csv += '-'.repeat(50) + '\n';
+            csv += 'Metric,Value\n';
+            csv += `IC,${metrics.ic ? metrics.ic.toFixed(4) : 'N/A'}\n`;
+            csv += `Rank IC,${metrics.rank_ic ? metrics.rank_ic.toFixed(4) : 'N/A'}\n`;
+            csv += `ICIR,${metrics.icir !== null && !isNaN(metrics.icir) ? metrics.icir.toFixed(4) : 'N/A'}\n`;
+            csv += `Rank ICIR,${metrics.rank_icir !== null && !isNaN(metrics.rank_icir) ? metrics.rank_icir.toFixed(4) : 'N/A'}\n`;
+            csv += `Number of Days,${metrics.n_dates || 'N/A'}\n`;
+            
+            // Add statistics if available
+            if (currentFactorData.daily_metrics && currentFactorData.daily_metrics.length > 0) {
+                const icValues = currentFactorData.daily_metrics.map(d => d.ic).filter(v => v !== null && !isNaN(v));
+                const rankIcValues = currentFactorData.daily_metrics.map(d => d.rank_ic).filter(v => v !== null && !isNaN(v));
+                
+                if (icValues.length > 0) {
+                    const icMin = Math.min(...icValues);
+                    const icMax = Math.max(...icValues);
+                    const icStd = calculateStd(icValues);
+                    const icPositiveRate = (icValues.filter(v => v > 0).length / icValues.length * 100).toFixed(2);
+                    
+                    csv += `\nIC Statistics\n`;
+                    csv += `IC Min,${icMin.toFixed(4)}\n`;
+                    csv += `IC Max,${icMax.toFixed(4)}\n`;
+                    csv += `IC Std Dev,${icStd.toFixed(4)}\n`;
+                    csv += `IC Positive Rate,${icPositiveRate}%\n`;
+                }
+                
+                if (rankIcValues.length > 0) {
+                    const rankIcMin = Math.min(...rankIcValues);
+                    const rankIcMax = Math.max(...rankIcValues);
+                    const rankIcStd = calculateStd(rankIcValues);
+                    const rankIcPositiveRate = (rankIcValues.filter(v => v > 0).length / rankIcValues.length * 100).toFixed(2);
+                    
+                    csv += `\nRank IC Statistics\n`;
+                    csv += `Rank IC Min,${rankIcMin.toFixed(4)}\n`;
+                    csv += `Rank IC Max,${rankIcMax.toFixed(4)}\n`;
+                    csv += `Rank IC Std Dev,${rankIcStd.toFixed(4)}\n`;
+                    csv += `Rank IC Positive Rate,${rankIcPositiveRate}%\n`;
+                }
+            }
+            
+            // Add portfolio metrics if available
+            if (currentPortfolioMetrics) {
+                csv += '\n\nPortfolio Backtest Metrics\n';
+                csv += '='.repeat(50) + '\n\n';
+                
+                // Pure Return With Cost
+                if (currentPortfolioMetrics.pure_return_with_cost) {
+                    csv += 'Pure Return (With Cost)\n';
+                    csv += '-'.repeat(50) + '\n';
+                    const m = currentPortfolioMetrics.pure_return_with_cost;
+                    csv += `Mean Return,${(m.mean_return * 100).toFixed(4)}%\n`;
+                    csv += `Volatility (Std),${(m.std * 100).toFixed(4)}%\n`;
+                    csv += `Annualized Return,${(m.annualized_return * 100).toFixed(2)}%\n`;
+                    csv += `Information Ratio,${m.information_ratio.toFixed(4)}\n`;
+                    csv += `Max Drawdown,${(m.max_drawdown * 100).toFixed(2)}%\n\n`;
+                }
+                
+                // Excess Return With Cost
+                if (currentPortfolioMetrics.excess_return_with_cost) {
+                    csv += 'Excess Return (With Cost)\n';
+                    csv += '-'.repeat(50) + '\n';
+                    const m = currentPortfolioMetrics.excess_return_with_cost;
+                    csv += `Mean Return,${(m.mean_return * 100).toFixed(4)}%\n`;
+                    csv += `Volatility (Std),${(m.std * 100).toFixed(4)}%\n`;
+                    csv += `Annualized Return,${(m.annualized_return * 100).toFixed(2)}%\n`;
+                    csv += `Information Ratio,${m.information_ratio.toFixed(4)}\n`;
+                    csv += `Max Drawdown,${(m.max_drawdown * 100).toFixed(2)}%\n\n`;
+                }
+                
+                // Benchmark
+                if (currentPortfolioMetrics.benchmark) {
+                    csv += 'Benchmark Performance\n';
+                    csv += '-'.repeat(50) + '\n';
+                    const m = currentPortfolioMetrics.benchmark;
+                    csv += `Mean Return,${(m.mean_return * 100).toFixed(4)}%\n`;
+                    csv += `Volatility (Std),${(m.std * 100).toFixed(4)}%\n`;
+                    csv += `Annualized Return,${(m.annualized_return * 100).toFixed(2)}%\n`;
+                    csv += `Information Ratio,${m.information_ratio.toFixed(4)}\n`;
+                    csv += `Max Drawdown,${(m.max_drawdown * 100).toFixed(2)}%\n`;
+                }
+            }
+            
+            // Download the report
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `factor_report_${market}_${new Date().toISOString().split('T')[0]}.csv`;
+            link.click();
+            
+            showNotification('Overall report exported successfully', 'success');
+        }
+        
+        // Export daily IC and Rank IC values (Option 2)
+        function exportDailyCSV() {
+            if (!currentFactorData || !currentFactorData.daily_metrics) {
+                alert('No data to export. Please evaluate a factor first.');
+                return;
+            }
+            
+            const market = document.getElementById('market').value;
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+            
+            // Create CSV content with daily values
+            let csv = `Daily IC and Rank IC Values\n`;
+            csv += `Market: ${market.toUpperCase()}, Period: ${startDate} to ${endDate}\n\n`;
+            csv += 'Date,IC,Rank IC\n';
+            
+            currentFactorData.daily_metrics.forEach(row => {
+                const ic = row.ic !== null && !isNaN(row.ic) ? row.ic.toFixed(6) : 'N/A';
+                const rankIc = row.rank_ic !== null && !isNaN(row.rank_ic) ? row.rank_ic.toFixed(6) : 'N/A';
+                csv += `${row.date},${ic},${rankIc}\n`;
+            });
+            
+            // Download the CSV
+            const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = `daily_ic_${market}_${new Date().toISOString().split('T')[0]}.csv`;
+            link.click();
+            
+            showNotification('Daily IC values exported successfully', 'success');
+        }
+        
+        // Helper function to calculate standard deviation
+        function calculateStd(values) {
+            if (values.length === 0) return 0;
+            const mean = values.reduce((a, b) => a + b, 0) / values.length;
+            const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
+            return Math.sqrt(variance);
+        }
+        
+        // Cache management
+        async function loadCachedExpressions() {
+            showLoading(true);
+            
+            try {
+                const response = await axios.get('/api/get_cached_expressions?limit=50');
+                
+                if (response.data.success) {
+                    displayCachedExpressions(response.data.expressions);
+                }
+            } catch (error) {
+                alert('Error loading cached expressions: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        function displayCachedExpressions(expressions) {
+            const list = document.getElementById('cachedExpressionsList');
+            list.innerHTML = '';
+            
+            expressions.forEach(expr => {
+                const item = document.createElement('div');
+                item.className = 'list-group-item cached-expr-item';
+                item.innerHTML = `
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div class="ms-2 me-auto">
+                            <div class="fw-bold">
+                                <i class="fas fa-fingerprint text-primary"></i> 
+                                ${expr.expr_hash.substring(0, 16)}...
+                            </div>
+                            <code style="font-size: 0.9rem;">
+                                ${expr.expression.substring(0, 100)}${expr.expression.length > 100 ? '...' : ''}
+                            </code>
+                        </div>
+                        <div class="text-end">
+                            <span class="badge bg-primary rounded-pill mb-1">${expr.access_count} uses</span>
+                            <br>
+                            <small class="text-muted">${new Date(expr.last_accessed).toLocaleString()}</small>
+                        </div>
+                    </div>
+                `;
+                
+                item.onclick = () => {
+                    document.getElementById('expression').value = expr.expression;
+                    document.getElementById('cachedExpressionsCard').style.display = 'none';
+                    // Switch to single factor tab
+                    bootstrap.Tab.getOrCreateInstance(document.getElementById('single-tab')).show();
+                };
+                
+                list.appendChild(item);
+            });
+            
+            document.getElementById('cachedExpressionsCard').style.display = 'block';
+        }
+        
+        async function loadCacheStatsForDashboard() {
+            try {
+                const response = await axios.get('/api/cache_stats');
+                
+                if (response.data.success) {
+                    updatePerformanceDashboard(response.data.stats);
+                }
+            } catch (error) {
+                console.error('Error loading cache stats:', error);
+            }
+        }
+        
+        // Performance dashboard
+        function updatePerformanceDashboard(stats) {
+            const metricsDiv = document.getElementById('performanceMetrics');
+            
+            // Calculate actual metrics
+            const hitRate = stats.total_accesses > 0 ? 
+                ((stats.total_accesses / stats.num_expressions) / stats.avg_data_points_per_expr * 100).toFixed(1) : '0.0';
+            
+            const dateRangeText = stats.date_range && stats.date_range.min && stats.date_range.max ? 
+                `${stats.date_range.min} to ${stats.date_range.max}` : 'No data';
+            
+            metricsDiv.innerHTML = `
+                <div class="col-md-3">
+                    <div class="text-center">
+                        <i class="fas fa-database fa-3x mb-3"></i>
+                        <h5>Cache Status</h5>
+                        <p class="mb-0">
+                            <span class="badge bg-success">Active</span>
+                        </p>
+                        <small class="text-muted">${stats.num_expressions} expressions cached</small>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="text-center">
+                        <i class="fas fa-chart-bar fa-3x mb-3"></i>
+                        <h5>Data Points</h5>
+                        <p class="mb-0 metric-value">${stats.num_entries.toLocaleString()}</p>
+                        <small class="text-muted">${stats.avg_data_points_per_expr.toFixed(0)} per factor</small>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="text-center">
+                        <i class="fas fa-hdd fa-3x mb-3"></i>
+                        <h5>Cache Size</h5>
+                        <p class="mb-0 metric-value">${stats.total_size_mb.toFixed(2)} MB</p>
+                        <small class="text-muted">${stats.num_markets || 1} market(s)</small>
+                    </div>
+                </div>
+                <div class="col-md-3">
+                    <div class="text-center">
+                        <i class="fas fa-calendar-alt fa-3x mb-3"></i>
+                        <h5>Date Coverage</h5>
+                        <p class="mb-0 metric-value" style="font-size: 0.9rem;">${dateRangeText}</p>
+                    </div>
+                </div>
+            `;
+        }
+        
+        // Get performance stats
+        async function getPerformanceStats() {
+            try {
+                const response = await axios.post('/api/get_performance_stats', {
+                    expression: document.getElementById('expression').value,
+                    market: document.getElementById('market').value,
+                    start_date: document.getElementById('startDate').value,
+                    end_date: document.getElementById('endDate').value
+                });
+                
+                if (response.data.success) {
+                    // Additional stats can be displayed in the UI
+                }
+            } catch (error) {
+                console.error('Error getting performance stats:', error);
+            }
+        }
+        
+        // Get portfolio backtest metrics - REMOVED
+        // Portfolio metrics now come together with factor evaluation from backend
+        // No need for separate API call
+        
+        // Display portfolio metrics
+        function displayPortfolioMetrics(portfolioMetrics) {
+            if (!portfolioMetrics) {
+                document.getElementById('portfolioMetricsCard').style.display = 'none';
+                return;
+            }
+            
+            // Display pure return metrics (with and without cost)
+            if (portfolioMetrics.pure_return_with_cost) {
+                displayPortfolioMetricsSection('portfolioPureMetrics', portfolioMetrics.pure_return_with_cost, 'With Cost', true);
+            }
+            
+            if (portfolioMetrics.pure_return_without_cost) {
+                displayPortfolioMetricsSection('portfolioPureMetrics', portfolioMetrics.pure_return_without_cost, 'Without Cost', false);
+            }
+            
+            // Display excess return metrics
+            if (portfolioMetrics.excess_return_with_cost) {
+                displayPortfolioMetricsSection('portfolioExcessMetrics', portfolioMetrics.excess_return_with_cost, 'With Cost', true);
+            }
+            
+            if (portfolioMetrics.excess_return_without_cost) {
+                displayPortfolioMetricsSection('portfolioExcessMetrics', portfolioMetrics.excess_return_without_cost, 'Without Cost', false);
+            }
+            
+            // Display benchmark metrics
+            if (portfolioMetrics.benchmark) {
+                displayPortfolioMetricsSection('portfolioBenchmarkMetrics', portfolioMetrics.benchmark, 'Benchmark', true);
+            }
+            
+            document.getElementById('portfolioMetricsCard').style.display = 'block';
+        }
+        
+        // Display portfolio metrics section
+        function displayPortfolioMetricsSection(containerId, metrics, title, clearFirst) {
+            const container = document.getElementById(containerId);
+            
+            if (clearFirst) {
+                container.innerHTML = '';
+            }
+            
+            if (!clearFirst) {
+                container.innerHTML += `<div class="col-12 mt-3"><h6>${title}</h6><hr></div>`;
+            }
+            
+            const metricItems = [
+                { label: 'Mean Return', value: metrics.mean_return, format: 6, icon: 'fa-chart-line', suffix: '' },
+                { label: 'Volatility (Std)', value: metrics.std, format: 6, icon: 'fa-wave-square', suffix: '' },
+                { label: 'Annualized Return', value: metrics.annualized_return, format: 4, icon: 'fa-calendar', suffix: '' },
+                { label: 'Information Ratio', value: metrics.information_ratio, format: 4, icon: 'fa-star', suffix: '' },
+                { label: 'Max Drawdown', value: metrics.max_drawdown, format: 4, icon: 'fa-arrow-down', suffix: '' }
+            ];
+            
+            metricItems.forEach(item => {
+                const col = document.createElement('div');
+                col.className = 'col-md-2 col-sm-4 col-6 mb-3';
+                
+                const valueClass = item.value > 0 ? 'positive' : (item.value < 0 ? 'negative' : '');
+                const displayValue = typeof item.value === 'number' ? 
+                    item.value.toFixed(item.format) + '%' : 'N/A';
+                
+                col.innerHTML = `
+                    <div class="metric-card">
+                        <i class="fas ${item.icon} fa-2x mb-3 text-primary"></i>
+                        <div class="metric-label">${item.label}</div>
+                        <div class="metric-value ${valueClass}">${displayValue}${item.suffix}</div>
+                    </div>
+                `;
+                
+                container.appendChild(col);
+            });
+        }
+        
+        // Load Performance Dashboard data
+        async function loadPerformanceDashboard() {
+            // Show loading states
+            document.getElementById('topFactorsTable').innerHTML = `
+                <div class="text-center text-muted">
+                    <i class="fas fa-spinner fa-spin fa-2x"></i>
+                    <p class="mt-2">Loading top factors...</p>
+                </div>
+            `;
+            document.getElementById('recentActivity').innerHTML = `
+                <div class="text-center text-muted">
+                    <i class="fas fa-spinner fa-spin fa-2x"></i>
+                    <p class="mt-2">Loading recent activity...</p>
+                </div>
+            `;
+            
+            // Load all performance data
+            try {
+                await loadCacheStatsForDashboard();  // Updates performance metrics
+                await loadTopFactors();
+                await loadRecentActivity();
+            } catch (error) {
+                console.error('Error loading performance dashboard:', error);
+                showNotification('Failed to load dashboard data', 'error');
+            }
+        }
+        
+        // Refresh Performance Dashboard with animation
+        async function refreshPerformanceDashboard() {
+            const refreshIcon = document.getElementById('refreshIcon');
+            refreshIcon.classList.add('fa-spin');
+            
+            try {
+                await loadPerformanceDashboard();
+                showNotification('Dashboard refreshed successfully', 'success');
+            } catch (error) {
+                console.error('Error refreshing dashboard:', error);
+                showNotification('Failed to refresh dashboard', 'error');
+            } finally {
+                refreshIcon.classList.remove('fa-spin');
+            }
+        }
+        
+        async function loadTopFactors() {
+            // Load with default metric (rank_ic)
+            await loadTopFactorsByMetric('rank_ic');
+        }
+        
+        async function loadTopFactorsByMetric(metric) {
+            try {
+                // Update active button
+                document.querySelectorAll('.metric-btn').forEach(btn => {
+                    btn.classList.remove('active');
+                    if (btn.dataset.metric === metric) {
+                        btn.classList.add('active');
+                    }
+                });
+                
+                const response = await axios.get(`/api/get_top_factors?limit=5&metric=${metric}`);
+                
+                if (response.data.success) {
+                    displayTopFactors(response.data.top_factors, metric, response.data.total_factors, response.data.showing_count);
+                } else {
+                    document.getElementById('topFactorsTable').innerHTML = '<p class="text-muted">Failed to load top factors</p>';
+                }
+            } catch (error) {
+                console.error('Error loading top factors:', error);
+                document.getElementById('topFactorsTable').innerHTML = `
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle"></i> Failed to load top factors. 
+                        Please check if factors have been evaluated.
+                    </div>
+                `;
+            }
+        }
+        
+        function displayTopFactors(factors, metric = 'rank_ic', totalFactors = 0, showingCount = 0) {
+            const tableDiv = document.getElementById('topFactorsTable');
+            
+            if (!factors || factors.length === 0) {
+                tableDiv.innerHTML = `
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> No factors have been evaluated yet.
+                        <br>Evaluate some factors using Single Factor Analysis or Factor Comparison first.
+                    </div>
+                `;
+                return;
+            }
+            
+            const metricLabels = {
+                'ic': 'IC',
+                'rank_ic': 'Rank IC',
+                'icir': 'ICIR'
+            };
+            
+            let html = `
+                <div class="mb-3">
+                    <small class="text-muted">Showing top ${showingCount} of ${totalFactors} factors by ${metricLabels[metric] || metric}</small>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-striped">
+                        <thead>
+                            <tr>
+                                <th>Expression</th>
+                                <th class="${metric === 'ic' ? 'table-primary' : ''}">IC</th>
+                                <th class="${metric === 'rank_ic' ? 'table-primary' : ''}">Rank IC</th>
+                                <th class="${metric === 'icir' ? 'table-primary' : ''}">ICIR</th>
+                                <th>Evaluations</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+            `;
+            
+            factors.forEach((factor, idx) => {
+                const metrics = factor.metrics;
+                html += `
+                    <tr>
+                        <td>
+                            <span class="badge bg-primary me-2">#${idx + 1}</span>
+                            <code>${factor.expression.substring(0, 60)}${factor.expression.length > 60 ? '...' : ''}</code>
+                            ${factor.market ? `<br><small class="text-muted">Market: ${factor.market.toUpperCase()}</small>` : ''}
+                        </td>
+                        <td class="${metrics.ic > 0 ? 'positive' : 'negative'}">${metrics.ic.toFixed(4)}</td>
+                        <td class="${metrics.rank_ic > 0 ? 'positive' : 'negative'}">${metrics.rank_ic.toFixed(4)}</td>
+                        <td>${metrics.icir !== null && !isNaN(metrics.icir) ? metrics.icir.toFixed(3) : 'N/A'}</td>
+                        <td>${factor.evaluation_count}</td>
+                    </tr>
+                `;
+            });
+            
+            html += '</tbody></table></div>';
+            tableDiv.innerHTML = html;
+        }
+        
+        
+        let recentActivitySearchDebounce = null;
+        
+        function searchRecentActivity() {
+            clearTimeout(recentActivitySearchDebounce);
+            recentActivitySearchDebounce = setTimeout(async () => {
+                const searchQuery = document.getElementById('recentActivitySearch').value.trim();
+                await loadRecentActivity(searchQuery);
+            }, 300);
+        }
+        
+        function clearRecentActivitySearch() {
+            document.getElementById('recentActivitySearch').value = '';
+            loadRecentActivity();
+        }
+        
+        async function loadRecentActivity(searchQuery = null) {
+            try {
+                let url = '/api/get_recent_activity?limit=20';
+                if (searchQuery) {
+                    url += `&search=${encodeURIComponent(searchQuery)}`;
+                }
+                const response = await axios.get(url);
+                
+                if (response.data.success) {
+                    displayRecentActivity(response.data.recent_activity);
+                } else {
+                    document.getElementById('recentActivity').innerHTML = '<p class="text-muted">Failed to load recent activity</p>';
+                }
+            } catch (error) {
+                console.error('Error loading recent activity:', error);
+                document.getElementById('recentActivity').innerHTML = `
+                    <div class="alert alert-warning">
+                        <i class="fas fa-exclamation-triangle"></i> Failed to load recent activity.
+                    </div>
+                `;
+            }
+        }
+        
+        function displayRecentActivity(activities) {
+            const activityDiv = document.getElementById('recentActivity');
+            
+            if (!activities || activities.length === 0) {
+                activityDiv.innerHTML = `
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> No recent activity recorded.
+                        <br>Activity will appear here after evaluating factors.
+                    </div>
+                `;
+                return;
+            }
+            
+            let html = '<div class="list-group">';
+            
+            activities.forEach(activity => {
+                const timeAgo = getTimeAgo(activity.query_timestamp);
+                const timeRange = `${activity.start_date} to ${activity.end_date}`;
+                html += `
+                    <div class="list-group-item">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div class="flex-grow-1">
+                                <h6 class="mb-1">
+                                    <i class="fas fa-chart-line text-primary"></i>
+                                    <strong>Expression:</strong>
+                                </h6>
+                                <code class="small">${activity.expression.substring(0, 80)}${activity.expression.length > 80 ? '...' : ''}</code>
+                            </div>
+                            <small class="text-muted ms-2">${timeAgo}</small>
+                        </div>
+                        <div class="row small text-muted">
+                            <div class="col-md-3">
+                                <i class="fas fa-chart-bar"></i> <strong>Market:</strong> ${activity.market.toUpperCase()}
+                            </div>
+                            <div class="col-md-5">
+                                <i class="fas fa-calendar"></i> <strong>Period:</strong> ${timeRange}
+                            </div>
+                            <div class="col-md-2">
+                                <span class="${activity.ic > 0 ? 'positive' : 'negative'}"><strong>IC:</strong> ${activity.ic ? activity.ic.toFixed(4) : 'N/A'}</span>
+                            </div>
+                            <div class="col-md-2">
+                                <span class="${activity.rank_ic > 0 ? 'positive' : 'negative'}"><strong>RankIC:</strong> ${activity.rank_ic ? activity.rank_ic.toFixed(4) : 'N/A'}</span>
+                            </div>
+                        </div>
+                        <small class="text-muted d-block mt-1">
+                            <i class="fas fa-clock"></i> ${new Date(activity.query_timestamp).toLocaleString()}
+                        </small>
+                    </div>
+                `;
+            });
+            
+            html += '</div>';
+            activityDiv.innerHTML = html;
+        }
+        
+        function getTimeAgo(dateString) {
+            const date = new Date(dateString);
+            const now = new Date();
+            const seconds = Math.floor((now - date) / 1000);
+            
+            if (seconds < 60) return 'just now';
+            if (seconds < 3600) return `${Math.floor(seconds / 60)} minutes ago`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)} hours ago`;
+            return `${Math.floor(seconds / 86400)} days ago`;
+        }
+        
+        let currentSessionId = null;
+        let currentOptimizationResults = null;
+        
+        // Optimization method change handler
+        document.getElementById('optimizationMethod').addEventListener('change', function() {
+            const method = this.value;
+            document.getElementById('lassoSettings').style.display = method === 'lasso' ? 'block' : 'none';
+            document.getElementById('icSettings').style.display = method === 'ic' ? 'block' : 'none';
+        });
+        
+        async function processFactorInput() {
+            const activeTab = document.querySelector('#inputMethodTabs .nav-link.active');
+            const isFileUpload = activeTab.id === 'file-tab';
+
+            let factorList = [];
+            let inputType = '';
+
+            // Reset status and hide results
+            document.getElementById('combinationStatus').style.display = 'block';
+            document.getElementById('combinationResults').style.display = 'none';
+            document.getElementById('combinationStatus').innerHTML = `
+                <i class="fas fa-info-circle fa-2x mb-3"></i>
+                <p>Ready to process factors</p>
+                <p class="small">Upload a factor list file or enter expressions manually</p>
+            `;
+
+            if (isFileUpload) {
+                // Handle file upload
+                const fileInput = document.getElementById('factorFileInput');
+                const file = fileInput.files[0];
+
+                if (!file) {
+                    showNotification('Please select a factor list file', 'warning');
+                    return;
+                }
+
+                if (!file.name.endsWith('.txt')) {
+                    showNotification('Please upload a .txt file', 'warning');
+                    return;
+                }
+
+                inputType = 'file';
+            } else {
+                // Handle manual input
+                const manualInput = document.getElementById('factorManualInput').value.trim();
+
+                if (!manualInput) {
+                    showNotification('Please enter factor expressions', 'warning');
+                    return;
+                }
+
+                // Parse manual input - line-separated only
+                factorList = manualInput.split('\n').map(f => f.trim()).filter(f => f.length > 0);
+
+                if (factorList.length < 1) {
+                    showNotification('Please enter at least one valid factor expression', 'warning');
+                    return;
+                }
+
+                inputType = 'manual';
+            }
+
+            showLoading(true);
+
+            // Update status to show processing
+            const statusDiv = document.getElementById('combinationStatus');
+            statusDiv.innerHTML = `
+                <i class="fas fa-cog fa-spin fa-2x mb-3 text-primary"></i>
+                <p>Processing factors...</p>
+                <p class="small text-muted">Normalizing factor values and running ML training</p>
+                <div class="progress mt-3">
+                    <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                         role="progressbar" style="width: 100%"></div>
+                </div>
+            `;
+
+            try {
+                let response;
+
+                if (inputType === 'file') {
+                    // File upload processing
+                    const fileInput = document.getElementById('factorFileInput');
+                    const file = fileInput.files[0];
+
+                    const formData = new FormData();
+                    formData.append('factor_file', file);
+                    formData.append('market', document.getElementById('combinationMarket').value);
+                    formData.append('start_date', document.getElementById('combinationStartDate').value);
+                    formData.append('end_date', document.getElementById('combinationEndDate').value);
+
+                    response = await axios.post('/api/factor_combination/upload_factors', formData, {
+                        headers: {
+                            'Content-Type': 'multipart/form-data'
+                        }
+                    });
+                } else {
+                    // Manual input processing
+                    response = await axios.post('/api/factor_combination/upload_factors', {
+                        factors: factorList,
+                        market: document.getElementById('combinationMarket').value,
+                        start_date: document.getElementById('combinationStartDate').value,
+                        end_date: document.getElementById('combinationEndDate').value
+                    });
+                }
+
+                if (response.data.success) {
+                    const factorCount = response.data.factor_count;
+                    const inputMethod = inputType === 'file' ? 'file' : 'manual input';
+                    const trainingResults = response.data.training_results;
+
+                    // Update status to show completion
+                    const statusDiv = document.getElementById('combinationStatus');
+                    statusDiv.innerHTML = `
+                        <i class="fas fa-check-circle fa-2x mb-3 text-success"></i>
+                        <p>Processing completed successfully!</p>
+                        <p class="small text-muted">${factorCount} factors processed with ML training and optimization</p>
+                    `;
+
+                    showNotification(`Successfully processed ${factorCount} factors with ML training and optimization`, 'success');
+
+                    // Display results
+                    document.getElementById('combinationStatus').style.display = 'none';
+                    document.getElementById('combinationResults').style.display = 'block';
+
+                    // Store session data for download
+                    currentSessionId = response.data.session_id;
+
+                    // Display training results
+                    displayTrainingResults(trainingResults);
+
+                    // Switch to combination tab to show results
+                    const combinationTab = new bootstrap.Tab(document.getElementById('combination-tab'));
+                    combinationTab.show();
+
+                    // Show normalization summary in collapsed section
+                    const summaryContent = document.getElementById('normalizationSummaryContent');
+                    const normalizationSummary = response.data.normalization_summary;
+                    summaryContent.innerHTML = `
+                        <ul class="list-unstyled">
+                            <li><i class="fas fa-check text-success"></i> ${factorCount} factors loaded from ${inputMethod}</li>
+                            <li><i class="fas fa-check text-success"></i> Factor values normalized across all assets</li>
+                            <li><i class="fas fa-check text-success"></i> Data validated for market: ${document.getElementById('combinationMarket').value.toUpperCase()}</li>
+                            <li><i class="fas fa-check text-success"></i> Date range: ${document.getElementById('combinationStartDate').value} to ${document.getElementById('combinationEndDate').value}</li>
+                            <li><i class="fas fa-check text-success"></i> LASSO ML training: ${trainingResults?.lasso?.status || 'Not completed'}</li>
+                            <li><i class="fas fa-check text-success"></i> IC optimization: ${trainingResults?.ic_optimization?.status || 'Not completed'}</li>
+                        </ul>
+                        <p class="text-muted small mt-2">Factors have been processed with machine learning and optimization algorithms.</p>
+                    `;
+                } else {
+                    // Update status to show error
+                    const statusDiv = document.getElementById('combinationStatus');
+                    statusDiv.innerHTML = `
+                        <i class="fas fa-exclamation-triangle fa-2x mb-3 text-danger"></i>
+                        <p>Processing failed</p>
+                        <p class="small text-muted">${response.data.message || 'Unknown error occurred'}</p>
+                    `;
+                    showNotification('Failed to process factors: ' + response.data.message, 'error');
+                }
+            } catch (error) {
+                // Update status to show error
+                const statusDiv = document.getElementById('combinationStatus');
+                statusDiv.innerHTML = `
+                    <i class="fas fa-exclamation-triangle fa-2x mb-3 text-danger"></i>
+                    <p>Processing error</p>
+                    <p class="small text-muted">${error.message || 'Network or server error occurred'}</p>
+                `;
+                showNotification('Error processing factors: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+        
+        // Load sessions on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // ... existing code ...
+            
+            // Add tab event listener for Factor Combination
+            document.getElementById('combination-tab').addEventListener('shown.bs.tab', function() {
+                // Tab shown - no specific action needed for simplified version
+            });
+        });
+
+        // Display training results
+        function displayTrainingResults(trainingResults) {
+            // Display LASSO results
+            const lassoDiv = document.getElementById('lassoResults');
+            if (trainingResults && trainingResults.lasso) {
+                const lasso = trainingResults.lasso;
+                if (lasso.status === 'success') {
+                    lassoDiv.innerHTML = `
+                        <div class="mb-2">
+                            <small class="text-muted">R² Score: <strong>${lasso.r2?.toFixed(6) || 'N/A'}</strong></small>
+                        </div>
+                        <h6>Factor Weights</h6>
+                        <div id="lassoWeightsChart" style="height: 200px;"></div>
+                        <div class="mt-3">
+                            <small class="text-muted">LASSO regression with α=${lasso.alpha || 'N/A'} completed successfully</small>
+                        </div>
+                    `;
+                    
+                    // Create weights chart
+                    if (lasso.weights) {
+                        displayWeightsChart('lassoWeightsChart', lasso.weights, lasso.factor_names || []);
+                    }
+                } else {
+                    lassoDiv.innerHTML = `
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle"></i> LASSO training failed: ${lasso.message || 'Unknown error'}
+                        </div>
+                    `;
+                }
+            } else {
+                lassoDiv.innerHTML = `
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> LASSO training not completed
+                    </div>
+                `;
+            }
+
+            // Display IC optimization results
+            const icDiv = document.getElementById('icResults');
+            if (trainingResults && trainingResults.ic_optimization) {
+                const ic = trainingResults.ic_optimization;
+                if (ic.status === 'success') {
+                    icDiv.innerHTML = `
+                        <div class="row">
+                            <div class="col-md-6">
+                                <h6>Optimization Results</h6>
+                                <div class="metric-card mb-3">
+                                    <i class="fas fa-trophy fa-2x mb-3 text-success"></i>
+                                    <div class="metric-label">Expected Return</div>
+                                    <div class="metric-value positive">${(ic.expected_return * 100)?.toFixed(2) || 'N/A'}%</div>
+                                </div>
+                                <div class="metric-card mb-3">
+                                    <i class="fas fa-chart-pie fa-2x mb-3 text-info"></i>
+                                    <div class="metric-label">Portfolio Risk</div>
+                                    <div class="metric-value">${(ic.portfolio_risk * 100)?.toFixed(2) || 'N/A'}%</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <h6>Optimized Weights</h6>
+                                <div id="icWeightsChart" style="height: 200px;"></div>
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <small class="text-muted">IC-based mean-variance optimization completed successfully</small>
+                        </div>
+                    `;
+                    
+                    // Create weights chart
+                    if (ic.weights) {
+                        displayWeightsChart('icWeightsChart', ic.weights, ic.factor_names || []);
+                    }
+                } else {
+                    icDiv.innerHTML = `
+                        <div class="alert alert-warning">
+                            <i class="fas fa-exclamation-triangle"></i> IC optimization failed: ${ic.message || 'Unknown error'}
+                        </div>
+                    `;
+                }
+            } else {
+                icDiv.innerHTML = `
+                    <div class="alert alert-info">
+                        <i class="fas fa-info-circle"></i> IC optimization not completed
+                    </div>
+                `;
+            }
+        }
+
+        // Display weights chart
+        function displayWeightsChart(chartId, weights, factorNames) {
+            if (!weights || weights.length === 0) return;
+            
+            const container = document.getElementById(chartId);
+            if (!container) return;
+            
+            let html = '<div style="padding: 10px;">';
+            html += '<table class="table table-sm">';
+            html += '<thead><tr><th>Factor</th><th>Weight</th></tr></thead>';
+            html += '<tbody>';
+            
+            if (factorNames.length > 0) {
+                factorNames.forEach((name, i) => {
+                    const weight = weights[i] || 0;
+                    html += `<tr><td>${name}</td><td>${weight.toFixed(6)}</td></tr>`;
+                });
+            } else {
+                weights.forEach((weight, i) => {
+                    html += `<tr><td>Factor ${i+1}</td><td>${weight.toFixed(6)}</td></tr>`;
+                });
+            }
+            
+            html += '</tbody></table></div>';
+            container.innerHTML = html;
+        }
+
+        // Download combination report
+        async function downloadCombinationReport() {
+            if (!currentSessionId) {
+                showNotification('No session data available for download', 'warning');
+                return;
+            }
+
+            showLoading(true);
+            
+            try {
+                const response = await axios.post('/api/factor_combination/download_report', {
+                    session_id: currentSessionId
+                }, {
+                    responseType: 'blob'
+                });
+                
+                // Create download link
+                const url = window.URL.createObjectURL(new Blob([response.data]));
+                const link = document.createElement('a');
+                link.href = url;
+                link.setAttribute('download', `factor_combination_report_${new Date().toISOString().split('T')[0]}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                
+                showNotification('Report downloaded successfully', 'success');
+                
+            } catch (error) {
+                console.error('Download error:', error);
+                showNotification('Failed to download report: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // ==================== CATEGORY A: FIXED PERIOD OPTIMIZATION ====================
+        
+        function loadFixedFactorsFromJson(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const jsonData = JSON.parse(e.target.result);
+                    
+                    // Check if it has periods array (Category B format)
+                    if (jsonData.periods && Array.isArray(jsonData.periods) && jsonData.periods.length > 0) {
+                        const firstPeriod = jsonData.periods[0];
+                        
+                        // Load factors from first period
+                        if (firstPeriod.factors && Array.isArray(firstPeriod.factors)) {
+                            document.getElementById('fixedFactors').value = firstPeriod.factors.join('\n');
+                        }
+                        
+                        // Load dates if available
+                        if (firstPeriod.start) {
+                            document.getElementById('fixedTrainStart').value = firstPeriod.start;
+                            document.getElementById('fixedTestStart').value = firstPeriod.start;
+                        }
+                        if (firstPeriod.end) {
+                            document.getElementById('fixedTrainEnd').value = firstPeriod.end;
+                            document.getElementById('fixedTestEnd').value = firstPeriod.end;
+                        }
+                        
+                        showNotification(`Loaded ${firstPeriod.factors.length} factors from first period (${firstPeriod.start} to ${firstPeriod.end})`, 'success');
+                    } 
+                    // Check if it has direct factors array (old format)
+                    else if (jsonData.factors && Array.isArray(jsonData.factors)) {
+                        document.getElementById('fixedFactors').value = jsonData.factors.join('\n');
+                        showNotification(`Loaded ${jsonData.factors.length} factors`, 'success');
+                    } else {
+                        showNotification('JSON must have either "periods" array or "factors" array', 'warning');
+                    }
+                } catch (error) {
+                    showNotification('Error parsing JSON file: ' + error.message, 'error');
+                    console.error('JSON parse error:', error);
+                }
+            };
+            reader.readAsText(file);
+        }
+        
+        async function runFixedOptimization() {
+            const factorText = document.getElementById('fixedFactors').value.trim();
+            if (!factorText) {
+                showNotification('Please enter factor expressions', 'warning');
+                return;
+            }
+
+            const factors = factorText.split('\n').map(f => f.trim()).filter(f => f.length > 0);
+            if (factors.length === 0) {
+                showNotification('Please enter at least one valid factor expression', 'warning');
+                return;
+            }
+
+            const trainStart = document.getElementById('fixedTrainStart').value;
+            const trainEnd = document.getElementById('fixedTrainEnd').value;
+            const testStart = document.getElementById('fixedTestStart').value;
+            const testEnd = document.getElementById('fixedTestEnd').value;
+            const alpha = parseFloat(document.getElementById('fixedAlpha').value) || 0.01;
+
+            showLoading(true);
+            document.getElementById('fixedStatus').innerHTML = '<i class="fas fa-spinner fa-spin fa-2x mb-3"></i><p>Running optimization...</p>';
+
+            try {
+                const response = await axios.post('/api/factor_combination/fixed', {
+                    training_start_date: trainStart,
+                    training_end_date: trainEnd,
+                    testing_start_date: testStart,
+                    testing_end_date: testEnd,
+                    factors: factors,
+                    alpha: alpha,
+                    methods: ['baseline', 'lasso', 'ic_optimization'],
+                    include_baseline: true
+                });
+
+                if (response.data.success) {
+                    const results = response.data.results;
+                    
+                    // Store results globally for export
+                    currentFixedResults = {
+                        results: results,
+                        config: {
+                            train_start: trainStart,
+                            train_end: trainEnd,
+                            test_start: testStart,
+                            test_end: testEnd,
+                            factors: factors,
+                            alpha: alpha
+                        }
+                    };
+                    
+                    // Debug: Log the response
+                    console.log('API Response:', response.data);
+                    console.log('Results structure:', results);
+                    
+                    if (!results) {
+                        throw new Error('No results returned from API');
+                    }
+                    
+                    // Update status
+                    document.getElementById('fixedStatus').style.display = 'none';
+                    document.getElementById('fixedResults').style.display = 'block';
+                    document.getElementById('fixedExportSection').style.display = 'block';
+                    
+                    // Display metrics with safe access
+                    try {
+                        if (results.baseline && results.baseline.metrics) {
+                            // Try to get performance from metrics
+                            const performance = results.baseline.metrics.performance || 
+                                              results.baseline.metrics.combined_ic_mean || 
+                                              results.baseline.metrics.rolling_r2_mean || 0;
+                            document.getElementById('fixedBaselineMetric').textContent = 
+                                parseFloat(performance).toFixed(4);
+                        } else {
+                            document.getElementById('fixedBaselineMetric').textContent = 'N/A';
+                        }
+                    } catch (e) {
+                        console.warn('Error displaying baseline metric:', e);
+                        document.getElementById('fixedBaselineMetric').textContent = 'N/A';
+                    }
+                    
+                    try {
+                        if (results.lasso && results.lasso.metrics) {
+                            const performance = results.lasso.metrics.performance || 
+                                              results.lasso.metrics.rolling_r2_mean ||
+                                              results.lasso.metrics.r2 || 0;
+                            document.getElementById('fixedLassoMetric').textContent = 
+                                parseFloat(performance).toFixed(4);
+                        } else {
+                            document.getElementById('fixedLassoMetric').textContent = 'N/A';
+                        }
+                    } catch (e) {
+                        console.warn('Error displaying LASSO metric:', e);
+                        document.getElementById('fixedLassoMetric').textContent = 'N/A';
+                    }
+                    
+                    try {
+                        if (results.ic_optimization && results.ic_optimization.metrics) {
+                            const performance = results.ic_optimization.metrics.performance || 
+                                              results.ic_optimization.metrics.combined_ic_mean || 
+                                              results.ic_optimization.metrics.combined_ic_ir || 0;
+                            document.getElementById('fixedIcMetric').textContent = 
+                                parseFloat(performance).toFixed(4);
+                        } else {
+                            document.getElementById('fixedIcMetric').textContent = 'N/A';
+                        }
+                    } catch (e) {
+                        console.warn('Error displaying IC metric:', e);
+                        document.getElementById('fixedIcMetric').textContent = 'N/A';
+                    }
+
+                    // Create weights comparison chart
+                    try {
+                        createFixedWeightsChart(results);
+                    } catch (e) {
+                        console.warn('Error creating chart:', e);
+                    }
+                    
+                    showNotification('Fixed period optimization completed successfully', 'success');
+                } else {
+                    showNotification('Optimization failed: ' + response.data.message, 'error');
+                    document.getElementById('fixedStatus').innerHTML = '<i class="fas fa-exclamation-triangle fa-2x mb-3 text-danger"></i><p>' + response.data.message + '</p>';
+                }
+            } catch (error) {
+                console.error('Error details:', error);
+                console.error('Error stack:', error.stack);
+                showNotification('Error: ' + error.message, 'error');
+                document.getElementById('fixedStatus').innerHTML = '<i class="fas fa-exclamation-triangle fa-2x mb-3 text-danger"></i><p>' + error.message + '<br><small style="font-size: 0.8em;">Check browser console (F12) for details</small></p>';
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function createFixedWeightsChart(results) {
+            const chartDiv = document.getElementById('fixedChart');
+            
+            // Simple JSON display
+            let html = '<pre style="background: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto; font-size: 12px;">';
+            html += JSON.stringify(results, null, 2);
+            html += '</pre>';
+            
+            chartDiv.innerHTML = html;
+        }
+
+        // Export fixed results for backtesting
+        function exportFixedResults() {
+            if (!currentFixedResults) {
+                showNotification('No results to export. Please run optimization first.', 'warning');
+                return;
+            }
+
+            try {
+                const results = currentFixedResults.results;
+                const config = currentFixedResults.config;
+                
+                // Format for backtesting (compatible with Category C)
+                const exportData = {
+                    periods: []
+                };
+
+                // Create period entry for each method
+                const periodEntry = {};
+                
+                // Add baseline results
+                if (results.baseline && results.baseline.status === 'success') {
+                    periodEntry.baseline = {
+                        period: `${config.test_start} to ${config.test_end}`,
+                        weights: results.baseline.weights || [],
+                        factor_names: results.baseline.factor_names || config.factors,
+                        training_method: results.baseline.training_method || 'Equal Weight Baseline',
+                        metrics: results.baseline.metrics || {},
+                        training_period: {
+                            start: config.train_start,
+                            end: config.train_end
+                        },
+                        test_period: {
+                            start: config.test_start,
+                            end: config.test_end
+                        }
+                    };
+                }
+
+                // Add LASSO results
+                if (results.lasso && results.lasso.status === 'success') {
+                    periodEntry.lasso = {
+                        period: `${config.test_start} to ${config.test_end}`,
+                        weights: results.lasso.weights || [],
+                        factor_names: results.lasso.factor_names || config.factors,
+                        training_method: results.lasso.training_method || `LASSO (alpha=${config.alpha})`,
+                        metrics: results.lasso.metrics || {},
+                        training_period: results.lasso.training_period || {
+                            start: config.train_start,
+                            end: config.train_end
+                        },
+                        test_period: results.lasso.test_period || {
+                            start: config.test_start,
+                            end: config.test_end
+                        }
+                    };
+                }
+
+                // Add IC Optimization results
+                if (results.ic_optimization && results.ic_optimization.status === 'success') {
+                    periodEntry.ic_optimization = {
+                        period: `${config.test_start} to ${config.test_end}`,
+                        weights: results.ic_optimization.weights || [],
+                        factor_names: results.ic_optimization.factor_names || config.factors,
+                        training_method: results.ic_optimization.training_method || 'IC Optimization',
+                        metrics: results.ic_optimization.metrics || {},
+                        training_period: {
+                            start: config.train_start,
+                            end: config.train_end
+                        },
+                        test_period: {
+                            start: config.test_start,
+                            end: config.test_end
+                        }
+                    };
+                }
+
+                exportData.periods.push(periodEntry);
+
+                // Add metadata
+                exportData.metadata = {
+                    export_type: 'fixed_period_results',
+                    export_date: new Date().toISOString(),
+                    config: config
+                };
+
+                // Download as JSON
+                const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `fixed_optimization_${config.test_start}_to_${config.test_end}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+                showNotification('Results exported successfully! File ready for Category C backtesting.', 'success');
+            } catch (error) {
+                console.error('Export error:', error);
+                showNotification('Failed to export results: ' + error.message, 'error');
+            }
+        }
+
+        // ==================== CATEGORY B: DYNAMIC PERIOD OPTIMIZATION ====================
+        async function runDynamicOptimization() {
+            const fileInput = document.getElementById('dynamicPeriodFile');
+            if (!fileInput.files || fileInput.files.length === 0) {
+                showNotification('Please upload a periods configuration JSON file', 'warning');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            const lookback = parseInt(document.getElementById('dynamicLookback').value) || 60;
+            const alpha = parseFloat(document.getElementById('dynamicAlpha').value) || 0.01;
+            const trainStart = document.getElementById('dynamicTrainStart').value;
+            const trainEnd = document.getElementById('dynamicTrainEnd').value;
+            
+            // Parse JSON file
+            let periodsConfig;
+            try {
+                const text = await file.text();
+                periodsConfig = JSON.parse(text);
+            } catch (e) {
+                showNotification('Invalid JSON file: ' + e.message, 'error');
+                return;
+            }
+
+            showLoading(true);
+            document.getElementById('dynamicStatus').innerHTML = '<i class="fas fa-spinner fa-spin fa-2x mb-3"></i><p>Running dynamic optimization...</p>';
+
+            try {
+                const requestBody = {
+                    periods: periodsConfig.periods || periodsConfig,
+                    lookback_window: lookback,
+                    alpha: alpha,
+                    methods: ['baseline', 'lasso', 'ic_optimization'],
+                    include_baseline: true
+                };
+
+                // If training periods are provided, override in JSON
+                if (trainStart || trainEnd) {
+                    if (requestBody.periods && Array.isArray(requestBody.periods)) {
+                        requestBody.periods = requestBody.periods.map(period => {
+                            if (trainStart) period.train_start = trainStart;
+                            if (trainEnd) period.train_end = trainEnd;
+                            return period;
+                        });
+                    }
+                }
+
+                const response = await axios.post('/api/factor_combination/dynamic', requestBody);
+
+                if (response.data.success) {
+                    const results = response.data.results;
+                    
+                    // Store results globally for export/copy functions
+                    currentDynamicResults = results;
+                    
+                    // Show action buttons
+                    document.getElementById('resultActionButtons').style.display = 'block';
+                    
+                    // Update status
+                    document.getElementById('dynamicStatus').style.display = 'none';
+                    document.getElementById('dynamicResults').style.display = 'block';
+                    document.getElementById('dynamicChartsPlaceholder').style.display = 'none';
+                    document.getElementById('dynamicCharts').style.display = 'block';
+                    document.getElementById('dynamicModelMetricsPlaceholder').style.display = 'none';
+                    document.getElementById('dynamicModelMetrics').style.display = 'block';
+                    
+                    // Display metrics - Count periods where at least one method has results
+                    document.getElementById('dynamicTotalPeriods').textContent = results.total_periods || 0;
+                    const successCount = results.periods?.filter(p => 
+                        (p.baseline && p.baseline.status === 'success') || 
+                        (p.lasso && p.lasso.status === 'success') || 
+                        (p.ic_optimization && p.ic_optimization.status === 'success')
+                    ).length || 0;
+
+                    // Display model metrics
+                    displayModelMetrics(results);
+
+                    // Create visualizations
+                    await createDynamicVisualizations(results);
+                    
+                    showNotification('Dynamic optimization completed successfully', 'success');
+                } else {
+                    showNotification('Optimization failed: ' + response.data.message, 'error');
+                    document.getElementById('dynamicStatus').innerHTML = '<i class="fas fa-exclamation-triangle fa-2x mb-3 text-danger"></i><p>' + response.data.message + '</p>';
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showNotification('Error: ' + error.message, 'error');
+                document.getElementById('dynamicStatus').innerHTML = '<i class="fas fa-exclamation-triangle fa-2x mb-3 text-danger"></i><p>' + error.message + '</p>';
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function displayModelMetrics(results) {
+            const metricsDiv = document.getElementById('dynamicModelMetrics');
+            if (!metricsDiv) return;
+
+            const periods = results.periods || [];
+            const methodNames = ['lasso', 'ic_optimization'];
+            
+            // ============ PERFORMANCE METRICS TABLE ============
+            let html = '<h6 class="mb-3"><i class="fas fa-chart-bar"></i> Performance Metrics</h6>';
+            html += '<div class="table-responsive mb-4">';
+            html += '<table class="table table-striped table-hover table-sm">';
+            html += '<thead><tr>';
+            html += '<th>Period</th>';
+            html += '<th>Method</th>';
+            html += '<th>R² Score</th>';
+            html += '<th>MSE</th>';
+            html += '<th>Non-Zero Weights</th>';
+            html += '<th>Total Factors</th>';
+            html += '</tr></thead><tbody>';
+
+            periods.forEach((period, periodIdx) => {
+                methodNames.forEach(method => {
+                    if (period[method] && period[method].status === 'success') {
+                        const metrics = period[method].metrics || {};
+                        const r2 = metrics.r2 !== undefined ? metrics.r2.toFixed(6) : 'N/A';
+                        const mse = metrics.mse !== undefined ? metrics.mse.toFixed(6) : 'N/A';
+                        const weights = period[method].weights || [];
+                        const nonZeroCount = weights.filter(w => w !== 0).length;
+                        const totalFactors = weights.length;
+                        
+                        const r2Class = metrics.r2 > 0 ? 'text-success' : 'text-danger';
+                        const methodLabel = method === 'lasso' ? 'LASSO' : 'IC Optimization';
+                        
+                        html += '<tr>';
+                        html += `<td>Period ${periodIdx}</td>`;
+                        html += `<td><span class="badge" style="background-color: ${method === 'lasso' ? '#4ECDC4' : '#45B7D1'}">${methodLabel}</span></td>`;
+                        html += `<td class="${r2Class}"><strong>${r2}</strong></td>`;
+                        html += `<td>${mse}</td>`;
+                        html += `<td>${nonZeroCount} / ${totalFactors}</td>`;
+                        html += `<td>${totalFactors}</td>`;
+                        html += '</tr>';
+                    }
+                });
+            });
+
+            html += '</tbody></table></div>';
+            
+            // Add summary statistics
+            const allR2 = [];
+            const allMSE = [];
+            periods.forEach(period => {
+                methodNames.forEach(method => {
+                    if (period[method] && period[method].status === 'success' && period[method].metrics) {
+                        if (period[method].metrics.r2 !== undefined) allR2.push(period[method].metrics.r2);
+                        if (period[method].metrics.mse !== undefined) allMSE.push(period[method].metrics.mse);
+                    }
+                });
+            });
+
+            if (allR2.length > 0) {
+                const avgR2 = (allR2.reduce((a, b) => a + b, 0) / allR2.length).toFixed(6);
+                const avgMSE = (allMSE.reduce((a, b) => a + b, 0) / allMSE.length).toFixed(6);
+                
+                html += '<div class="p-3 mb-4" style="background-color: #f8f9fa; border-radius: 5px;">';
+                html += '<h6><i class="fas fa-calculator"></i> Summary Statistics</h6>';
+                html += `<p class="mb-1"><strong>Average R²:</strong> ${avgR2}</p>`;
+                html += `<p class="mb-0"><strong>Average MSE:</strong> ${avgMSE}</p>`;
+                html += '</div>';
+            }
+
+            // ============ FACTOR WEIGHTS TABLE ============
+            // Get all unique factors
+            const allFactorsSet = new Set();
+            periods.forEach(period => {
+                methodNames.forEach(method => {
+                    if (period[method] && period[method].factor_names) {
+                        period[method].factor_names.forEach(f => allFactorsSet.add(f));
+                    }
+                });
+            });
+            const allFactors = Array.from(allFactorsSet);
+
+            if (allFactors.length > 0) {
+                html += '<h6 class="mb-3"><i class="fas fa-table"></i> Factor Weights by Period</h6>';
+                
+                // Create a table for each method
+                methodNames.forEach(method => {
+                    const methodLabel = method === 'lasso' ? 'LASSO' : 'IC Optimization';
+                    const methodColor = method === 'lasso' ? '#4ECDC4' : '#45B7D1';
+                    
+                    html += `<h6 class="mt-3"><span class="badge" style="background-color: ${methodColor}">${methodLabel}</span></h6>`;
+                    html += '<div class="table-responsive mb-3">';
+                    html += '<table class="table table-bordered table-sm">';
+                    html += '<thead><tr><th>Factor</th>';
+                    
+                    // Add period headers
+                    periods.forEach((period, idx) => {
+                        html += `<th class="text-center">Period ${idx}</th>`;
+                    });
+                    html += '</tr></thead><tbody>';
+                    
+                    // Add rows for each factor
+                    allFactors.forEach(factor => {
+                        html += '<tr>';
+                        html += `<td><code>${factor}</code></td>`;
+                        
+                        periods.forEach(period => {
+                            if (period[method] && period[method].factor_names && period[method].weights) {
+                                const idx = period[method].factor_names.indexOf(factor);
+                                const weight = idx >= 0 ? period[method].weights[idx] : 0;
+                                const weightClass = weight === 0 ? 'text-muted' : (weight > 0 ? 'text-success' : 'text-danger');
+                                html += `<td class="text-center ${weightClass}"><strong>${weight.toFixed(8)}</strong></td>`;
+                            } else {
+                                html += '<td class="text-center text-muted">-</td>';
+                            }
+                        });
+                        
+                        html += '</tr>';
+                    });
+                    
+                    html += '</tbody></table></div>';
+                });
+            }
+
+            metricsDiv.innerHTML = html;
+        }
+
+        async function createDynamicVisualizations(results) {
+            try {
+                if (!results.periods || !Array.isArray(results.periods) || results.periods.length === 0) {
+                    return;
+                }
+
+                // ============ DISPLAY JSON RESULTS IN RESULT SECTION ============
+                let html = '<pre style="background: #f5f5f5; padding: 15px; border-radius: 5px; overflow-x: auto; font-size: 11px; max-height: 500px; overflow-y: auto; border: 1px solid #ddd;">';
+                html += JSON.stringify(results, null, 2);
+                html += '</pre>';
+                
+                const jsonDiv = document.getElementById('dynamicResultsJSON');
+                if (jsonDiv) {
+                    jsonDiv.innerHTML = html;
+                }
+
+                const periods = results.periods;
+                const methodNames = ['lasso', 'ic_optimization'];
+
+                // ============ 1. FACTOR WEIGHTS LINE CHART ============
+                // Collect all unique factors
+                const allFactorsSet = new Set();
+                periods.forEach(p => {
+                    methodNames.forEach(method => {
+                        if (p[method] && p[method].factor_names) {
+                            p[method].factor_names.forEach(f => allFactorsSet.add(f));
+                        }
+                    });
+                });
+                
+                const allFactors = Array.from(allFactorsSet);
+                
+                if (allFactors.length > 0) {
+                    const combinedTraces = [];
+                    
+                    methodNames.forEach((method) => {
+                        allFactors.forEach((factor, factorIdx) => {
+                            const xPeriods = [];
+                            const yWeights = [];
+                            
+                            periods.forEach((period, periodIdx) => {
+                                if (period[method] && period[method].factor_names && period[method].weights) {
+                                    const idx = period[method].factor_names.indexOf(factor);
+                                    xPeriods.push(`Period ${periodIdx}`);
+                                    yWeights.push(idx >= 0 ? period[method].weights[idx] : 0);
+                                } else {
+                                    xPeriods.push(`Period ${periodIdx}`);
+                                    yWeights.push(0);
+                                }
+                            });
+                            
+                            // Only add trace if there is at least one non-zero weight
+                            if (yWeights.some(w => w !== 0)) {
+                                combinedTraces.push({
+                                    x: xPeriods,
+                                    y: yWeights,
+                                    name: `${method.toUpperCase()}: ${factor}`,
+                                    type: 'scatter',
+                                    mode: 'lines+markers',
+                                    line: { 
+                                        width: 2,
+                                        dash: method === 'lasso' ? 'solid' : 'dot'
+                                    },
+                                    marker: { size: 6 }
+                                });
+                            }
+                        });
+                    });
+                    
+                    const combinedLayout = {
+                        title: 'Factor Weights Evolution',
+                        xaxis: { title: 'Period' },
+                        yaxis: { title: 'Weight' },
+                        height: 450,
+                        hovermode: 'closest',
+                        showlegend: true
+                    };
+                    
+                    Plotly.newPlot('dynamicWeightsChart', combinedTraces, combinedLayout, {responsive: true});
+                }
+
+            } catch (e) {
+                console.error('Error creating visualizations:', e);
+                showNotification('Visualization error: ' + e.message, 'danger');
+            }
+        }
+
+        // ==================== DYNAMIC OPTIMIZATION: SAVE & EXPORT FUNCTIONS ====================
+        async function saveResultsToRecord() {
+            if (!currentDynamicResults) {
+                showNotification('No results to save', 'warning');
+                return;
+            }
+
+            try {
+                // Create a complete record with timestamp and metadata
+                const record = {
+                    timestamp: new Date().toISOString(),
+                    market: currentDynamicResults.market || 'unknown',
+                    total_periods: currentDynamicResults.total_periods || 0,
+                    optimization_params: {
+                        lookback_window: currentDynamicResults.lookback_window,
+                        alpha: currentDynamicResults.alpha
+                    },
+                    full_results: currentDynamicResults,
+                    backtest_config: currentDynamicResults.backtest_config
+                };
+
+                const jsonStr = JSON.stringify(record, null, 2);
+                const blob = new Blob([jsonStr], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                const filename = `optimization_record_${record.market}_${timestamp}.json`;
+                
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                showNotification(`Complete results saved to records as ${filename}`, 'success');
+                
+                // Also populate the backtest input section
+                if (currentDynamicResults.backtest_config) {
+                    document.getElementById('backtestConfigInput').value = JSON.stringify(currentDynamicResults.backtest_config, null, 2);
+                }
+                
+            } catch (error) {
+                console.error('Error saving results:', error);
+                showNotification('Failed to save results: ' + error.message, 'error');
+            }
+        }
+
+        function copyBacktestConfigFromInput() {
+            const configInput = document.getElementById('backtestConfigInput');
+            if (!configInput.value.trim()) {
+                showNotification('No backtest config to copy', 'warning');
+                return;
+            }
+
+            navigator.clipboard.writeText(configInput.value).then(() => {
+                showNotification('Backtest config copied to clipboard!', 'success');
+            }).catch(err => {
+                console.error('Failed to copy:', err);
+                showNotification('Failed to copy to clipboard', 'error');
+            });
+        }
+
+        function downloadBacktestConfigFromInput() {
+            const configInput = document.getElementById('backtestConfigInput');
+            if (!configInput.value.trim()) {
+                showNotification('No backtest config to download', 'warning');
+                return;
+            }
+
+            try {
+                const config = JSON.parse(configInput.value);
+                const jsonStr = JSON.stringify(config, null, 2);
+                const blob = new Blob([jsonStr], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, -5);
+                const market = config.market || 'unknown';
+                const filename = `backtest_config_${market}_${timestamp}.json`;
+                
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+                
+                showNotification(`Backtest config downloaded as ${filename}`, 'success');
+            } catch (error) {
+                console.error('JSON parse error:', error);
+                showNotification('Invalid JSON format: ' + error.message, 'error');
+            }
+        }
+
+        // ==================== CATEGORY C: REVIEW & EXPORT ====================
+        async function exportOptimizationResults() {
+            // Check if we have backtest results to export
+            if (!currentBacktestResults) {
+                showNotification('No backtest results to export. Run a backtest first.', 'warning');
+                return;
+            }
+
+            const experimentName = document.getElementById('reviewExperimentName').value || 'backtest_results';
+            
+            try {
+                const dataToExport = { ...currentBacktestResults };
+                
+                // Add metadata
+                dataToExport.export_metadata = {
+                    experiment_name: experimentName,
+                    export_timestamp: new Date().toISOString(),
+                    export_source: 'SwiftAlpha UI - Category C Backtest'
+                };
+
+                // Create JSON file
+                const dataStr = JSON.stringify(dataToExport, null, 2);
+                const blob = new Blob([dataStr], {type: 'application/json'});
+                const url = window.URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.setAttribute('download', `${experimentName}_${new Date().toISOString().split('T')[0]}.json`);
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+
+                showNotification('Results exported successfully', 'success');
+            } catch (error) {
+                showNotification('Error exporting results: ' + error.message, 'error');
+            }
+        }
+
+        async function importOptimizationResults() {
+            // NOTE: This function is deprecated for Category C backtest workflow
+            // Category C now uses loadWeightsForBacktest() instead
+            showNotification('Please use the "Upload Weights JSON" button in Category C', 'info');
+            return;
+            
+            /* DEPRECATED CODE
+            const fileInput = document.getElementById('reviewImportFile');
+            if (!fileInput.files || fileInput.files.length === 0) {
+                showNotification('Please select a JSON file to import', 'warning');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            
+            try {
+                const text = await file.text();
+                const importedData = JSON.parse(text);
+
+                // Populate export area with loaded results
+                document.getElementById('reviewExportResults').value = JSON.stringify(importedData, null, 2);
+                
+                // Update status display
+                document.getElementById('reviewStatus').style.display = 'none';
+                document.getElementById('reviewMetrics').style.display = 'block';
+
+                // Detect mode (fixed or dynamic)
+                const mode = importedData.mode || 'unknown';
+                const periodCount = importedData.period_results?.length || 1;
+
+                document.getElementById('reviewMode').textContent = mode === 'dynamic' ? 'Dynamic' : 'Fixed';
+                document.getElementById('reviewPeriodCount').textContent = periodCount;
+
+                showNotification('Results imported successfully', 'success');
+            } catch (error) {
+                showNotification('Error importing file: ' + error.message, 'error');
+            }
+            */
+        }
+
+        async function visualizeReviewResults() {
+            // NOTE: This function is deprecated for Category C backtest workflow
+            // Results are automatically displayed after backtest completion
+            showNotification('Backtest results are automatically displayed after running the backtest', 'info');
+            return;
+            
+            /* DEPRECATED CODE
+            const exportData = document.getElementById('reviewExportResults').value;
+            if (!exportData) {
+                showNotification('No results to visualize', 'warning');
+                return;
+            }
+
+            try {
+                const results = JSON.parse(exportData);
+                const mode = results.mode || 'fixed';
+
+                if (mode === 'dynamic') {
+                    // Create same visualizations as dynamic tab
+                    await createDynamicVisualizations(results);
+                } else {
+                    // Create fixed period visualization
+                    createFixedWeightsChart(results);
+                }
+
+                showNotification('Visualization created successfully', 'success');
+            } catch (error) {
+                showNotification('Error creating visualization: ' + error.message, 'error');
+            }
+            */
+        }
+
+        // ==================== CATEGORY C: BACKTEST WITH UPLOADED WEIGHTS ====================
+        function clearBacktestResults() {
+            // Clear previous results when method changes
+            document.getElementById('backtestStatus').style.display = 'block';
+            document.getElementById('backtestResults').style.display = 'none';
+            document.getElementById('backtestModebadge').style.display = 'none';
+            currentBacktestResults = null;
+        }
+        
+        async function loadWeightsForBacktest() {
+            const fileInput = document.getElementById('backtestWeightsFile');
+            if (!fileInput.files || fileInput.files.length === 0) {
+                showNotification('Please select a weights JSON file', 'warning');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            showLoading(true);
+            
+            try {
+                const text = await file.text();
+                loadedWeightsData = JSON.parse(text);
+
+                console.log('Loaded JSON structure:', loadedWeightsData); // Debug
+
+                // Try multiple possible JSON structures
+                let periods = [];
+                
+                // Structure 1: {results: {periods: [...]}}
+                if (loadedWeightsData.results && loadedWeightsData.results.periods) {
+                    periods = loadedWeightsData.results.periods;
+                }
+                // Structure 2: {periods: [...]}
+                else if (loadedWeightsData.periods && Array.isArray(loadedWeightsData.periods)) {
+                    periods = loadedWeightsData.periods;
+                }
+                // Structure 3: {full_results: {periods: [...]}} (from saveResultsToRecord)
+                else if (loadedWeightsData.full_results && loadedWeightsData.full_results.periods) {
+                    periods = loadedWeightsData.full_results.periods;
+                }
+                // Structure 4: Direct array
+                else if (Array.isArray(loadedWeightsData)) {
+                    periods = loadedWeightsData;
+                }
+                
+                const totalPeriods = periods.length;
+                
+                let detailsHTML = `<ul class="mb-0">`;
+                detailsHTML += `<li>Total Periods: ${totalPeriods}</li>`;
+                
+                if (totalPeriods === 0) {
+                    detailsHTML += `<li class="text-danger">⚠️ No periods found in JSON</li>`;
+                    detailsHTML += `<li class="small">JSON keys: ${Object.keys(loadedWeightsData).join(', ')}</li>`;
+                } else {
+                    // Check which methods are available
+                    const availableMethods = new Set();
+                    periods.forEach(p => {
+                        if (p.baseline) availableMethods.add('baseline');
+                        if (p.lasso) availableMethods.add('lasso');
+                        if (p.ic_optimization) availableMethods.add('ic_optimization');
+                    });
+                    
+                    if (availableMethods.size > 0) {
+                        detailsHTML += `<li>Available Methods: ${Array.from(availableMethods).join(', ')}</li>`;
+                    } else {
+                        detailsHTML += `<li class="text-warning">⚠️ No methods found (baseline, lasso, ic_optimization)</li>`;
+                    }
+                    
+                    const firstPeriod = periods[0];
+                    const factorCount = firstPeriod.lasso?.factor_names?.length || 
+                                       firstPeriod.baseline?.factor_names?.length || 
+                                       firstPeriod.ic_optimization?.factor_names?.length || 0;
+                    detailsHTML += `<li>Number of Factors: ${factorCount}</li>`;
+                    
+                    // Detect if periods have date information (dynamic mode)
+                    const hasPeriodDates = periods.some(p => 
+                        (p.period && (typeof p.period === 'object' || typeof p.period === 'string')) ||
+                        (p.test_start && p.test_end)
+                    );
+                    
+                    if (hasPeriodDates) {
+                        // Dynamic mode - show period dates
+                        detailsHTML += `<li class="text-info"><strong>Mode: Dynamic</strong> (using period dates from JSON)</li>`;
+                        detailsHTML += `<li><small>Period dates:</small><ul class="small mt-1 mb-0">`;
+                        
+                        periods.forEach((p, idx) => {
+                            let pStart = null, pEnd = null;
+                            if (p.period && typeof p.period === 'object') {
+                                pStart = p.period.start;
+                                pEnd = p.period.end;
+                            } else if (p.period && typeof p.period === 'string') {
+                                const parts = p.period.split(' to ');
+                                if (parts.length === 2) {
+                                    pStart = parts[0].trim();
+                                    pEnd = parts[1].trim();
+                                }
+                            } else if (p.test_start && p.test_end) {
+                                pStart = p.test_start;
+                                pEnd = p.test_end;
+                            }
+                            
+                            if (pStart && pEnd) {
+                                detailsHTML += `<li>${idx}: ${pStart} to ${pEnd}</li>`;
+                            }
+                        });
+                        
+                        detailsHTML += `</ul></li>`;
+                        
+                        // Hide date inputs, show info
+                        document.getElementById('backtestDateInputs').style.display = 'none';
+                        document.getElementById('backtestPeriodInfo').style.display = 'block';
+                    } else {
+                        // Fixed mode - need user to input dates
+                        detailsHTML += `<li class="text-secondary"><strong>Mode: Fixed</strong> (specify test dates below)</li>`;
+                        document.getElementById('backtestDateInputs').style.display = 'flex';
+                        document.getElementById('backtestPeriodInfo').style.display = 'none';
+                    }
+                }
+                
+                detailsHTML += `</ul>`;
+                
+                document.getElementById('loadedWeightsDetails').innerHTML = detailsHTML;
+                document.getElementById('loadedWeightsInfo').style.display = 'block';
+                
+                showNotification('Weights loaded successfully!', 'success');
+            } catch (error) {
+                showNotification('Error loading weights file: ' + error.message, 'error');
+                console.error(error);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        async function runBacktestWithWeights() {
+            if (!loadedWeightsData) {
+                showNotification('Please load weights JSON first', 'warning');
+                return;
+            }
+
+            const market = document.getElementById('backtestMarket').value;
+            const method = document.getElementById('backtestMethod').value;
+            
+            console.log(`[BACKTEST] Running with method: ${method}, market: ${market}`);
+            
+            // Extract periods from loaded data (handle multiple structures)
+            let periods = [];
+            if (loadedWeightsData.results && loadedWeightsData.results.periods) {
+                periods = loadedWeightsData.results.periods;
+            } else if (loadedWeightsData.full_results && loadedWeightsData.full_results.periods) {
+                periods = loadedWeightsData.full_results.periods;
+            } else if (loadedWeightsData.periods && Array.isArray(loadedWeightsData.periods)) {
+                periods = loadedWeightsData.periods;
+            } else if (Array.isArray(loadedWeightsData)) {
+                periods = loadedWeightsData;
+            }
+
+            if (periods.length === 0) {
+                showNotification('No periods found in loaded weights data', 'error');
+                return;
+            }
+            
+            // Check if the selected method exists in the periods
+            const methodExists = periods.some(p => p[method]);
+            if (!methodExists) {
+                const availableMethods = [];
+                periods.forEach(p => {
+                    if (p.baseline) availableMethods.push('baseline');
+                    if (p.lasso) availableMethods.push('lasso');
+                    if (p.ic_optimization) availableMethods.push('ic_optimization');
+                });
+                const uniqueMethods = [...new Set(availableMethods)];
+                showNotification(`Method '${method}' not found in uploaded data. Available: ${uniqueMethods.join(', ')}`, 'warning');
+                return;
+            }
+            
+            // Detect mode
+            const hasPeriodDates = periods.some(p => 
+                (p.period && (typeof p.period === 'object' || typeof p.period === 'string')) ||
+                (p.test_start && p.test_end)
+            );
+            
+            // Build backtest config
+            const backtestConfig = {
+                market: market,
+                method: method
+            };
+            
+            // For fixed mode, require dates
+            if (!hasPeriodDates) {
+                const startDate = document.getElementById('backtestStartDate').value;
+                const endDate = document.getElementById('backtestEndDate').value;
+                
+                if (!startDate || !endDate) {
+                    showNotification('Please specify start and end dates for fixed mode', 'warning');
+                    return;
+                }
+                
+                backtestConfig.start_date = startDate;
+                backtestConfig.end_date = endDate;
+            }
+
+            showLoading(true);
+
+            try {
+                const response = await axios.post('/api/factor_combination/backtest', {
+                    weights_data: {
+                        periods: periods
+                    },
+                    backtest_config: backtestConfig
+                });
+
+                if (response.data.success) {
+                    displayBacktestResults(response.data.backtest_results);
+                    showNotification('Backtest completed successfully!', 'success');
+                } else {
+                    showNotification('Backtest failed: ' + response.data.message, 'error');
+                }
+            } catch (error) {
+                showNotification('Error running backtest: ' + error.message, 'error');
+                console.error(error);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function displayBacktestResults(results) {
+            // Hide status, show results
+            document.getElementById('backtestStatus').style.display = 'none';
+            document.getElementById('backtestResults').style.display = 'block';
+
+            // Update mode badge
+            const mode = results.mode || 'fixed';
+            const modeBadge = document.getElementById('backtestModebadge');
+            modeBadge.style.display = 'inline-block';
+            if (mode === 'dynamic') {
+                modeBadge.textContent = `🔄 Dynamic (${results.total_periods} periods)`;
+                modeBadge.className = 'badge bg-info';
+            } else {
+                modeBadge.textContent = '📌 Fixed Weights';
+                modeBadge.className = 'badge bg-secondary';
+            }
+
+            // Display metrics
+            const metrics = results.metrics || {};
+            
+            const annualReturn = metrics.annualized_return || metrics.mean_return || 0;
+            const sharpe = metrics.sharpe_ratio || metrics.information_ratio || 0;
+            const maxDD = metrics.max_drawdown || 0;
+            const winRate = metrics.win_rate || 0;
+
+            // Update existing cards
+            document.getElementById('backtestAnnualReturn').textContent = (annualReturn * 100).toFixed(2) + '%';
+            document.getElementById('backtestAnnualReturn').className = annualReturn > 0 ? 'metric-value positive' : 'metric-value negative';
+            
+            document.getElementById('backtestSharpe').textContent = sharpe.toFixed(3);
+            document.getElementById('backtestSharpe').className = sharpe > 0 ? 'metric-value positive' : 'metric-value negative';
+            
+            document.getElementById('backtestMaxDD').textContent = (Math.abs(maxDD) * 100).toFixed(2) + '%';
+            document.getElementById('backtestMaxDD').className = 'metric-value negative';
+            
+            document.getElementById('backtestWinRate').textContent = (winRate * 100).toFixed(2) + '%';
+            document.getElementById('backtestWinRate').className = 'metric-value';
+
+            // Create cumulative returns chart
+            if (results.cumulative_returns && results.cumulative_returns.length > 0) {
+                const dates = results.cumulative_returns.map(r => r.date);
+                const cumReturns = results.cumulative_returns.map(r => r.cumulative_return);
+
+                // Determine chart title based on mode
+                const mode = results.mode || 'fixed';
+                let chartTitle = `Cumulative Returns - ${results.method.toUpperCase()}`;
+                if (mode === 'dynamic') {
+                    chartTitle += ` (${results.total_periods} Periods, Dynamic Weights)`;
+                } else {
+                    chartTitle += ' (Fixed Weights)';
+                }
+
+                const trace = {
+                    x: dates,
+                    y: cumReturns,
+                    type: 'scatter',
+                    mode: 'lines',
+                    name: 'Strategy',
+                    line: { color: '#667eea', width: 2 },
+                    fill: 'tozeroy',
+                    fillcolor: 'rgba(102, 126, 234, 0.2)'
+                };
+                
+                const traces = [trace];
+
+                // Add Benchmark Trace
+                if (results.benchmark_returns && results.benchmark_returns.length > 0) {
+                    // Calculate cumulative benchmark returns
+                    let cumBench = 0;
+                    const benchDates = [];
+                    const benchValues = [];
+                    
+                    // Create map for quick lookup
+                    const benchMap = {};
+                    results.benchmark_returns.forEach(r => {
+                        benchMap[r.date] = r.return;
+                    });
+                    
+                    // Align with strategy dates
+                    dates.forEach(date => {
+                        const ret = benchMap[date] || 0;
+                        cumBench += ret;
+                        benchDates.push(date);
+                        benchValues.push(cumBench);
+                    });
+                    
+                    traces.push({
+                        x: benchDates,
+                        y: benchValues,
+                        type: 'scatter',
+                        mode: 'lines',
+                        name: 'Benchmark (CSI300/500)',
+                        line: { color: '#9ca3af', width: 2, dash: 'dot' }
+                    });
+                }
+
+                // If dynamic mode, add period markers
+                if (mode === 'dynamic' && results.period_results) {
+                    const periodMarkers = {
+                        x: [],
+                        y: [],
+                        type: 'scatter',
+                        mode: 'markers',
+                        name: 'Period Changes',
+                        marker: {
+                            color: '#f59e0b',
+                            size: 10,
+                            symbol: 'diamond'
+                        },
+                        hovertext: []
+                    };
+                    
+                    // Add marker at the start of each period
+                    results.period_results.forEach((period, idx) => {
+                        const periodStartDate = period.start;
+                        const dateIdx = dates.indexOf(periodStartDate);
+                        
+                        if (dateIdx >= 0) {
+                            const returnAtStart = cumReturns[dateIdx];
+                            periodMarkers.x.push(periodStartDate);
+                            periodMarkers.y.push(returnAtStart);
+                            periodMarkers.hovertext.push(
+                                `Period ${idx + 1}: ${period.start} to ${period.end}<br>` +
+                                `Factors: ${period.num_factors}<br>` +
+                                `Annual Return: ${(period.metrics.annualized_return * 100).toFixed(2)}%`
+                            );
+                        }
+                    });
+                    
+                    if (periodMarkers.x.length > 0) {
+                        traces.push(periodMarkers);
+                    }
+                }
+
+                const layout = {
+                    title: chartTitle,
+                    xaxis: { title: 'Date' },
+                    yaxis: { title: 'Cumulative Return', tickformat: '.2%' },
+                    hovermode: 'x unified',
+                    template: 'plotly_white',
+                    height: 400,
+                    legend: { orientation: 'h', y: -0.2 }
+                };
+
+                if (isDarkMode) {
+                    layout.plot_bgcolor = '#1a1a2e';
+                    layout.paper_bgcolor = '#1a1a2e';
+                    layout.font = { color: '#e0e0e0' };
+                }
+
+                Plotly.newPlot('backtestChart', traces, layout);
+            }
+
+            // Store results for export in global variable
+            currentBacktestResults = {
+                mode: 'backtest',
+                backtest_config: {
+                    market: results.market,
+                    period: results.period,
+                    method: results.method
+                },
+                weights: results.weights,
+                factor_names: results.factor_names,
+                combined_expression: results.combined_expression,
+                metrics: metrics,
+                timestamp: new Date().toISOString()
+            };
+        }
+    </script>   
+</body>
+</html>

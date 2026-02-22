@@ -44,7 +44,7 @@ import requests
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_API_URL = "http://127.0.0.1:19330"
+DEFAULT_API_URL = "http://127.0.0.1:19777"
 DEFAULT_TIMEOUT = 120  # seconds
 MAX_RETRIES = 5
 RETRY_DELAY = 1  # seconds
@@ -65,7 +65,7 @@ class FactorEvalClient:
     - Automatic retries and error handling
 
     Args:
-        base_url: API server URL (default: http://127.0.0.1:19330)
+        base_url: API server URL (default: http://127.0.0.1:19777)
         timeout: Request timeout in seconds (default: 120)
 
     Example:

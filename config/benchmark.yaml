@@ -1,0 +1,62 @@
+# ===========================================================================
+# AlphaBench - Benchmark Configuration
+# ===========================================================================
+# Run with:
+#   python benchmark/run_benchmark.py --config config/benchmark.yaml
+#   python benchmark/run_benchmark.py --config config/benchmark.yaml --tasks t1 t2
+# ===========================================================================
+
+# --- Paths ------------------------------------------------------------------
+QLIB_DATA_PATH: "~/.qlib/qlib_data/cn_data"
+RESULT_SAVE_PATH: "./runs"
+
+# --- LLM Backend ------------------------------------------------------------
+BACKEND_LLM: "deepseek-chat"       # Model name (e.g., gpt-4.1-mini, deepseek-chat)
+BACKEND_SERVICE: "online"           # "online" or "local"
+BACKEND_LLM_PORT: 8000              # Port for local LLM server (ignored if online)
+BACKEND_LLM_TEMPERATURE: 1.5       # Sampling temperature for searching (T3 only)
+ENABLE_COT: false                   # Enable Chain-of-Thought for all tasks
+
+# ===========================================================================
+# T1 - Factor Generation
+#   Generates alpha factors from natural-language instructions.
+#   Sub-tasks: Text2Alpha, Directional Mining, Stability
+# ===========================================================================
+T1_GENERATION:
+  enable: true
+  data_path: "./benchmark/data/generate"
+
+# ===========================================================================
+# T2 - Factor Evaluation
+#   Evaluates LLM ability to rank and score pre-built factor pools.
+#   Sub-tasks: Ranking (Precision@k, NDCG@k), Scoring (signal, dimensions)
+# ===========================================================================
+T2_EVALUATION:
+  enable: true
+  data_path: "./benchmark/data/evaluation"
+
+# ===========================================================================
+# T3 - Factor Searching
+#   Searches for novel alpha factors via LLM-driven evolutionary strategies.
+#   Sub-tasks: CoT (chain-of-thought), ToT (tree-of-thought), EA (evolutionary)
+# ===========================================================================
+T3_SEARCHING:
+  enable: true
+  market: "csi300"    # Target market for factor evaluation
+
+  cot:
+    enable: false
+    rounds: 10        # Iterative refinement rounds per seed factor
+
+  tot:
+    enable: false
+    rounds: 3         # Tree depth (branching search rounds)
+    size: 6           # Candidates generated per node
+
+  ea:
+    enable: true
+    mutation_rate: 0.4
+    crossover_rate: 0.6
+    generations: 10   # Number of evolution generations
+    generate_size: 30 # New candidates generated per generation
+    population_size: 30

@@ -1,3 +1,11 @@
+# [DEPRECATED] ToTSearcher has moved to searcher/algo/tot.py
+# This file is kept for backward compatibility only.
+import warnings as _w
+_w.warn(
+    "searcher.ToT.ToT_searcher is deprecated; use searcher.algo.tot instead.",
+    DeprecationWarning, stacklevel=2,
+)
+
 import json
 import os
 import time

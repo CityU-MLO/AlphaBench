@@ -1,10 +1,36 @@
 """
-Configuration dataclasses for AlphaBench search system.
+Configuration dataclasses for the AlphaBench searcher platform.
 
-Follows EvoAlpha's config pattern but simplified:
-- No DatabaseConfig (uses file-based FactorPool)
-- No task management fields
-- YAML format matches the AlphaBench open-source plan
+YAML format (search_config.yaml)
+─────────────────────────────────
+searching:
+  algo:
+    name: ea          # "ea" | "cot" | "tot"
+    param:
+      # algo-specific params (passed directly to the algo)
+      rounds: 10
+      N: 30
+      mutation_rate: 0.4
+      crossover_rate: 0.6
+      pool_size: 30
+
+  model:
+    name: deepseek-chat
+    base_url: https://api.deepseek.com/v1
+    key: ${DEEPSEEK_API_KEY}   # or literal key
+    temperature: 0.7
+
+backtesting:
+  ffo_server: "127.0.0.1:19777"
+  market: csi300
+  benchmark: SH000300
+  period_start: "2022-01-01"
+  period_end: "2023-01-01"
+  top_k: 30
+  n_drop: 5
+  fast: true
+
+savedir: "./results"
 """
 
 import os
@@ -17,13 +43,13 @@ import yaml
 @dataclass
 class AlgoConfig:
     """
-    Algorithm configuration.
+    Algorithm selection and parameters.
 
     Attributes:
-        name: Algorithm name (e.g., "ea")
-        param: Algorithm parameters dictionary
-        seed_file: Path to seed factors file (one expression per line, or JSON)
-        seed_top_k: Number of top seeds to use
+        name:       Algorithm name — "ea", "cot", or "tot".
+        param:      Algorithm-specific parameter dict (forwarded verbatim to the algo).
+        seed_file:  Optional path to a seed factor file (warm start).
+        seed_top_k: Max seeds to pass to LLM context per round (for controller-based algos).
     """
     name: str = "ea"
     param: Dict[str, Any] = field(default_factory=dict)
@@ -37,10 +63,10 @@ class ModelConfig:
     LLM model configuration.
 
     Attributes:
-        name: Model name (e.g., "deepseek-chat")
-        base_url: API base URL
-        key: API key (can use ${ENV_VAR} for environment variables)
-        temperature: Sampling temperature
+        name:        Model identifier (e.g. "deepseek-chat", "gpt-4o").
+        base_url:    API base URL.  Leave empty for default OpenAI-compatible endpoint.
+        key:         API key.  Use "${ENV_VAR}" syntax to read from environment.
+        temperature: Sampling temperature (0.0–2.0).
     """
     name: str = "deepseek-chat"
     base_url: str = ""
@@ -48,78 +74,39 @@ class ModelConfig:
     temperature: float = 0.7
 
     def resolve_key(self) -> str:
-        """Resolve API key from environment variable if needed."""
+        """Resolve the API key, expanding environment variable references."""
         key = self.key
         if key.startswith("${") and key.endswith("}"):
             env_var = key[2:-1]
-            key = os.getenv(env_var, "")
-            if not key:
-                raise ValueError(f"Environment variable {env_var} not set")
+            resolved = os.getenv(env_var, "")
+            if not resolved:
+                raise ValueError(
+                    f"Environment variable '{env_var}' is not set. "
+                    f"Set it with: export {env_var}=<your-api-key>"
+                )
+            return resolved
         return key
-
-
-@dataclass
-class SearchingConfig:
-    """
-    Search algorithm configuration.
-
-    Attributes:
-        algo: Algorithm configuration
-        model: LLM model configuration
-        num_rounds: Number of search rounds
-        mutation_rate: Fraction of mutation operations
-        crossover_rate: Fraction of crossover operations
-        window_size: Seeds fed to LLM per batch
-        factors_per_batch: Factors requested per batch
-        num_workers: Parallel batches per round
-        batch_max_retries: Max retries if batch fails
-        batch_failure_threshold: Retry if failure rate > threshold
-        min_ic: Minimum IC threshold
-        min_rank_ic: Minimum RankIC threshold
-        adaptive_threshold: Use adaptive thresholds
-        threshold_mode: "and" or "or" for threshold logic
-        adaptive_threshold_ratio: Dynamic threshold ratio
-        start_rounds: Initial rounds accepting all factors
-        diversity_rounds: Rounds accepting by abs(IC)
-    """
-    algo: AlgoConfig = field(default_factory=AlgoConfig)
-    model: ModelConfig = field(default_factory=ModelConfig)
-    num_rounds: int = 10
-    mutation_rate: float = 0.3
-    crossover_rate: float = 0.7
-    # Batch settings
-    window_size: int = 5
-    factors_per_batch: int = 10
-    num_workers: int = 3
-    batch_max_retries: int = 3
-    batch_failure_threshold: float = 0.7
-    # Threshold settings
-    min_ic: float = 0.005
-    min_rank_ic: float = 0.01
-    adaptive_threshold: bool = True
-    threshold_mode: str = "or"
-    adaptive_threshold_ratio: float = 0.8
-    start_rounds: int = 2
-    diversity_rounds: int = 2
 
 
 @dataclass
 class BacktestConfig:
     """
-    Backtesting configuration (via FFO server).
+    Backtesting configuration — all evaluation goes through the FFO server.
 
     Attributes:
-        ffo_server: FFO API server address (host:port)
-        market: Market identifier
-        benchmark: Benchmark identifier
-        period_start: Start date
-        period_end: End date
-        top_k: Number of top stocks to select
-        n_drop: Number of stocks to drop
-        fast: Use fast mode (IC only) or full mode
-        n_jobs: Number of parallel backtest jobs
+        ffo_server:    FFO API server address ("host:port").
+        market:        Market universe identifier (e.g. "csi300", "csi500").
+        benchmark:     Benchmark index for portfolio comparison (e.g. "SH000300").
+        period_start:  Backtest start date ("YYYY-MM-DD").
+        period_end:    Backtest end date ("YYYY-MM-DD").
+        top_k:         Long-only portfolio size (top-K factors/stocks selected).
+        n_drop:        Number of positions dropped per rebalance.
+        fast:          Fast mode — compute IC metrics only (True) or full portfolio
+                       backtest (False).  Fast mode is ~5-10x quicker.
+        n_jobs:        Parallel evaluation workers.
+        timeout:       Per-factor evaluation timeout in seconds.
     """
-    ffo_server: str = "127.0.0.1:19350"
+    ffo_server: str = "127.0.0.1:19777"
     market: str = "csi300"
     benchmark: str = "SH000300"
     period_start: str = "2022-01-01"
@@ -128,55 +115,76 @@ class BacktestConfig:
     n_drop: int = 5
     fast: bool = True
     n_jobs: int = 4
+    timeout: int = 120
 
     def get_api_url(self) -> str:
-        """Get full API URL for factor evaluation."""
-        return f"http://{self.ffo_server}"
+        """Return the full HTTP URL for the FFO API server."""
+        server = self.ffo_server
+        if not server.startswith("http"):
+            server = f"http://{server}"
+        return server
+
+
+@dataclass
+class SearchingConfig:
+    """
+    Search process configuration.
+
+    Attributes:
+        algo:  Algorithm selection and parameters.
+        model: LLM model to use for factor generation.
+    """
+    algo: AlgoConfig = field(default_factory=AlgoConfig)
+    model: ModelConfig = field(default_factory=ModelConfig)
 
 
 @dataclass
 class FullConfig:
     """
-    Complete configuration for an AlphaBench search.
+    Complete configuration for a search run.
 
     Attributes:
-        searching: Search algorithm configuration
-        backtesting: Backtesting configuration
-        savedir: Directory to save results
+        searching:   Search algorithm and model settings.
+        backtesting: FFO backtesting settings.
+        savedir:     Directory to save results.
     """
-    searching: SearchingConfig
-    backtesting: BacktestConfig
+    searching: SearchingConfig = field(default_factory=SearchingConfig)
+    backtesting: BacktestConfig = field(default_factory=BacktestConfig)
     savedir: str = "./results"
 
 
+# ---------------------------------------------------------------------------
+# Loader functions
+# ---------------------------------------------------------------------------
+
 def load_config_from_yaml(yaml_path: str) -> FullConfig:
     """
-    Load configuration from YAML file.
+    Load a FullConfig from a YAML file.
 
     Args:
-        yaml_path: Path to YAML configuration file
+        yaml_path: Path to the YAML configuration file.
 
     Returns:
-        FullConfig object
+        Parsed FullConfig object.
     """
-    with open(yaml_path, "r") as f:
+    with open(yaml_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
-
-    return load_config_from_dict(data)
+    return load_config_from_dict(data or {})
 
 
 def load_config_from_dict(data: Dict[str, Any]) -> FullConfig:
     """
-    Load configuration from dictionary.
+    Build a FullConfig from a raw dictionary (e.g. parsed YAML).
 
     Args:
-        data: Configuration dictionary
+        data: Configuration dictionary.
 
     Returns:
-        FullConfig object
+        FullConfig object.
     """
-    # Parse searching config
+    # ── searching ─────────────────────────────────────────────────────
     search_data = data.get("searching", {})
+
     algo_data = search_data.get("algo", {})
     algo_config = AlgoConfig(
         name=algo_data.get("name", "ea"),
@@ -190,41 +198,24 @@ def load_config_from_dict(data: Dict[str, Any]) -> FullConfig:
         name=model_data.get("name", "deepseek-chat"),
         base_url=model_data.get("base_url", ""),
         key=model_data.get("key", ""),
-        temperature=model_data.get("temperature", 0.7),
+        temperature=float(model_data.get("temperature", 0.7)),
     )
 
-    searching_config = SearchingConfig(
-        algo=algo_config,
-        model=model_config,
-        num_rounds=search_data.get("num_rounds", 10),
-        mutation_rate=search_data.get("mutation_rate", 0.3),
-        crossover_rate=search_data.get("crossover_rate", 0.7),
-        window_size=search_data.get("window_size", 5),
-        factors_per_batch=search_data.get("factors_per_batch", 10),
-        num_workers=search_data.get("num_workers", 3),
-        batch_max_retries=search_data.get("batch_max_retries", 3),
-        batch_failure_threshold=search_data.get("batch_failure_threshold", 0.7),
-        min_ic=search_data.get("min_ic", 0.005),
-        min_rank_ic=search_data.get("min_rank_ic", 0.01),
-        adaptive_threshold=search_data.get("adaptive_threshold", True),
-        threshold_mode=search_data.get("threshold_mode", "or"),
-        adaptive_threshold_ratio=search_data.get("adaptive_threshold_ratio", 0.8),
-        start_rounds=search_data.get("start_rounds", 2),
-        diversity_rounds=search_data.get("diversity_rounds", 2),
-    )
+    searching_config = SearchingConfig(algo=algo_config, model=model_config)
 
-    # Parse backtesting config
+    # ── backtesting ───────────────────────────────────────────────────
     bt_data = data.get("backtesting", {})
     backtest_config = BacktestConfig(
-        ffo_server=bt_data.get("ffo_server", "127.0.0.1:19350"),
+        ffo_server=bt_data.get("ffo_server", "127.0.0.1:19777"),
         market=bt_data.get("market", "csi300"),
         benchmark=bt_data.get("benchmark", "SH000300"),
         period_start=bt_data.get("period_start", "2022-01-01"),
         period_end=bt_data.get("period_end", "2023-01-01"),
-        top_k=bt_data.get("top_k", 30),
-        n_drop=bt_data.get("n_drop", 5),
-        fast=bt_data.get("fast", True),
-        n_jobs=bt_data.get("n_jobs", 4),
+        top_k=int(bt_data.get("top_k", 30)),
+        n_drop=int(bt_data.get("n_drop", 5)),
+        fast=bool(bt_data.get("fast", True)),
+        n_jobs=int(bt_data.get("n_jobs", 4)),
+        timeout=int(bt_data.get("timeout", 120)),
     )
 
     savedir = data.get("savedir", "./results")

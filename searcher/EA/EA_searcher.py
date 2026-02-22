@@ -1,3 +1,11 @@
+# [DEPRECATED] EA_Searcher has moved to searcher/algo/ea.py
+# This file is kept for backward compatibility only.
+import warnings as _w
+_w.warn(
+    "searcher.EA.EA_searcher is deprecated; use searcher.algo.ea instead.",
+    DeprecationWarning, stacklevel=2,
+)
+
 import os
 import sys
 import time

@@ -101,7 +101,7 @@ def health():
 # Entrypoint
 # -----------------------------
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", "19320"))
+    port = int(os.environ.get("PORT", "19777"))
     debug = os.environ.get("DEBUG", "false").lower() == "true"
 
     print(f"Starting Factor Evaluation API on port {port}")

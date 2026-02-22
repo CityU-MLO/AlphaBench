@@ -2,7 +2,7 @@
 import json
 import requests
 
-BASE_URL = "http://127.0.0.1:19320"
+BASE_URL = "http://127.0.0.1:19777"
 EVAL_URL = f"{BASE_URL}/factors/eval"
 
 EXPRESSIONS = [

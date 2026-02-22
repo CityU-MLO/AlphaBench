@@ -1,0 +1,65 @@
+# ============================================================
+# PPO / FFO Unified Configuration File
+# ============================================================
+# This is the single source of truth for all FFO/PPO parameters.
+# Override any value here to customize behavior.
+#
+# Priority (highest to lowest):
+#   1. Environment variables  (e.g., FFO_BACKEND_PORT=19777)
+#   2. ~/.ppo/config.yaml     (user-level overrides)
+#   3. ./config/ffo.yaml      (project-level config, this file)
+#   4. Built-in defaults
+# ============================================================
+
+# ── Backend API Server ──────────────────────────────────────
+server:
+  backend:
+    host: "0.0.0.0"
+    port: 19777
+    workers: 2          # gunicorn workers
+    threads: 4          # threads per worker
+    timeout: 900        # request timeout (seconds)
+    debug: false
+    log_level: "INFO"
+
+  web:
+    host: "0.0.0.0"
+    port: 19787
+    debug: false
+    log_level: "INFO"
+
+  mcp:
+    host: "0.0.0.0"
+    port: 8765
+    transport: "stdio"  # "stdio" or "sse"
+
+# ── Factor Evaluation Defaults ──────────────────────────────
+evaluation:
+  market: "csi300"            # market universe
+  start: "2023-01-01"         # default evaluation start date
+  end: "2024-01-01"           # default evaluation end date
+  label: "close_return"       # return label for IC computation
+  fast: true                  # fast mode (IC only, skip portfolio backtest)
+  topk: 50                    # top-K stocks for portfolio
+  n_drop: 5                   # stocks dropped per rebalance
+  use_cache: true             # use persistent cache
+  timeout_eval: 180           # per-factor evaluation timeout (seconds)
+  timeout_check: 120          # syntax check timeout (seconds)
+  timeout_batch: 600          # batch evaluation timeout (seconds)
+  n_jobs_backtest: 4          # parallel jobs for portfolio backtest
+
+# ── Cache Settings ──────────────────────────────────────────
+cache:
+  path: "~/.ppo/factor_cache.sqlite"
+  max_entries: 50000
+
+# ── Qlib Data Settings ──────────────────────────────────────
+qlib:
+  data_path: "~/.qlib/qlib_data/cn_data"
+  region: "cn"
+  instruments: "csi300"
+
+# ── PID / Log File Paths ────────────────────────────────────
+runtime:
+  pid_dir: "~/.ppo/pids"
+  log_dir: "~/.ppo/logs"

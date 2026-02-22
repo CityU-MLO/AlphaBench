@@ -1,1 +1,5 @@
 __pycache__/
+
+ppo.egg-info/
+.claude/
+.gitignore

@@ -1,52 +1,49 @@
 # ============================================================================
-# AlphaBench Factor Search Configuration
+# AlphaBench Searcher — Configuration
 # ============================================================================
 #
-# Two start modes:
-#   - Cold start: leave seed_file empty → LLM generates initial factors randomly
-#   - Warm start: set seed_file to a text file (one expression per line) or JSON
+# Start modes (mutually exclusive, resolved in order):
+#   1. Resume:    python start_search.py --resume results/final_pool.jsonl
+#   2. Warm file: set searching.algo.seed_file  (or --seed-file flag)
+#   3. Warm α158: python start_search.py --alpha158
+#   4. Cold:      (default) LLM generates initial factors randomly
 #
-# Backtesting always uses the FFO server (no local backtest logic).
+# Backtesting always routes through the FFO server.  No local backtest logic.
 # ============================================================================
 
 savedir: "./results/search_001"
 
+# ── Search algorithm ─────────────────────────────────────────────────────────
 searching:
   algo:
-    name: ea            # Evolutionary Algorithm
-    param: {}
-    seed_file: ""       # Empty = cold start; set path for warm start
-    seed_top_k: 50      # Use top 50 seeds from pool
+    name: ea              # "ea" | "cot" | "tot"
+    seed_file: ""         # warm-start seed file (empty = cold start / --alpha158)
+
+    param:                # algo-specific parameters (forwarded verbatim)
+      # ── EA params ──
+      rounds: 10          # generations
+      N: 30               # new candidates per round
+      mutation_rate: 0.4
+      crossover_rate: 0.6
+      pool_size: 30       # keep top N factors in pool
+      seeds_top_k: 12     # seeds shown to LLM per round
+
+      # ── CoT / ToT params (ignored for EA) ──
+      # rounds: 10        # refinement rounds (CoT) / max tree depth (ToT)
+      # N: 6              # candidates per node per depth (ToT only)
+      # top_k: 3          # max survivors per ToT node
+
+      enable_reason: true
 
   model:
     name: "deepseek-chat"
     base_url: "https://api.deepseek.com"
-    key: "${DEEPSEEK_API_KEY}"
+    key: "${DEEPSEEK_API_KEY}"   # or paste key directly
     temperature: 0.7
 
-  # Search parameters
-  num_rounds: 10
-  mutation_rate: 0.3
-  crossover_rate: 0.7
-
-  # Batch settings
-  window_size: 5             # Seeds fed to LLM per batch
-  factors_per_batch: 10      # Factors requested per LLM call
-  num_workers: 3             # Parallel batches per round
-  batch_max_retries: 3
-  batch_failure_threshold: 0.7
-
-  # Threshold settings
-  min_ic: 0.005
-  min_rank_ic: 0.01
-  adaptive_threshold: true
-  threshold_mode: "or"       # "and" or "or"
-  adaptive_threshold_ratio: 0.8
-  start_rounds: 2            # Accept ALL factors in first N rounds
-  diversity_rounds: 2        # Accept by |IC| in next N rounds
-
+# ── Backtesting (FFO server) ─────────────────────────────────────────────────
 backtesting:
-  ffo_server: "127.0.0.1:19320"
+  ffo_server: "127.0.0.1:19777"
   market: "csi300"
   benchmark: "SH000300"
   period_start: "2022-01-01"
@@ -55,5 +52,7 @@ backtesting:
   top_k: 30
   n_drop: 5
 
-  fast: true                 # true = IC only (~1-2s); false = full (~10-30s)
-  n_jobs: 4
+  fast: true    # true = IC metrics only (~1-2 s/factor, recommended)
+                # false = full portfolio backtest (~10-30 s/factor)
+  n_jobs: 4     # parallel evaluation workers
+  timeout: 120  # per-factor timeout (seconds)

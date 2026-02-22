@@ -168,7 +168,7 @@ cache_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cache
 cache_manager = FactorCacheManager(cache_dir=cache_dir)
 
 # Initialize API client
-api_client = FactorEvalClient(base_url="http://localhost:9889")
+api_client = FactorEvalClient(base_url="http://localhost:19777")
 
 
 @app.route("/")
@@ -1984,4 +1984,4 @@ if __name__ == "__main__":
     if not hasattr(app, "factor_cache"):
         app.factor_cache = {}
 
-    app.run(debug=True, port=5002)
+    app.run(debug=True, port=19787)

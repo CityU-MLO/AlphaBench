@@ -274,7 +274,7 @@ def main():
 
     except Exception as e:
         print(f"\nError running examples: {e}")
-        print("Make sure the FFO API server is running on http://127.0.0.1:19330")
+        print("Make sure the FFO API server is running on http://127.0.0.1:19777")
         import traceback
         traceback.print_exc()
 

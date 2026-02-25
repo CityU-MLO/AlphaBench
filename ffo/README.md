@@ -1,407 +1,575 @@
-# FFO - Formulaic Factor Optimization
+# FFO — Factor Feature Oracle
 
-A high-performance quantitative factor evaluation and optimization platform designed for backtesting factors during search and conducting factor optimization.
+High-performance quantitative factor evaluation platform for A-share markets.
+Exposes a REST API, a typed Python API, a CLI (`ppo`), and an MCP server for LLM agents.
 
-## Overview
+---
 
-FFO (Formulaic Factor Optimization) provides:
+## Contents
 
-- **Factor Evaluation**: Compute IC, Rank IC, ICIR, and portfolio metrics for factor expressions
-- **Factor Combination**: Optimize weights for multiple factors using LASSO, IC optimization, or other methods
-- **Backtesting**: Portfolio-level backtesting with transaction costs and performance metrics
-- **REST API**: Low-latency API with persistent caching for efficient batch processing
-- **Python Client**: Simple, high-performance client library with parallel execution support
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [CLI Reference](#cli-reference)
+- [Python API](#python-api)
+- [Configuration](#configuration)
+- [MCP Server (LLM Agents)](#mcp-server-llm-agents)
+- [REST API Endpoints](#rest-api-endpoints)
+- [Package Structure](#package-structure)
+- [Troubleshooting](#troubleshooting)
 
-### Key Features
+---
 
-✨ **Simple to Use** - Function-style API, no client management needed
-⚡ **High Performance** - 6-10x speedup with parallel batch processing
-🔄 **Context Managers** - Automatic resource cleanup
-💾 **Persistent Caching** - SQLite-backed cache for fast repeated evaluations
-🛡️ **Robust** - Automatic retries, timeout protection, error handling
-📊 **Progress Tracking** - Built-in progress callbacks for long operations
+## Installation
+
+```bash
+# From the project root — installs the ppo CLI and ffo package
+pip install -e .
+
+# Verify
+ppo --version
+```
+
+After installation the `ppo` command is available system-wide.
+
+---
 
 ## Quick Start
 
-### 1. Installation
-
-No additional dependencies needed beyond the base FFO system.
-
-### 2. Start the Server
+### 1. Start the backend
 
 ```bash
-cd infra/ffo
-python backend_app.py
+ppo start backend        # starts on http://127.0.0.1:19777
+ppo status               # confirm it's running
 ```
 
-Server will start on http://127.0.0.1:19330
+### 2. Evaluate a factor
 
-### 3. Basic Usage
-
-#### Simple Single Evaluation
-
-```python
-from client import evaluate
-
-# Evaluate a single factor
-result = evaluate("Rank($close, 20)", fast=True)
-
-print(f"IC: {result['metrics']['ic']:.4f}")
-print(f"Rank IC: {result['metrics']['rank_ic']:.4f}")
+**CLI:**
+```bash
+ppo eval "Rank($close, 20)"
+ppo eval "Mean($volume, 5) / Std($volume, 20)" --market csi500
 ```
 
-#### Batch Evaluation (Sequential)
-
+**Python:**
 ```python
-from client import evaluate_batch
+from ffo.api import evaluate_factor
 
-factors = [
-    "Rank($close, 20)",
-    "Mean($volume, 5)",
-    "StdDev($close, 10)"
-]
-
-results = evaluate_batch(factors, fast=True)
-
-for r in results:
-    if r['success']:
-        print(f"{r['expression']}: IC={r['metrics']['ic']:.4f}")
+result = evaluate_factor("Rank($close, 20)")
+if result.success:
+    print(f"IC={result.metrics.ic:.4f}  Rank_IC={result.metrics.rank_ic:.4f}")
 ```
 
-#### Batch Evaluation (Parallel - 6x Faster!)
+### 3. Stop the backend
+
+```bash
+ppo stop backend
+```
+
+---
+
+## CLI Reference
+
+### Service control
+
+```bash
+# Start
+ppo start backend              # Backend API   → http://127.0.0.1:19777
+ppo start web                  # Web UI        → http://127.0.0.1:19787
+ppo start mcp                  # MCP server    (stdio transport, for Claude Desktop)
+ppo start mcp --transport sse  # MCP server    (SSE transport, persistent)
+ppo start all                  # Backend + web
+
+# Stop / restart
+ppo stop  backend|web|mcp|all
+ppo restart backend|web|mcp|all
+
+# Status (with health check)
+ppo status
+```
+
+### Factor operations
+
+```bash
+ppo eval "Rank($close, 20)"                 # Fast mode (IC only)
+ppo eval "Rank($close, 20)" --no-fast       # Full mode (IC + portfolio backtest)
+ppo eval "Rank($close, 20)" --market csi500
+ppo eval "Rank($close, 20)" --json          # Raw JSON output
+
+ppo check "Rank($close, 20)"                # Syntax validation
+```
+
+### Cache management
+
+```bash
+ppo cache stats    # Show cache size and hit rate
+ppo cache clear    # Clear all cached evaluations
+```
+
+### Logs
+
+```bash
+ppo logs backend           # Last 50 lines
+ppo logs backend -n 200    # Last 200 lines
+ppo logs backend -f        # Follow (tail -f)
+ppo logs web -f
+```
+
+### Configuration
+
+```bash
+ppo config show                        # Print effective config (YAML)
+ppo config show --section evaluation   # Show one section only
+ppo config set evaluation.market csi500
+ppo config set server.backend.port 19778
+ppo config init                        # Write default ~/.ppo/config.yaml
+ppo config init --force                # Overwrite existing
+```
+
+---
+
+## Python API
+
+### Installation (import path)
 
 ```python
-from client import evaluate_batch
-
-factors = [
-    "Rank($close, 20)",
-    "Mean($volume, 5)",
-    "StdDev($close, 10)"
-]
-
-# Use parallel=True for 6-10x speedup
-results = evaluate_batch(
-    factors,
-    parallel=True,
-    max_workers=8,
-    fast=True,
-    progress=True  # Show progress bar
+# Top-level convenience imports
+from ffo.api import (
+    evaluate_factor,         # Evaluate one factor
+    batch_evaluate_factors,  # Evaluate many factors (parallel)
+    check_factor,            # Validate syntax
+    get_cache_stats,         # Cache statistics
+    clear_cache,             # Clear cache
+    server_health,           # Health check
 )
 
-for r in results:
-    if r['success']:
-        print(f"{r['expression']}: IC={r['metrics']['ic']:.4f}")
+# Or via the package root
+import ffo
+result = ffo.evaluate_factor("Rank($close, 20)")
 ```
 
-### 4. Context Manager (Production Ready)
+### Single factor evaluation
 
 ```python
-from client import FactorEvalClient
+from ffo.api import evaluate_factor
 
-factors = ["Rank($close, 20)", "Mean($volume, 5)"]
+result = evaluate_factor(
+    expression="Rank($close, 20)",
+    market="csi300",       # csi300 | csi500 | csi1000
+    start="2023-01-01",
+    end="2024-01-01",
+    fast=True,             # IC only (default). False = full backtest
+    use_cache=True,
+)
 
-with FactorEvalClient() as client:
-    # Check server health
-    if not client.health_check():
-        print("Server not healthy!")
-        exit(1)
-
-    # Evaluate in parallel
-    results = client.evaluate_batch_parallel(
-        factors,
-        max_workers=8,
-        fast=True
-    )
-
-    for r in results:
-        print(f"{r['expression']}: IC={r['metrics']['ic']:.4f}")
-
-# Client resources automatically cleaned up
+if result.success:
+    m = result.metrics
+    print(f"IC       = {m.ic:.4f}")
+    print(f"Rank IC  = {m.rank_ic:.4f}")
+    print(f"ICIR     = {m.icir:.4f}")
+    print(f"Turnover = {m.turnover:.4f}")
+    print(f"N Dates  = {m.n_dates}")
+    print(f"Cached   = {result.cached}")
+else:
+    print(f"Error: {result.error}")
 ```
 
-## Performance
+### Batch evaluation (parallel — 6-10× faster)
 
-### Benchmark Results (100 factors, CSI300, fast mode)
+```python
+from ffo.api import batch_evaluate_factors
 
-| Method | Time | Speedup |
-|--------|------|---------|
-| Sequential | 450s | 1.0x |
-| Parallel (4 workers) | 125s | 3.6x |
-| Parallel (8 workers) | 68s | **6.6x** |
-| Parallel (16 workers) | 45s | **10.0x** |
+factors = [
+    "Rank($close, 5)",
+    "Rank($close, 20)",
+    "Mean($volume, 5) / Mean($volume, 20)",
+    "Corr($close, $volume, 10)",
+    "$close / Delay($close, 1) - 1",
+]
 
-### When to Use What?
+results = batch_evaluate_factors(
+    expressions=factors,
+    market="csi300",
+    start="2023-01-01",
+    end="2024-01-01",
+    fast=True,
+    parallel=True,     # thread-pool parallelism
+    max_workers=8,
+    progress=True,     # print progress to stdout
+)
 
-| Scenario | Method | Expected Speedup |
-|----------|--------|------------------|
-| 1-5 factors | `evaluate()` | 1x |
-| 5-20 factors | `evaluate_batch()` | 1x |
-| 20-100 factors | `evaluate_batch(parallel=True, max_workers=8)` | 6-8x |
-| 100+ factors | `evaluate_batch(parallel=True, max_workers=16)` | 8-12x |
+# Sort by Rank IC
+for r in sorted(results, key=lambda x: -x.metrics.rank_ic):
+    status = f"IC={r.metrics.ic:+.4f}" if r.success else r.error
+    print(f"{r.expression[:45]:45s}  {status}")
+```
+
+### Syntax check
+
+```python
+from ffo.api import check_factor
+
+chk = check_factor("Rank($close, 20)")
+print(chk.is_valid)   # True
+
+chk = check_factor("BadOp($close)")
+print(chk.is_valid)   # False
+print(chk.error)      # "Unknown operator: BadOp"
+```
+
+### Health check & cache
+
+```python
+from ffo.api import server_health, get_cache_stats, clear_cache
+
+health = server_health()
+print(health.is_healthy, health.latency_ms)
+
+stats = get_cache_stats()
+print(f"Cache: {stats.cache_size}/{stats.max_cache_size}")
+
+clear_cache()
+```
+
+### Low-level client (advanced)
+
+```python
+from ffo.client import FactorEvalClient
+
+with FactorEvalClient(base_url="http://127.0.0.1:19777") as client:
+    if client.health_check():
+        results = client.evaluate_batch_parallel(
+            ["Rank($close, 20)", "Mean($volume, 5)"],
+            max_workers=8,
+            fast=True,
+        )
+```
+
+### Return types
+
+| Class | Fields |
+|---|---|
+| `FactorResult` | `success`, `expression`, `metrics`, `error`, `cached`, `market`, `start`, `end` |
+| `FactorMetrics` | `ic`, `rank_ic`, `icir`, `rank_icir`, `turnover`, `n_dates` |
+| `SyntaxCheckResult` | `is_valid`, `expression`, `error`, `name` |
+| `CacheStats` | `cache_size`, `max_cache_size`, `hit_rate` |
+| `ServerHealth` | `is_healthy`, `status`, `latency_ms`, `cache`, `error` |
+
+All return types have a `.to_dict()` method for JSON serialisation.
+
+---
 
 ## Configuration
 
-### Evaluation Parameters
+### Config file: `ffo/config/ffo.yaml`
 
-```python
-from client import evaluate
+The canonical config is bundled with the package at `ffo/config/ffo.yaml`.
+User overrides go in `~/.ppo/config.yaml` (created with `ppo config init`).
 
-result = evaluate(
-    "Rank($close, 20)",
-    market="csi500",           # Market: csi300, csi500, csi1000
-    start_date="2023-01-01",   # Start date
-    end_date="2024-01-01",     # End date
-    label="close_return",      # Label column
-    fast=True,                 # Skip portfolio backtest (5x faster)
-    use_cache=True,            # Use cache (default: True)
-    topk=50,                   # Top K stocks for portfolio
-    n_drop=5,                  # Bottom N to drop
-    timeout=120                # Timeout in seconds
-)
+**Priority (highest → lowest):**
+1. Environment variables (`FFO_BACKEND_PORT=19778`)
+2. `~/.ppo/config.yaml` — per-user overrides
+3. `ffo/config/ffo.yaml` — package defaults ← this file
+4. Built-in hardcoded defaults
+
+### Key defaults
+
+```yaml
+server:
+  backend:
+    port: 19777      # REST API
+  web:
+    port: 19787      # Web UI
+
+evaluation:
+  market: csi300
+  start:  2023-01-01
+  end:    2024-01-01
+  fast:   true
+  topk:   50
+  n_drop: 5
+
+cache:
+  path:        ~/.ppo/factor_cache.sqlite
+  max_entries: 50000
+
+qlib:
+  data_path: ~/.qlib/qlib_data/cn_data
+  region:    cn
 ```
 
-### Environment Variables
+### Override via environment variables
 
 ```bash
-DEFAULT_MARKET=csi300
-DEFAULT_START=2023-01-01
-DEFAULT_END=2024-01-01
-DEFAULT_LABEL=close_return
-TIMEOUT_EVAL_SEC=180
-PORT=19330
+FFO_BACKEND_PORT=19778      # backend port
+FFO_WEB_PORT=19788          # web UI port
+FFO_EVALUATION_MARKET=csi500
+FFO_EVALUATION_FAST=false
+FFO_CACHE_MAX_ENTRIES=100000
+FFO_QLIB_DATA_PATH=/data/qlib
 ```
 
-## Examples
-
-Complete examples with 6 different usage patterns:
+### Override via CLI
 
 ```bash
-cd infra/ffo
-python examples/enhanced_usage.py
+ppo config set evaluation.market csi500
+ppo config set server.backend.port 19778
+ppo config show
 ```
 
-## Architecture
-
-```
-┌─────────────────┐
-│  Python Client  │  Simple function-style API
-└────────┬────────┘
-         │
-         v
-┌──────────────────────────────────┐
-│      REST API (Flask)            │  Request validation, routing
-├──────────────────────────────────┤
-│  - /factors/check                │
-│  - /factors/eval                 │
-│  - /combination/train            │
-└────────┬─────────────────────────┘
-         │
-         v
-┌──────────────────────────────────┐
-│   Core Processing Layer          │
-├──────────────────────────────────┤
-│  • Factor Evaluation Engine      │  Vectorized IC computation
-│  • Optimization Engine           │  LASSO, IC optimization
-│  • Cache Manager                 │  SQLite persistent cache
-│  • Timeout Handler               │  Hard subprocess timeout
-└────────┬─────────────────────────┘
-         │
-         v
-┌──────────────────────────────────┐
-│    Data Access Layer             │
-├──────────────────────────────────┤
-│  • Qlib Data Loader              │  Market data loading
-│  • Backtest Engine               │  Portfolio simulation
-│  • Custom Operators              │  Extended Qlib ops
-└──────────────────────────────────┘
-         │
-         v
-┌──────────────────────────────────┐
-│     Storage Layer                │
-├──────────────────────────────────┤
-│  • Qlib Data (~/.qlib/)          │
-│  • SQLite Cache (cache_data/)    │
-│  • Model Storage (cache_data/)   │
-└──────────────────────────────────┘
-```
-
-## Documentation
-
-### Getting Started
-- **This README** - Overview and quick start
-- **[examples/enhanced_usage.py](examples/enhanced_usage.py)** - 6 complete usage examples
-
-### Detailed Documentation
-- **[README_API.md](README_API.md)** - Complete API reference with endpoints, parameters, and examples
-- **[README_DESIGN.md](README_DESIGN.md)** - System architecture, design decisions, and implementation details
-
-## Common Patterns
-
-### Pattern 1: Quick Factor Screening
+### Access in code
 
 ```python
-from client import evaluate_batch
+from ffo.config import get_config
 
-# Generate many factor variations
-factors = [f"Rank($close, {i})" for i in range(10, 60, 5)]
-
-# Evaluate in parallel with progress
-results = evaluate_batch(
-    factors,
-    parallel=True,
-    fast=True,
-    progress=True
-)
-
-# Filter good factors
-good_factors = [
-    r for r in results
-    if r.get('success') and r['metrics']['ic'] > 0.05
-]
-
-print(f"Found {len(good_factors)} good factors")
+cfg = get_config()
+cfg.get("server.backend.port")     # 19777
+cfg.get("evaluation.market")       # "csi300"
+cfg.backend_url                    # "http://127.0.0.1:19777"
+cfg.web_url                        # "http://127.0.0.1:19787"
 ```
 
-### Pattern 2: Progress Tracking
+---
+
+## MCP Server (LLM Agents)
+
+FFO exposes all evaluation tools as [Model Context Protocol](https://modelcontextprotocol.io) tools,
+making them directly callable by Claude, GPT-4o, and other MCP-compatible agents.
+
+### Claude Desktop integration
+
+Add to `~/.claude/claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "ffo": {
+      "command": "ppo",
+      "args": ["start", "mcp"]
+    }
+  }
+}
+```
+
+### SSE transport (persistent server)
+
+```bash
+ppo start mcp --transport sse --port 8765
+# Connect at: http://127.0.0.1:8765/sse
+```
+
+### Available MCP tools
+
+| Tool | Description |
+|---|---|
+| `evaluate_factor` | Evaluate a single alpha factor (IC, Rank IC, ICIR) |
+| `batch_evaluate_factors` | Evaluate many factors in parallel |
+| `check_factor_syntax` | Validate expression syntax without evaluation |
+| `get_server_health` | Check backend status and latency |
+| `get_cache_stats` | Show cache occupancy and hit rate |
+| `clear_cache` | Clear all cached evaluations |
+
+### Available MCP resources
+
+| URI | Description |
+|---|---|
+| `ffo://operators` | List of all supported Qlib operators |
+| `ffo://markets` | Supported market universes (csi300, csi500, csi1000) |
+
+### Direct MCP usage (Python SDK)
 
 ```python
-from client import FactorEvalClient
+# SSE transport
+from mcp import ClientSession
+from mcp.client.sse import sse_client
 
-def show_progress(completed, total):
-    percent = 100 * completed // total
-    print(f"\rProgress: {completed}/{total} ({percent}%)", end="")
-    if completed == total:
-        print()
-
-with FactorEvalClient() as client:
-    results = client.evaluate_batch_parallel(
-        factors,
-        max_workers=8,
-        fast=True,
-        progress_callback=show_progress
-    )
+async with sse_client("http://localhost:8765/sse") as streams:
+    async with ClientSession(*streams) as session:
+        await session.initialize()
+        result = await session.call_tool(
+            "evaluate_factor",
+            arguments={"expression": "Rank($close, 20)"}
+        )
+        print(result.content)
 ```
 
-### Pattern 3: Error Handling
+---
 
-```python
-from client import evaluate
+## REST API Endpoints
 
-try:
-    result = evaluate("Rank($close, 20)", fast=True)
+Base URL: `http://127.0.0.1:19777`
 
-    if result['success']:
-        ic = result['metrics']['ic']
-        print(f"IC: {ic:.4f}")
-    else:
-        print(f"Error: {result.get('error', 'Unknown')}")
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/health` | Health check + cache stats |
+| `POST` | `/factors/check` | Validate factor syntax |
+| `POST` | `/factors/eval` | Evaluate one or many factors |
+| `POST` | `/combination/train` | Train factor combination (LASSO / IC opt) |
+| `POST` | `/combination/backtest` | Backtest a trained model |
+| `GET` | `/cache_stats` | Cache statistics |
+| `POST` | `/clear_cache` | Clear cache |
 
-except Exception as e:
-    print(f"Failed to connect: {e}")
+### Example: evaluate via curl
+
+```bash
+# Health check
+curl http://127.0.0.1:19777/health
+
+# Evaluate a factor
+curl -s -X POST http://127.0.0.1:19777/factors/eval \
+  -H "Content-Type: application/json" \
+  -d '{
+    "expression": "Rank($close, 20)",
+    "market": "csi300",
+    "start": "2023-01-01",
+    "end":   "2024-01-01",
+    "fast": true
+  }' | python -m json.tool
 ```
+
+For full REST API documentation see [README_API.md](README_API.md).
+
+---
+
+## Package Structure
+
+```
+ffo/
+├── __init__.py              # Top-level re-exports (ffo.evaluate_factor etc.)
+│
+├── api/                     # Agent-friendly typed API
+│   ├── __init__.py
+│   └── functions.py         # evaluate_factor, batch_evaluate_factors, ...
+│
+├── cli/                     # ppo CLI (Click)
+│   ├── __init__.py
+│   └── main.py              # ppo start|stop|status|eval|check|cache|config
+│
+├── config/                  # Configuration management
+│   ├── __init__.py
+│   ├── manager.py           # ConfigManager, get_config()
+│   └── ffo.yaml             # Bundled default configuration ← edit here
+│
+├── mcp/                     # MCP server (FastMCP)
+│   ├── __init__.py
+│   └── server.py            # MCP tools wrapping ffo.api
+│
+├── client/                  # Low-level HTTP client
+│   ├── __init__.py
+│   └── factor_eval_client.py
+│
+├── demos/                   # Runnable demo scripts
+│   ├── 01_basic_usage.py
+│   ├── 02_batch_eval.py
+│   ├── 03_mcp_client.py
+│   └── 04_config_and_cli.py
+│
+├── routes/                  # Flask route handlers
+│   ├── factors.py           # /factors/check, /factors/eval
+│   └── combinations.py      # /combination/...
+│
+├── utils/                   # Internal utilities
+│   ├── utils.py             # Cache, timeouts, parsing
+│   ├── execution_engine.py
+│   └── qlib_extend_ops.py
+│
+├── backtest/                # Backtesting (Qlib integration)
+├── data/                    # Optimization pipelines
+├── tests/                   # Test suite
+├── examples/                # Legacy usage examples
+├── templates/               # Web UI templates
+│
+├── backend_app.py           # Flask app entry point (gunicorn target)
+├── web_app.py               # Web UI Flask app
+└── start.sh                 # Legacy gunicorn launch script
+```
+
+---
+
+## Performance
+
+| Scenario | Method | Typical time (100 factors) |
+|---|---|---|
+| Single call | `evaluate_factor()` | ~5s each |
+| Sequential batch | `batch_evaluate_factors(parallel=False)` | ~500s |
+| Parallel (4 workers) | `batch_evaluate_factors(max_workers=4)` | ~130s |
+| Parallel (8 workers) | `batch_evaluate_factors(max_workers=8)` | ~70s |
+| Parallel (16 workers) | `batch_evaluate_factors(max_workers=16)` | ~50s |
+
+Tips:
+- Use `fast=True` (default) to skip portfolio backtest — 5-10× faster
+- Results are cached in SQLite; repeated calls are instant
+- Set `use_cache=False` only when you need a fresh evaluation
+
+---
+
+## Demos
+
+```bash
+# Make sure backend is running first
+ppo start backend
+
+python ffo/demos/01_basic_usage.py      # single factor + health check
+python ffo/demos/02_batch_eval.py       # parallel batch + ranking table
+python ffo/demos/03_mcp_client.py       # MCP tool schema + agent simulation
+python ffo/demos/04_config_and_cli.py   # full config system + CLI reference
+```
+
+---
 
 ## Troubleshooting
 
-### "Connection refused" Error
+### Connection refused
 
-**Problem:** Can't connect to API server
-
-**Solution:**
 ```bash
-# Start the server
-cd infra/ffo
-python backend_app.py
+# Check if backend is running
+ppo status
 
-# Verify it's running
-curl http://127.0.0.1:19330/health
+# Start it
+ppo start backend
+
+# Verify directly
+curl http://127.0.0.1:19777/health
 ```
 
-### Slow Performance
+### Port conflict
 
-**Solutions:**
-1. Enable parallel execution: `evaluate_batch(parallel=True, max_workers=8)`
-2. Use fast mode: `evaluate_batch(fast=True)` to skip portfolio backtest
-3. Increase workers for large batches: `max_workers=16`
+```bash
+# Change port in config
+ppo config set server.backend.port 19778
 
-### Out of Memory
+# Or via environment variable (no restart of ppo needed)
+FFO_BACKEND_PORT=19778 ppo start backend
+```
 
-**Solution:** Process in smaller chunks
+### Slow evaluation
+
+1. Enable fast mode: `fast=True` (already the default)
+2. Use parallel batch: `batch_evaluate_factors(parallel=True, max_workers=8)`
+3. Check cache: `ppo cache stats` — high hit rate means the cache is working
+
+### Out of memory
+
 ```python
-from client import evaluate_batch
-
+# Process in chunks
 all_results = []
-chunk_size = 100
-
-for i in range(0, len(all_factors), chunk_size):
-    chunk = all_factors[i:i + chunk_size]
-    results = evaluate_batch(chunk, parallel=True, fast=True)
-    all_results.extend(results)
+for chunk in [all_factors[i:i+100] for i in range(0, len(all_factors), 100)]:
+    all_results.extend(batch_evaluate_factors(chunk, parallel=True, fast=True))
 ```
 
-## API Endpoints
-
-Quick reference (see [README_API.md](README_API.md) for complete details):
-
-- `GET /health` - Health check
-- `POST /factors/check` - Validate factor syntax
-- `POST /factors/eval` - Evaluate factors
-- `POST /combination/train` - Train factor combinations
-- `POST /clear_cache` - Clear cache
-- `GET /cache_stats` - Cache statistics
-
-## Development
-
-### Project Structure
-
-```
-infra/ffo/
-├── client/                      # Python client library
-│   ├── __init__.py
-│   └── factor_eval_client.py    # Unified client (all-in-one)
-├── routes/                      # API endpoints
-│   ├── factors.py               # Factor evaluation
-│   └── combinations.py          # Factor combination
-├── utils/                       # Utilities
-│   ├── utils.py                 # Cache, timeout, parsing
-│   ├── execution_engine.py      # Multi-task execution
-│   └── qlib_extend_ops.py       # Custom operators
-├── backtest/                    # Backtesting
-│   ├── qlib/                    # Qlib integration
-│   └── factor_metrics/          # Metrics computation
-├── data/                        # Data pipeline
-│   └── pipeline/optim/          # Optimization methods
-├── examples/                    # Usage examples
-│   └── enhanced_usage.py
-├── backend_app.py               # Flask app entry point
-├── README.md                    # This file
-├── README_API.md                # API reference
-├── README_DESIGN.md             # Design documentation
-└── IMPROVEMENTS.md              # Recent improvements
-```
-
-### Running Tests
+### View logs
 
 ```bash
-cd infra/ffo
-python -m pytest tests/
+ppo logs backend -f    # follow live output
+ppo logs web           # last 50 lines of web UI log
 ```
 
-## Contributing
+---
 
-When contributing, please:
-1. Follow existing code style
-2. Add tests for new features
-3. Update documentation
-4. Maintain backward compatibility
+## Documentation
 
-## Support
-
-For issues or questions:
-1. Check the [troubleshooting section](#troubleshooting)
-2. Read the [API documentation](README_API.md)
-3. Review [design documentation](README_DESIGN.md)
-4. Check [examples](examples/enhanced_usage.py)
-
-## License
-
-Part of the qfinzero project.
+| File | Contents |
+|---|---|
+| `README.md` (this file) | Overview, CLI, Python API, configuration |
+| [`README_API.md`](README_API.md) | Full REST API reference |
+| [`README_DESIGN.md`](README_DESIGN.md) | Architecture and design decisions |
+| [`ffo/demos/`](demos/) | Runnable end-to-end examples |

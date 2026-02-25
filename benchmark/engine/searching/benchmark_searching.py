@@ -8,9 +8,9 @@ from ffo.client.factor_eval_client import (
     evaluate_factor_via_api,
 )
 
-from searcher.CoT.CoT_searcher import CoTSearcher
-from searcher.ToT.ToT_searcher import ToTSearcher
-from searcher.EA.EA_searcher import EA_Searcher
+from searcher.algo.cot import CoTSearcher
+from searcher.algo.tot import ToTSearcher
+from searcher.algo.ea import EA_Searcher
 
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed
 from typing import Callable, Dict, Iterable, Any, Optional

@@ -41,6 +41,7 @@ def create_algo(
     batch_evaluate_fn: Callable,
     search_fn: Callable,
     batch_evaluate_fn_dict: Callable = None,
+    logger=None,
 ) -> BaseAlgo:
     """
     Instantiate a search algorithm by name.
@@ -53,6 +54,7 @@ def create_algo(
         search_fn:             LLM search callable (e.g. call_qlib_search).
         batch_evaluate_fn_dict: fn(factors: List[Dict]) -> Dict[str, Dict]  (dict by name).
                                If None, derived automatically from batch_evaluate_fn.
+        logger:                Optional SearchLogger instance for structured output.
 
     Returns:
         Configured BaseAlgo instance.
@@ -73,6 +75,7 @@ def create_algo(
         search_fn=search_fn,
         config=config,
         batch_evaluate_fn_dict=batch_evaluate_fn_dict,
+        logger=logger,
     )
 
 

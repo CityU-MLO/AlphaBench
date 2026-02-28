@@ -1,0 +1,42 @@
+"""
+Configuration for building the binary noise classification dataset (T4-Task2)
+for CSI300 market.
+
+Record format (JSONL):
+  {"expression": "...", "ground_truth": "noise"|"signal",
+   "factor_name": "...", "market": "CSI300", "window": {...}, "meta": {...}}
+
+Input files:
+  benchmark/data/evaluate/raw/ic_table_csi300.csv
+  benchmark/data/evaluate/raw/rankic_table_csi300.csv
+  benchmark/data/evaluate/pool/factor_pool.json
+"""
+
+meta:
+  market: CSI300
+  start_date: "2021-01-01"
+  end_date: "2025-06-30"
+
+# Pre-computed IC / RankIC tables (datetime × factor_name)
+ic_table_path: "benchmark/data/evaluate/raw/ic_table_csi300.csv"
+rankic_table_path: "benchmark/data/evaluate/raw/rankic_table_csi300.csv"
+
+# Factor pool: {factor_name: expression}
+factor_pool_path: "benchmark/data/evaluate/pool/factor_pool.json"
+
+# Noise definition: factor is "noise" if BOTH gates pass (condition: "and"):
+#   |IC| < ic_threshold  AND  |RankIC| < rankic_threshold
+noise_threshold:
+  ic:        0.005
+  rankic:    0.025
+  abs:       true    # use absolute value of IC/RankIC
+  condition: "and"   # "and" = must fail both gates; "or" = fail either
+
+# Fresh train/val/test split
+split:
+  sample_n:    300   # sample up to N factors from pool
+  train_ratio: 0.6
+  val_ratio:   0.1
+  test_ratio:  0.3
+
+seed: 42

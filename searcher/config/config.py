@@ -104,7 +104,11 @@ class BacktestConfig:
         fast:          Fast mode — compute IC metrics only (True) or full portfolio
                        backtest (False).  Fast mode is ~5-10x quicker.
         n_jobs:        Parallel evaluation workers.
-        timeout:       Per-factor evaluation timeout in seconds.
+        timeout:          Per-factor evaluation timeout in seconds.
+        accept_threshold: Minimum RankIC a factor must achieve to be accepted
+                          into the search pool.  Use 0.0 to accept all factors
+                          with non-negative RankIC; use a negative value (e.g.
+                          -1.0) to effectively disable filtering.
     """
     ffo_server: str = "127.0.0.1:19777"
     market: str = "csi300"
@@ -116,6 +120,7 @@ class BacktestConfig:
     fast: bool = True
     n_jobs: int = 4
     timeout: int = 120
+    accept_threshold: float = 0.0
 
     def get_api_url(self) -> str:
         """Return the full HTTP URL for the FFO API server."""
@@ -216,6 +221,7 @@ def load_config_from_dict(data: Dict[str, Any]) -> FullConfig:
         fast=bool(bt_data.get("fast", True)),
         n_jobs=int(bt_data.get("n_jobs", 4)),
         timeout=int(bt_data.get("timeout", 120)),
+        accept_threshold=float(bt_data.get("accept_threshold", 0.0)),
     )
 
     savedir = data.get("savedir", "./results")

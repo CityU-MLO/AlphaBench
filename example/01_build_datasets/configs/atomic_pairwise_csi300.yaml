@@ -1,0 +1,46 @@
+"""
+Configuration for building the pairwise selection dataset (T4-Task1)
+for CSI300 market.
+
+Record format (JSONL):
+  {"id": "...", "A": "expr_a", "B": "expr_b",
+   "ground_truth": "A"|"B",
+   "factor_name_A": "...", "factor_name_B": "...",
+   "market": "CSI300", "window": {...}, "meta_A": {...}, "meta_B": {...}}
+
+Pairs are (signal, noise) — one good factor vs one noise factor.
+A/B assignment is randomized so ground_truth is balanced 50/50.
+
+Input files:
+  benchmark/data/evaluate/raw/ic_table_csi300.csv
+  benchmark/data/evaluate/raw/rankic_table_csi300.csv
+  benchmark/data/evaluate/pool/factor_pool.json
+"""
+
+meta:
+  market: CSI300
+  start_date: "2021-01-01"
+  end_date: "2025-06-30"
+
+# Pre-computed IC / RankIC tables (datetime × factor_name)
+ic_table_path: "benchmark/data/evaluate/raw/ic_table_csi300.csv"
+rankic_table_path: "benchmark/data/evaluate/raw/rankic_table_csi300.csv"
+
+# Factor pool: {factor_name: expression}
+factor_pool_path: "benchmark/data/evaluate/pool/factor_pool.json"
+
+# Noise gate (same as noise dataset — defines what counts as "noise" for pairing)
+noise_threshold:
+  ic:        0.005
+  rankic:    0.025
+  abs:       true
+  condition: "and"
+
+# Fresh train/val/test split
+split:
+  sample_n:    300   # total pairs to build (capped by pool availability)
+  train_ratio: 0.6
+  val_ratio:   0.1
+  test_ratio:  0.3
+
+seed: 42

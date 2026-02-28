@@ -31,6 +31,7 @@ from utils.utils import (
     run_eval_with_timeout,
     run_check_with_timeout,
     run_batch_with_timeout,
+    run_batch_beta_with_timeout,
     DEFAULT_INSTRUMENTS,
 )
 
@@ -389,3 +390,154 @@ def eval_once():
             ),
             500,
         )
+
+
+@bp.route("/eval_beta", methods=["POST"])
+def eval_beta():
+    """
+    Beta: evaluate a batch of factors using a single compute_factor_data() call
+    and GPU-accelerated (PyTorch) IC / RankIC computation.
+
+    Unlike /eval (which evaluates factors one-by-one), this endpoint:
+    - Packages ALL expressions into one Qlib data-loader call.
+    - Computes IC and RankIC for all factors simultaneously on GPU.
+
+    Recommended for large-scale evaluation (50+ factors).
+
+    POST JSON:
+    {
+        "expression": str | dict | list,   // same formats as /eval
+        "market":     "csi300",            // default
+        "start":      "2023-01-01",        // default
+        "end":        "2024-01-01",        // default
+        "label":      "close_return",      // default
+        "device":     "auto",              // "auto" | "cuda" | "cpu"
+        "timeout":    600                  // seconds for the whole batch
+    }
+
+    Returns: JSON list, one item per factor (same schema as /eval).
+    """
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+
+        factors, err = normalize_factors_from_expression_field(data)
+        if err:
+            msg, etype = err
+            return (
+                jsonify(
+                    [
+                        {
+                            "success": False,
+                            "name": "",
+                            "expression": "",
+                            "error": msg,
+                            "error_type": etype,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                        }
+                    ]
+                ),
+                400,
+            )
+
+        start = data.get("start", DEFAULTS["start"])
+        end = data.get("end", DEFAULTS["end"])
+        market = (data.get("market", DEFAULTS["market"]) or DEFAULTS["market"]).lower()
+        label = data.get("label", DEFAULTS["label"])
+        device = data.get("device", "auto")
+        timeout = int(data.get("timeout", DEFAULTS["timeout_batch"]))
+
+        logger.info(
+            "Beta batch eval: %d factor(s) (market=%s, %s→%s, label=%s, device=%s)",
+            len(factors),
+            market,
+            start,
+            end,
+            label,
+            device,
+        )
+
+        # Ensure unique names so columns don't collide in the feature DataFrame
+        named_factors = []
+        for i, f in enumerate(factors):
+            name = (f.get("name") or "").strip() or f"factor_{i}"
+            named_factors.append({"name": name, "expression": f["expression"]})
+
+        res = run_batch_beta_with_timeout(
+            named_factors, market, start, end, label, timeout, device
+        )
+
+        if not res.ok:
+            error_msg = f"{res.error_type}: {res.payload}"
+            logger.error("eval_beta subprocess failed: %s", error_msg)
+            return jsonify([
+                {
+                    "success": False,
+                    "name": f.get("name", ""),
+                    "expression": f.get("expression", ""),
+                    "error": error_msg,
+                    "market": market,
+                    "start_date": start,
+                    "end_date": end,
+                    "metrics": {"ic": 0.0, "icir": 0.0, "rank_ic": 0.0, "rank_icir": 0.0, "n_dates": 0},
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                for f in named_factors
+            ]), 200
+
+        payload = res.payload
+        if not isinstance(payload, dict) or "results" not in payload:
+            error_msg = "Unexpected response format from beta worker"
+            logger.error("eval_beta: %s", error_msg)
+            return jsonify([
+                {
+                    "success": False,
+                    "name": f.get("name", ""),
+                    "expression": f.get("expression", ""),
+                    "error": error_msg,
+                    "market": market,
+                    "start_date": start,
+                    "end_date": end,
+                    "metrics": {"ic": 0.0, "icir": 0.0, "rank_ic": 0.0, "rank_icir": 0.0, "n_dates": 0},
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+                for f in named_factors
+            ]), 200
+
+        # Normalise to /eval-compatible output schema
+        results = []
+        for r in payload["results"]:
+            item = {
+                "success": r.get("success", False),
+                "name": r.get("name", ""),
+                "expression": r.get("expression", ""),
+                "market": market,
+                "start_date": start,
+                "end_date": end,
+                "device": r.get("device", device),
+                "metrics": r.get("metrics", {}),
+                "timestamp": r.get(
+                    "timestamp", datetime.now(timezone.utc).isoformat()
+                ),
+            }
+            if not r.get("success", False):
+                item["error"] = r.get("error", "Unknown error")
+            results.append(item)
+
+        return jsonify(results), 200
+
+    except Exception as e:
+        logger.exception("eval_beta error")
+        error_msg = f"{type(e).__name__}: {e}"
+        _named = locals().get("named_factors") or locals().get("factors") or []
+        return jsonify([
+            {
+                "success": False,
+                "name": f.get("name", "") if isinstance(f, dict) else "",
+                "expression": f.get("expression", "") if isinstance(f, dict) else "",
+                "error": error_msg,
+                "metrics": {"ic": 0.0, "icir": 0.0, "rank_ic": 0.0, "rank_icir": 0.0, "n_dates": 0},
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }
+            for f in _named
+        ] or [{"success": False, "error": error_msg,
+               "timestamp": datetime.now(timezone.utc).isoformat()}]), 200

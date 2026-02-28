@@ -723,6 +723,273 @@ def _child_batch_eval(
 
 
 # -----------------------------
+# GPU-accelerated batch IC / RankIC (beta)
+# -----------------------------
+def _rankdata_torch(x: "torch.Tensor") -> "torch.Tensor":
+    """
+    Vectorized average rank for all columns simultaneously.
+
+    Args:
+        x: (n, m) float32 tensor — ranked column-wise.
+
+    Returns:
+        (n, m) float32 tensor of ranks (1-indexed, average method for ties).
+
+    Method: avg_rank = (forward_rank + backward_rank) / 2
+    where backward_rank is the rank when sorting descending, converted
+    to the same ascending scale (n+1 - bwd_pos).
+    """
+    import torch
+
+    n, m = x.shape
+    pos = (
+        torch.arange(n, dtype=torch.float32, device=x.device)
+        .unsqueeze(1)
+        .expand(n, m)
+    )
+
+    fwd_idx = x.argsort(dim=0, stable=True)
+    fwd_rank = torch.empty(n, m, dtype=torch.float32, device=x.device)
+    fwd_rank.scatter_(0, fwd_idx, pos + 1.0)
+
+    bwd_idx = (-x).argsort(dim=0, stable=True)
+    bwd_rank = torch.empty(n, m, dtype=torch.float32, device=x.device)
+    bwd_rank.scatter_(0, bwd_idx, pos + 1.0)
+
+    return (fwd_rank + (n + 1.0 - bwd_rank)) * 0.5
+
+
+def _gpu_batch_ic_rankic(
+    X: pd.DataFrame,
+    y: pd.Series,
+    device: Optional[str] = None,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    GPU-accelerated batch IC (Pearson) and RankIC (Spearman via rank transform)
+    computed per date for all factors simultaneously.
+
+    Processes all factor columns in a single matrix operation per date,
+    making it dramatically faster than per-factor pandas loops when
+    evaluating dozens or hundreds of factors.
+
+    Falls back to CPU if CUDA is unavailable.
+
+    Args:
+        X:      Feature DataFrame (MultiIndex with 'datetime' level), shape
+                (n_samples, n_factors).  Must be NaN-free after alignment.
+        y:      Label Series aligned to X.  Must be NaN-free.
+        device: PyTorch device string.  Defaults to 'cuda' if available,
+                else 'cpu'.  Pass 'cpu' to force CPU mode.
+
+    Returns:
+        ic_table:  DataFrame (n_dates, n_factors) of daily IC values.
+        ric_table: DataFrame (n_dates, n_factors) of daily RankIC values.
+    """
+    import torch
+
+    if device is None or device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    dates_arr = X.index.get_level_values("datetime").values
+    uniq_dates = np.unique(dates_arr)
+    factor_names = X.columns.tolist()
+
+    # Pre-convert to float32 numpy arrays once to avoid repeated dtype conversion
+    X_vals = X.values.astype(np.float32)
+    y_vals = y.values.astype(np.float32)
+
+    ic_rows: List = []
+    ric_rows: List = []
+
+    for d in uniq_dates:
+        mask = dates_arr == d
+        Xd_np = X_vals[mask]  # (n_stocks, n_factors)
+        yd_np = y_vals[mask]  # (n_stocks,)
+
+        n = Xd_np.shape[0]
+        if n < 2:
+            nan_s = pd.Series([float("nan")] * len(factor_names), index=factor_names)
+            ic_rows.append(nan_s)
+            ric_rows.append(nan_s.copy())
+            continue
+
+        Xd = torch.as_tensor(Xd_np, device=device)  # (n, F)
+        yd = torch.as_tensor(yd_np, device=device)  # (n,)
+
+        # ── IC: Pearson correlation of each factor column with yd ─────────────
+        Xd_c = Xd - Xd.mean(dim=0, keepdim=True)  # (n, F)
+        yd_c = yd - yd.mean()  # (n,)
+
+        ic_num = Xd_c.T @ yd_c  # (F,)
+        ic_den = Xd_c.norm(dim=0) * yd_c.norm() + 1e-8
+        ic = ic_num / ic_den  # (F,)
+
+        # ── RankIC: Pearson on average ranks ──────────────────────────────────
+        Xd_r = _rankdata_torch(Xd)  # (n, F)
+        yd_r = _rankdata_torch(yd.unsqueeze(1)).squeeze(1)  # (n,)
+
+        Xr_c = Xd_r - Xd_r.mean(dim=0, keepdim=True)
+        yr_c = yd_r - yd_r.mean()
+
+        ric_num = Xr_c.T @ yr_c
+        ric_den = Xr_c.norm(dim=0) * yr_c.norm() + 1e-8
+        ric = ric_num / ric_den
+
+        ic_rows.append(pd.Series(ic.cpu().numpy(), index=factor_names))
+        ric_rows.append(pd.Series(ric.cpu().numpy(), index=factor_names))
+
+    ic_table = pd.DataFrame(ic_rows, index=uniq_dates, columns=factor_names)
+    ric_table = pd.DataFrame(ric_rows, index=uniq_dates, columns=factor_names)
+
+    return ic_table, ric_table
+
+
+def _child_batch_eval_beta(
+    factors: List[Dict[str, str]],
+    instruments: str,
+    start: str,
+    end: str,
+    label_spec: str,
+    device: str = "auto",
+) -> Dict[str, Any]:
+    """
+    Beta batch evaluator: load ALL factors in a single compute_factor_data()
+    call, then compute IC / RankIC on GPU via PyTorch.
+
+    Compared to evaluating factors one-by-one, this approach:
+    - Issues only ONE Qlib data-loader call regardless of factor count.
+    - Runs matrix-level IC / RankIC on the GPU for all factors at once.
+
+    Runs inside a child process (safe to hard-kill on timeout).
+
+    Args:
+        factors:      List of {"name": str, "expression": str}.
+        instruments:  Market universe string (e.g. "csi300").
+        start:        Evaluation start date "YYYY-MM-DD".
+        end:          Evaluation end date "YYYY-MM-DD".
+        label_spec:   Label name accepted by compute_factor_data
+                      ("close_return", "close_return_lag", "close").
+        device:       PyTorch device: "auto", "cuda", or "cpu".
+
+    Returns:
+        Dict with "success", "count", "results", "device", "timestamp".
+    """
+    import qlib
+    import logging
+    from backtest.qlib.dataloader import compute_factor_data  # triggers module-level qlib.init
+
+    # Re-init with project defaults (same pattern as _child_eval_expr)
+    logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
+    qlib.init(provider_uri=DEFAULT_PROVIDER_URI, region=DEFAULT_REGION)
+
+    # Ensure every factor has a unique name
+    factor_list: List[Dict[str, str]] = []
+    for i, f in enumerate(factors):
+        name = (f.get("name") or "").strip() or f"__beta_factor_{i}__"
+        factor_list.append({"name": name, "expression": f["expression"]})
+
+    # Single batched Qlib data load via compute_factor_data
+    data = compute_factor_data(
+        factor_definitions=factor_list,
+        label=label_spec,
+        instruments=instruments.lower(),
+        start_time=start,
+        end_time=end,
+    )
+
+    if data is None or "feature" not in data or "label" not in data:
+        exprs = [fl["expression"] for fl in factor_list]
+        raise RuntimeError(
+            f"compute_factor_data returned None or missing columns "
+            f"(likely an invalid expression). "
+            f"Expressions tried: {exprs}"
+        )
+
+    X: pd.DataFrame = data["feature"]  # MultiIndex (datetime, instrument) x n_factors
+    y: pd.Series = data["label"]["LABEL"]
+
+    # Align and drop any remaining NaN in one pass
+    joined = X.join(y.rename("__LABEL__"), how="inner").dropna()
+    if joined.empty:
+        raise RuntimeError("Empty aligned feature/label data after dropna")
+
+    X_clean = joined.drop(columns=["__LABEL__"])
+    y_clean = joined["__LABEL__"]
+
+    # Resolve device
+    actual_device = device
+    if device == "auto":
+        try:
+            import torch
+
+            actual_device = "cuda" if torch.cuda.is_available() else "cpu"
+        except ImportError:
+            actual_device = "cpu"
+
+    # GPU-accelerated IC / RankIC for all factors simultaneously
+    ic_table, ric_table = _gpu_batch_ic_rankic(X_clean, y_clean, device=actual_device)
+
+    # Build per-factor result dicts
+    name_to_expr: Dict[str, str] = {
+        fl["name"]: f["expression"] for fl, f in zip(factor_list, factors)
+    }
+
+    results: List[Dict[str, Any]] = []
+    for fl in factor_list:
+        nm = fl["name"]
+        if nm not in X_clean.columns:
+            results.append(
+                {
+                    "name": nm,
+                    "expression": name_to_expr.get(nm, ""),
+                    "success": False,
+                    "error": "Factor column not found in loaded data",
+                    "metrics": {
+                        "ic": 0.0,
+                        "icir": 0.0,
+                        "rank_ic": 0.0,
+                        "rank_icir": 0.0,
+                        "n_dates": 0,
+                    },
+                }
+            )
+            continue
+
+        ic_s = ic_table[nm].dropna()
+        ric_s = ric_table[nm].dropna()
+
+        ic_m = float(ic_s.mean()) if len(ic_s) else 0.0
+        ic_sd = float(ic_s.std(ddof=1)) if len(ic_s) > 1 else 0.0
+        ric_m = float(ric_s.mean()) if len(ric_s) else 0.0
+        ric_sd = float(ric_s.std(ddof=1)) if len(ric_s) > 1 else 0.0
+
+        results.append(
+            {
+                "name": nm,
+                "expression": name_to_expr.get(nm, ""),
+                "success": True,
+                "device": actual_device,
+                "timestamp": pd.Timestamp.utcnow().isoformat(),
+                "metrics": {
+                    "ic": ic_m,
+                    "icir": _ir(ic_m, ic_sd),
+                    "rank_ic": ric_m,
+                    "rank_icir": _ir(ric_m, ric_sd),
+                    "n_dates": int(len(ic_s)),
+                },
+            }
+        )
+
+    return {
+        "success": True,
+        "count": len(results),
+        "results": results,
+        "device": actual_device,
+        "timestamp": pd.Timestamp.utcnow().isoformat(),
+    }
+
+
+# -----------------------------
 # Public API (used by server)
 # -----------------------------
 def run_eval_with_timeout(
@@ -749,6 +1016,40 @@ def run_batch_with_timeout(
     return _spawn_and_run(
         _child_batch_eval,
         (factors, instruments, start, end, label_spec, n_jobs),
+        timeout,
+    )
+
+
+def run_batch_beta_with_timeout(
+    factors: List[Dict[str, str]],
+    instruments: str,
+    start: str,
+    end: str,
+    label_spec: str,
+    timeout: int,
+    device: str = "auto",
+) -> SubprocessResult:
+    """
+    Run _child_batch_eval_beta in a child process with a hard timeout.
+
+    Loads all factors in one compute_factor_data() call, then uses
+    GPU-accelerated (PyTorch) IC / RankIC computation.
+
+    Args:
+        factors:     List of {"name": str, "expression": str}.
+        instruments: Market universe (e.g. "csi300").
+        start:       Start date "YYYY-MM-DD".
+        end:         End date "YYYY-MM-DD".
+        label_spec:  Label name ("close_return", "close_return_lag", "close").
+        timeout:     Hard timeout in seconds for the entire batch.
+        device:      PyTorch device: "auto", "cuda", or "cpu".
+
+    Returns:
+        SubprocessResult with ok=True and payload=dict on success.
+    """
+    return _spawn_and_run(
+        _child_batch_eval_beta,
+        (factors, instruments, start, end, label_spec, device),
         timeout,
     )
 

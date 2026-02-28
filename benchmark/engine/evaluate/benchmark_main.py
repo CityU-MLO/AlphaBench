@@ -366,6 +366,115 @@ def benchmark_scoring_performance(
     # import pdb; pdb.set_trace()
 
 
+# ---------------------------------------------------------------------------
+# T4 Atomic benchmark runner (merged from engine/eval)
+# ---------------------------------------------------------------------------
+
+def run_atomic_benchmark(
+    task: str,
+    output_dir: str,
+    model: str = "gpt-4.1",
+    cot: bool = False,
+    market_prompt: str = "auto",
+    num_workers: int = 8,
+    temperature: float = 0.3,
+    latency: float = 0.25,
+    use_batch: bool = True,
+    save_prompts: bool = False,
+    local: bool = False,
+    local_port: int = 8000,
+    data_path=None,
+    data_dir=None,
+    splits=None,
+):
+    """Run atomic evaluation for binary_noise or pairwise_select tasks."""
+    from pathlib import Path
+
+    if data_path is None and data_dir is None:
+        raise ValueError("Provide either data_path or data_dir.")
+
+    infer_kwargs = dict(
+        task=task, model=model, cot=cot, market_prompt=market_prompt,
+        num_workers=num_workers, temperature=temperature, latency=latency,
+        use_batch=use_batch, save_prompts=save_prompts, local=local, local_port=local_port,
+    )
+
+    from .atomic_infer import run_atomic_infer
+
+    summary = {"task": task, "model": model, "cot": cot, "splits": {}}
+
+    if data_path is not None:
+        split_name = Path(data_path).stem
+        split_out = os.path.join(output_dir, split_name)
+        result = run_atomic_infer(data_path=data_path, output_dir=split_out, **infer_kwargs)
+        summary["splits"][split_name] = result
+        return summary
+
+    wanted = set(splits) if splits else {"train", "val", "test"}
+    found = []
+    for name in ("train", "val", "test"):
+        if name not in wanted:
+            continue
+        p = os.path.join(data_dir, f"{name}.jsonl")
+        if os.path.exists(p):
+            found.append((name, p))
+
+    if not found:
+        raise FileNotFoundError(f"No JSONL split files found in: {data_dir}")
+
+    for split_name, split_path in found:
+        split_out = os.path.join(output_dir, split_name)
+        result = run_atomic_infer(data_path=split_path, output_dir=split_out, **infer_kwargs)
+        summary["splits"][split_name] = result
+
+    summary_path = os.path.join(output_dir, "summary.json")
+    os.makedirs(output_dir, exist_ok=True)
+    with open(summary_path, "w", encoding="utf-8") as f:
+        import json as _json
+        _json.dump({
+            "task": summary["task"], "model": model, "cot": cot,
+            "splits": {k: {"metrics": v.get("metrics", {})} for k, v in summary["splits"].items()},
+        }, f, indent=2, ensure_ascii=False)
+
+    return summary
+
+
+def run_t4_from_config(config: dict, result_dir: str) -> None:
+    """Entry point called from run_benchmark.py for T4."""
+    t4_cfg = config.get("T4_ATOMIC_EVAL", {})
+    model = config.get("BACKEND_LLM", "gpt-4.1")
+    local = config.get("BACKEND_SERVICE", "online") == "local"
+    local_port = config.get("BACKEND_LLM_PORT", 8000)
+    cot = config.get("ENABLE_COT", False)
+    market_prompt = t4_cfg.get("market_prompt", "auto")
+    num_workers = t4_cfg.get("num_workers", 8)
+    splits = t4_cfg.get("splits", ["test"])
+
+    common = dict(model=model, cot=cot, market_prompt=market_prompt,
+                  num_workers=num_workers, local=local, local_port=local_port, splits=splits)
+
+    noise_dir = t4_cfg.get("data_dir_noise")
+    pairwise_dir = t4_cfg.get("data_dir_pairwise")
+
+    if noise_dir:
+        print("[T4] Running binary noise classification...")
+        run_atomic_benchmark(
+            task="binary_noise",
+            data_dir=noise_dir,
+            output_dir=os.path.join(result_dir, "T4", "binary_noise"),
+            **common,
+        )
+
+    if pairwise_dir:
+        print("[T4] Running pairwise selection...")
+        run_atomic_benchmark(
+            task="pairwise_select",
+            data_dir=pairwise_dir,
+            output_dir=os.path.join(result_dir, "T4", "pairwise_select"),
+            **common,
+        )
+
+
 if __name__ == "__main__":
 
     args = parse_args()

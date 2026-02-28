@@ -194,7 +194,13 @@ def _post(endpoint: str, payload: Dict[str, Any], timeout: int = 120) -> Optiona
     url = f"{cfg.backend_url}{endpoint}"
     try:
         r = requests.post(url, json=payload, timeout=timeout)
-        r.raise_for_status()
+        if not r.ok:
+            # Try to surface the actual JSON error body before raising
+            try:
+                return r.json()
+            except Exception:
+                pass
+            r.raise_for_status()
         return r.json()
     except requests.RequestException as e:
         return {"success": False, "error": str(e)}
@@ -401,6 +407,88 @@ def batch_evaluate_factors(
         print()
 
     return [r for r in results if r is not None]
+
+
+def beta_evaluate_factors(
+    expressions: List[str],
+    market: str = "csi300",
+    start: str = "2023-01-01",
+    end: str = "2024-01-01",
+    label: str = "close_return",
+    device: str = "auto",
+    timeout: int = 600,
+) -> List[FactorResult]:
+    """
+    Large-scale factor evaluation using a single batch data load and
+    GPU-accelerated IC / RankIC computation.
+
+    Unlike :func:`batch_evaluate_factors` (which evaluates factors one-by-one
+    or in parallel threads), this function:
+
+    1. Packages **all** factor expressions into a single
+       ``compute_factor_data()`` call so Qlib loads the data only once.
+    2. Computes IC and RankIC for every factor simultaneously via PyTorch
+       matrix operations on GPU.
+
+    This is significantly more efficient for large batches (50+ factors)
+    because data loading overhead is amortised and GPU parallelism replaces
+    per-factor Python loops.
+
+    Args:
+        expressions: List of Qlib-style factor expressions to evaluate.
+        market:      Market universe. Default: "csi300".
+        start:       Evaluation start date. Default: "2023-01-01".
+        end:         Evaluation end date. Default: "2024-01-01".
+        label:       Return label type. Default: "close_return".
+        device:      PyTorch device: "auto" (use CUDA if available),
+                     "cuda", or "cpu". Default: "auto".
+        timeout:     Total timeout in seconds for the entire batch.
+                     Default: 600.
+
+    Returns:
+        List of :class:`FactorResult`, one per expression (same order as
+        input).
+
+    Example::
+
+        results = beta_evaluate_factors(
+            ["Rank($close, 20)", "Mean($volume, 5)", "Corr($close, $volume, 10)"],
+            device="auto",
+        )
+        for r in sorted(results, key=lambda x: -x.metrics.rank_ic):
+            print(f"{r.expression[:40]:40s}  IC={r.metrics.ic:.4f}")
+    """
+    payload = {
+        "expression": expressions,
+        "market": market,
+        "start": start,
+        "end": end,
+        "label": label,
+        "device": device,
+        "timeout": timeout,
+    }
+    raw = _post("/factors/eval_beta", payload, timeout=timeout + 60)
+
+    if raw is None:
+        return [
+            FactorResult(
+                success=False,
+                expression=expr,
+                error="No response from FFO backend. Is it running? Try: ppo start backend",
+            )
+            for expr in expressions
+        ]
+
+    items = raw if isinstance(raw, list) else [raw]
+
+    results: List[FactorResult] = []
+    for i, expr in enumerate(expressions):
+        item = items[i] if i < len(items) else {}
+        results.append(
+            FactorResult.from_api_response({**item, "expression": expr})
+        )
+
+    return results
 
 
 def check_factor(

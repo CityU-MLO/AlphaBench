@@ -1,104 +1,221 @@
+"""
+LLM client for AlphaBench.
+
+Routing is fully config-driven via config/api_keys.yaml:
+
+  providers.<name>   → per-provider api_key + base_url
+  all_in_one         → single-endpoint platform serving many models
+  local              → local vLLM server (always wins when local=True)
+  models.<name>
+    all_in_one: true   → route to all_in_one platform
+    provider: <name>   → route to named provider
+    (absent)           → defaults to all_in_one
+
+Usage:
+    from agent.llm_client import call_llm, batch_call_llm
+
+    result = call_llm("Explain IC in quant finance.", model="gpt-4.1")
+    results = batch_call_llm(prompts, model="deepseek-chat", num_workers=8)
+"""
+
+from __future__ import annotations
+
 import os
 import pickle
-from openai import OpenAI
-
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional
 
 import requests
 import yaml
+from openai import OpenAI
 from tqdm import tqdm
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
-API_KEY_PATH = "./config/api_keys.yaml"
-# Load API keys from YAML file
-with open(API_KEY_PATH, "r") as file:
-    api_keys = yaml.safe_load(file)
 
-# Assign to variables
-DEEPSEEK_API_KEY = api_keys.get("DEEPSEEK_API_KEY", "")
-OPENAI_API_KEY = api_keys.get("OPENAI_API_KEY", "")
-GEMINI_API_KEY = api_keys.get("GEMINI_API_KEY", "")
-CLAUDE_API_KEY = api_keys.get("CLAUDE_API_KEY", "")
+# ---------------------------------------------------------------------------
+# Config loading
+# ---------------------------------------------------------------------------
 
+_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "api_keys.yaml")
+
+
+def _load_config() -> dict:
+    path = os.path.abspath(_CONFIG_PATH)
+    if not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
+
+
+_CFG: dict = _load_config()
+
+
+# ---------------------------------------------------------------------------
+# Environment-variable resolution
+# ---------------------------------------------------------------------------
+
+def _resolve_value(value: Optional[str]) -> str:
+    """
+    Expand environment-variable references in a config string.
+
+    Supports two formats:
+      "${MY_VAR}"   → os.environ["MY_VAR"]  (raises if unset and no fallback)
+      "sk-abc..."   → returned as-is
+
+    Args:
+        value: Raw string from config (may be None).
+
+    Returns:
+        Resolved string, or "" if value is None.
+
+    Raises:
+        EnvironmentError: If a ${VAR} reference is used but the variable is not set.
+    """
+    if not value:
+        return ""
+    val = str(value).strip()
+    if val.startswith("${") and val.endswith("}"):
+        env_var = val[2:-1]
+        resolved = os.environ.get(env_var)
+        if not resolved:
+            raise EnvironmentError(
+                f"Environment variable '{env_var}' is not set.\n"
+                f"  Set it with:  export {env_var}=<your-api-key>\n"
+                f"  Or replace '${{env_var}}' with a literal key in config/api_keys.yaml."
+            )
+        return resolved
+    return val
+
+
+# ---------------------------------------------------------------------------
+# Client resolver
+# ---------------------------------------------------------------------------
+
+def _resolve_client(
+    model: str,
+    local: bool = False,
+    local_port: int = 8000,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    timeout: int = 120,
+) -> tuple[Optional[OpenAI], bool, Optional[str]]:
+    """
+    Determine how to connect for a given model.
+
+    Returns:
+        (client, is_local, local_url)
+        - If is_local is True, client is None and local_url contains the endpoint.
+        - Otherwise client is an OpenAI-compatible client and local_url is None.
+    """
+    # ── 1. Local vLLM always wins ────────────────────────────────────────────
+    if local:
+        local_cfg = _CFG.get("local", {})
+        url_template = local_cfg.get("base_url", "http://localhost:{port}/v1")
+        local_url = url_template.format(port=local_port)
+        return None, True, local_url
+
+    # ── 2. Explicit api_key + base_url override ──────────────────────────────
+    if api_key and base_url:
+        return OpenAI(api_key=api_key, base_url=base_url, timeout=timeout), False, None
+
+    # ── 3. Look up per-model routing in config ───────────────────────────────
+    model_cfg: dict = _CFG.get("models", {}).get(model, {})
+
+    # 3a. Named provider (e.g. provider: deepseek)
+    provider_name = model_cfg.get("provider")
+    if provider_name:
+        prov = _CFG.get("providers", {}).get(provider_name, {})
+        return OpenAI(
+            api_key=api_key or _resolve_value(prov.get("api_key")),
+            base_url=base_url or prov.get("base_url", ""),
+            timeout=timeout,
+        ), False, None
+
+    # 3b. All-in-One (explicit tag OR missing entry → default)
+    aio = _CFG.get("all_in_one", {})
+    return OpenAI(
+        api_key=api_key or _resolve_value(aio.get("api_key")),
+        base_url=base_url or aio.get("base_url", ""),
+        timeout=timeout,
+    ), False, None
+
+
+# ---------------------------------------------------------------------------
+# call_llm
+# ---------------------------------------------------------------------------
 
 def call_llm(
-    prompt,
-    model="deepseek-chat",
-    api_key=None,
-    base_url=None,
-    json_output=False,
-    system_prompt="You are a helpful assistant.",
-    temperature=1.0,
-    local=False,
-    local_port=8000,
-    return_raw=False,
-    max_try=5,
-    timeout=120,
-    service_provider="all",  # 'all' use all-in-one, 'default' is default URL
-    save_raw_dir=None,
-):
-    # If local is True, send request to local server
-    if local:
-        url = f"http://localhost:{local_port}/v1/chat/completions"
-        payload = {
+    prompt: str,
+    model: str = "deepseek-chat",
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    json_output: bool = False,
+    system_prompt: str = "You are a helpful assistant.",
+    temperature: float = 1.0,
+    local: bool = False,
+    local_port: int = 8000,
+    return_raw: bool = False,
+    max_try: int = 5,
+    timeout: int = 120,
+    save_raw_dir: Optional[str] = None,
+    service_provider: Optional[str] = None,  # deprecated, routing now in config
+) -> Any:
+    """
+    Call an LLM and return the response string (or raw response object).
+
+    Routing is determined by config/api_keys.yaml:
+      - local=True     → local vLLM server
+      - model routing  → all_in_one or per-provider (from models.<name> in config)
+      - api_key+base_url kwargs override config when both are provided
+
+    Args:
+        prompt:        User prompt string.
+        model:         Model name (e.g. "gpt-4.1", "deepseek-chat").
+        api_key:       Override API key (both api_key and base_url must be set to take effect).
+        base_url:      Override base URL.
+        json_output:   Request JSON response format.
+        system_prompt: System-level instruction.
+        temperature:   Sampling temperature.
+        local:         If True, send request to local vLLM server.
+        local_port:    Port of local vLLM server.
+        return_raw:    Return the raw OpenAI response object instead of string.
+        max_try:       Retry attempts on rate-limit errors.
+        timeout:       HTTP timeout in seconds.
+        save_raw_dir:  If set, pickle-dump raw responses to this directory.
+
+    Returns:
+        Response string, or raw response object if return_raw=True.
+    """
+    client, is_local, local_url = _resolve_client(
+        model, local=local, local_port=local_port,
+        api_key=api_key, base_url=base_url, timeout=timeout,
+    )
+
+    # ── Local vLLM path ──────────────────────────────────────────────────────
+    if is_local:
+        payload: dict = {
             "model": model,
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
+                {"role": "user",   "content": prompt},
             ],
             "temperature": temperature,
         }
         if json_output:
             payload["response_format"] = {"type": "json_object"}
-
         try:
-            response = requests.post(url, json=payload)
-            response.raise_for_status()
-            result = response.json()
-            return result["choices"][0]["message"]["content"].strip()
+            resp = requests.post(local_url, json=payload, timeout=timeout)
+            resp.raise_for_status()
+            return resp.json()["choices"][0]["message"]["content"].strip()
         except Exception as e:
-            raise RuntimeError(f"Local model server error: {e}")
+            raise RuntimeError(f"Local vLLM server error: {e}") from e
 
-    # Otherwise, use API-based client
-    if service_provider == "default":
-        if model.startswith("gpt-"):
-            client = OpenAI(
-                api_key=api_key or OPENAI_API_KEY,
-                base_url=base_url or "https://api.openai-proxy.com/v1",
-            )
-        # elif model.startswith("gemini-"):
-        #     client = OpenAI(
-        #         api_key=api_key or GEMINI_API_KEY,
-        #         base_url=base_url or "https://gemini-openai-proxy.deno.dev/v1",
-        #     )
-        elif model.startswith("deepseek-"):
-            client = OpenAI(
-                api_key=api_key or DEEPSEEK_API_KEY,
-                base_url=base_url or "https://api.deepseek.com",
-            )
-        else:
-            # Use all in one platform
-            client = OpenAI(
-                api_key="sk-qXQzDPMjBw0fMHSQtb7s1JO68IKrAMPwTjVOeJ2f19SEv2PZ",
-                base_url="https://api2.aigcbest.top/v1",
-                timeout=timeout,
-            )
-    elif service_provider == "all":
-        # General API
-        client = OpenAI(
-            api_key="sk-qXQzDPMjBw0fMHSQtb7s1JO68IKrAMPwTjVOeJ2f19SEv2PZ",
-            base_url="https://api2.aigcbest.top/v1",
-            timeout=timeout,
-        )
-
-    else:
-        raise ValueError(f"Unknown service_provider: {service_provider}")
-
-    request_params = {
+    # ── API path ─────────────────────────────────────────────────────────────
+    request_params: dict = {
         "model": model,
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt},
+            {"role": "user",   "content": prompt},
         ],
         "temperature": temperature,
         "stream": False,
@@ -109,201 +226,129 @@ def call_llm(
     for attempt in range(max_try):
         try:
             response = client.chat.completions.create(**request_params)
+
             if save_raw_dir:
                 os.makedirs(save_raw_dir, exist_ok=True)
-                raw_response_name = (
-                    time.strftime("%Y%m%d_%H%M%S", time.localtime()) + ".pkl"
-                )
-                with open(os.path.join(save_raw_dir, raw_response_name), "wb") as f:
+                fname = time.strftime("%Y%m%d_%H%M%S", time.localtime()) + ".pkl"
+                with open(os.path.join(save_raw_dir, fname), "wb") as f:
                     pickle.dump(response, f)
 
             if return_raw:
                 return response
-            else:
-                return response.choices[0].message.content.strip()
+            return response.choices[0].message.content.strip()
 
         except Exception as e:
             if "Too Many Requests" in str(e) and attempt < max_try - 1:
-                sleep_time = 0.25
-                print(f"Rate limited (API). Retrying in {sleep_time}s...")
-                time.sleep(sleep_time)
+                time.sleep(0.25)
+                print(f"Rate limited. Retrying ({attempt + 1}/{max_try})...")
                 continue
             return f"LLM API error: {e}"
 
 
-def _worker_call_llm(idx, prompt, kwargs):
-    """包装 call_llm 的子进程函数"""
-    if kwargs.get("latency"):
-        time.sleep(kwargs["latency"])
-    res = call_llm(
-        prompt,
-        model=kwargs["model"],
-        api_key=kwargs["api_key"],
-        base_url=kwargs["base_url"],
-        json_output=kwargs["json_output"],
-        system_prompt=kwargs["system_prompt"],
-        temperature=kwargs["temperature"],
-        local=kwargs["local"],
-        local_port=kwargs["local_port"],
-        return_raw=kwargs["return_raw"],
-        service_provider=kwargs["service_provider"],
-    )
-    return idx, res
-
+# ---------------------------------------------------------------------------
+# batch_call_llm
+# ---------------------------------------------------------------------------
 
 def batch_call_llm(
-    prompts,
-    model="deepseek-chat",
-    api_key=None,
-    base_url=None,
-    json_output=False,
-    system_prompt="You are a helpful assistant.",
-    temperature=1.0,
-    local=False,
-    local_port=8000,
-    latency=None,
-    num_workers=4,
-    return_raw=False,
-    verbose=False,
-    timeout=None,
-    service_provider="all",
-):
+    prompts: List[str],
+    model: str = "deepseek-chat",
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    json_output: bool = False,
+    system_prompt: str = "You are a helpful assistant.",
+    temperature: float = 1.0,
+    local: bool = False,
+    local_port: int = 8000,
+    latency: Optional[float] = None,
+    num_workers: int = 4,
+    return_raw: bool = False,
+    verbose: bool = False,
+    timeout: Optional[int] = None,
+    service_provider: Optional[str] = None,  # deprecated, routing now in config
+) -> List[Any]:
     """
-    Batch call LLM with multiple prompts while keeping the result order.
+    Batch-call an LLM in parallel, preserving prompt order.
 
     Args:
-        prompts (list[str]): List of prompts to query.
-        model, api_key, base_url, json_output, system_prompt, temperature,
-        local, local_port: Same as call_llm.
-        num_workers (int): Number of parallel workers.
-        verbose (bool): If True, show progress bar.
+        prompts:      List of user prompt strings.
+        latency:      Optional sleep (seconds) before each request — useful for
+                      rate-limiting without reducing parallelism.
+        num_workers:  Number of parallel threads.
+        verbose:      Show tqdm progress bar.
+        (other args): Same as call_llm.
 
     Returns:
-        list[str or None]: Responses in the same order as prompts. None if error.
+        List of response strings in the same order as prompts.
+        Entries are None if the underlying call raises an unhandled exception.
     """
+    results: List[Any] = [None] * len(prompts)
 
-    results = [None] * len(prompts)
+    _call_kwargs = dict(
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        json_output=json_output,
+        system_prompt=system_prompt,
+        temperature=temperature,
+        local=local,
+        local_port=local_port,
+        return_raw=return_raw,
+        timeout=timeout or 120,
+    )
 
-    def _worker(idx, prompt):
+    def _worker(idx: int, prompt: str):
         try:
             if latency:
-                import time
-
                 time.sleep(latency)
-            return (
-                idx,
-                call_llm(
-                    prompt,
-                    model=model,
-                    api_key=api_key,
-                    base_url=base_url,
-                    json_output=json_output,
-                    system_prompt=system_prompt,
-                    temperature=temperature,
-                    local=local,
-                    local_port=local_port,
-                    return_raw=return_raw,
-                    timeout=timeout,
-                    service_provider=service_provider,
-                ),
-            )
+            return idx, call_llm(prompt, **_call_kwargs)
         except Exception:
             return idx, None
 
     with ThreadPoolExecutor(max_workers=num_workers) as executor:
         futures = [executor.submit(_worker, i, p) for i, p in enumerate(prompts)]
-        if verbose:
-            futures_iter = tqdm(
-                as_completed(futures), total=len(prompts), desc="Processing"
-            )
-        else:
-            futures_iter = as_completed(futures)
-
-        for f in futures_iter:
+        iter_ = (
+            tqdm(as_completed(futures), total=len(prompts), desc="LLM batch")
+            if verbose
+            else as_completed(futures)
+        )
+        for f in iter_:
             idx, res = f.result()
             results[idx] = res
 
     return results
 
 
-# 🧪 Main test function
+# ---------------------------------------------------------------------------
+# Quick self-test
+# ---------------------------------------------------------------------------
+
 def main():
-    prompt = (
-        "Write a Python function to calculate the Sharpe ratio and explain each line."
-    )
+    prompt = "Write a Python function to calculate the Sharpe ratio and explain each line."
 
-    # print("=== 🧪 Claude Client Test ===")
-    # try:
-    #     result_claude = call_llm(
-    #         prompt,
-    #         model="claude-sonnet-4-20250514",
-    #     )
-    #     print(result_claude)
-    # except Exception as e:
-    #     print(f"Claude Client Error: {e}")
-
-    print("=== 🧪 Gemini Client Test ===")
+    print("=== Gemini Test ===")
     try:
-        result_gm = call_llm(prompt, model="gemini-2.5-flash")
-        print(result_gm)
+        print(call_llm(prompt, model="gemini-2.5-flash"))
     except Exception as e:
-        print(f"DeepSeek API Error: {e}")
+        print(f"Error: {e}")
 
-    print("=== 🔍 DeepSeek API Test ===")
+    print("\n=== DeepSeek Test ===")
     try:
-        result_ds = call_llm(prompt, model="deepseek-chat")
-        print(result_ds)
+        print(call_llm(prompt, model="deepseek-chat"))
     except Exception as e:
-        print(f"DeepSeek API Error: {e}")
+        print(f"Error: {e}")
 
-    print("\n=== 🤖 OpenAI GPT-4 Test ===")
+    print("\n=== GPT-4.1 Test ===")
     try:
-        result_gpt = call_llm(prompt, model="gpt-4")
-        print(result_gpt)
+        print(call_llm(prompt, model="gpt-4.1"))
     except Exception as e:
-        print(f"GPT-4 Error: {e}")
+        print(f"Error: {e}")
 
-    print("\n=== 🖥️ Local Model Server Test ===")
+    print("\n=== Local vLLM Test ===")
     try:
-        result_local = call_llm(
-            prompt,
-            model="deepseek-ai/deepseek-llm-7b-chat",
-            local=True,
-            local_port=8000,  # change if your server uses a different port
-        )
-        print(result_local)
+        print(call_llm(prompt, model="Qwen2.5-72B-Instruct", local=True, local_port=8000))
     except Exception as e:
-        print(f"Local Server Error: {e}")
-
-
-def test_batch_call_llm():
-    # 8 meaningful short questions
-    prompts = [
-        "What is AI?",
-        "Define machine learning.",
-        "What is deep learning?",
-        "Explain overfitting.",
-        "What is a neural network?",
-        "Define reinforcement learning.",
-        "What is natural language processing?",
-        "Explain gradient descent.",
-    ]
-
-    # Run batch call with 4 workers
-    results = batch_call_llm(
-        prompts,
-        model="gpt-4.1",  # replace with the model you want
-        local=False,  # set False if using API
-        num_workers=4,
-        verbose=True,  # show progress bar
-    )
-
-    # Print results
-    for i, (prompt, result) in enumerate(zip(prompts, results)):
-        print(f"[{i}] Prompt: {prompt}")
-        print(f"    Result: {result}\n")
+        print(f"Error: {e}")
 
 
 if __name__ == "__main__":
-    # test_batch_call_llm()
     main()

@@ -3,3 +3,14 @@ __pycache__/
 ppo.egg-info/
 .claude/
 .gitignore
+
+results/
+runs/
+
+benchmark/data/evaluate/raw/*.csv
+
+benchmark/data/evaluate/atomic
+benchmark/data/evaluate/built
+
+rebuttal_eval_design/
+ffo/factor_cache.sqlite

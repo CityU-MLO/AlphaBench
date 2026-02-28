@@ -2,15 +2,19 @@
 Evolutionary Algorithm (EA) factor search algorithm.
 
 EA_Searcher:  population-based mutation + crossover loop.
+              Mutation and crossover LLM calls run in parallel each round.
+              Next round's LLM generation is pre-submitted while current
+              round's evaluation runs (pipeline parallelism).
 EAAlgo:       BaseAlgo wrapper that feeds the full seed pool.
 """
 
-import os
-import time
 import json
+import os
 import pickle
-from typing import Any, Dict, List, Optional
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Optional, Tuple
 
 from .base import BaseAlgo
 
@@ -28,12 +32,13 @@ def _format_metrics(f: Dict[str, Any]) -> Dict[str, float]:
     return {k: m[k] for k in ("ic", "rank_ic", "icir", "rank_icir", "winrate", "stability") if k in m}
 
 
-def _rank_by_ic(pool: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return sorted(pool, key=lambda x: _safe_metric(x, "ic", -1e9), reverse=True)
+def _rank_by_rank_ic(pool: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Sort pool by RankIC descending (primary metric)."""
+    return sorted(pool, key=lambda x: _safe_metric(x, "rank_ic", -1e9), reverse=True)
 
 
 def _select_seed_pool(pool: List[Dict[str, Any]], top_k: int = 12) -> List[Dict[str, Any]]:
-    ranked = _rank_by_ic(pool)
+    ranked = _rank_by_rank_ic(pool)
     return ranked[: max(1, min(top_k, len(ranked)))]
 
 
@@ -60,16 +65,23 @@ def _get_unique_set(factor_pool: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
-# EA_Searcher — core implementation (moved from EA/EA_searcher.py)
+# EA_Searcher — core implementation
 # ---------------------------------------------------------------------------
 
 class EA_Searcher:
     """
     Evolutionary Algorithm (EA) style factor searcher.
 
-    Runs mutation and crossover LLM calls each generation, evaluates offspring
-    via the injected batch_evaluate_fn, and maintains a constant-size pool of
-    the best factors found so far.
+    Each round:
+      1) Select top seeds from the current pool.
+      2) Build mutation and crossover prompts.
+      3) Call both LLMs **in parallel** via ThreadPoolExecutor(max_workers=2).
+      4) Evaluate all unique offspring via FFO (parallel batch).
+      5) Merge offspring with pool, keep top pool_size factors.
+
+    Pipeline parallelism: next round's LLM generation is pre-submitted
+    immediately after this round's LLM results arrive, so it runs in
+    parallel with the current round's batch evaluation.
 
     Required external callables:
       - batch_evaluate_fn(factors: List[Dict]) -> List[Dict]
@@ -88,6 +100,8 @@ class EA_Searcher:
         local_port: int = 8000,
         save_dir: str = "./runs/ea_search",
         seeds_top_k: int = 12,
+        accept_threshold: float = 0.0,
+        logger=None,
     ) -> None:
         self.batch_evaluate_fn = batch_evaluate_fn
         self.search_fn = search_fn
@@ -98,6 +112,8 @@ class EA_Searcher:
         self.local_port = int(local_port)
         self.save_dir = save_dir
         self.seeds_top_k = int(seeds_top_k)
+        self.accept_threshold = float(accept_threshold)
+        self.logger = logger
         os.makedirs(self.save_dir, exist_ok=True)
         self.save_log_dir = os.path.join(self.save_dir, "logs")
         os.makedirs(self.save_log_dir, exist_ok=True)
@@ -110,7 +126,6 @@ class EA_Searcher:
         crossover_rate: float,
         N: int,
         rounds: int,
-        verbose: bool = True,
         save_pickle: bool = True,
         pool_size: int = 30,
     ) -> Dict[str, Any]:
@@ -118,131 +133,223 @@ class EA_Searcher:
         Evolutionary search on a factor pool.
 
         Args:
-            pool:           Initial factor pool [{"name": str, "expression": str, "metrics": {...}}]
-            mutation_rate:  Fraction of N assigned to mutation (0~1)
-            crossover_rate: Fraction of N assigned to crossover (0~1)
-            N:              Total new candidates per round
-            rounds:         Number of generations
-            pool_size:      Maximum pool size (kept constant)
+            pool:           Initial factor pool [{"name", "expression", "metrics"}].
+            mutation_rate:  Fraction of N assigned to mutation (0~1).
+            crossover_rate: Fraction of N assigned to crossover (0~1).
+            N:              Total new candidates per round.
+            rounds:         Number of generations.
+            pool_size:      Maximum pool size (kept constant).
         """
-        current_pool = _rank_by_ic(pool)
-        baseline_ic = (
-            sum(_safe_metric(f, "ic", 0.0) for f in current_pool) / max(len(current_pool), 1)
+        current_pool = _rank_by_rank_ic(pool)
+        baseline_rank_ic = (
+            sum(_safe_metric(f, "rank_ic", 0.0) for f in current_pool) / max(len(current_pool), 1)
         )
-        if verbose:
-            print(f"Baseline mean IC: {baseline_ic:.6f}")
+        self._log(
+            f"  Baseline  {len(current_pool)} factors  "
+            f"mean RankIC={baseline_rank_ic:.4f}  accept_threshold={self.accept_threshold:.4f}"
+        )
+
+        # Pre-compute mut/cross split (fixed for all rounds)
+        n_mut = max(0, int(N * mutation_rate))
+        n_cross = max(0, int(N * crossover_rate))
+        while n_mut + n_cross < N:
+            n_mut += 1
+        while n_mut + n_cross > N and n_cross > 0:
+            n_cross -= 1
 
         history = []
 
-        for r in range(1, rounds + 1):
-            if verbose:
-                print("\n" + "=" * 80)
-                print(f"Round {r}/{rounds}")
+        # Use a persistent executor so the pre-submitted future for the next
+        # round's LLM call runs while current round's eval is blocking.
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            # Pre-submit round 1's LLM before entering the loop
+            seeds_r1 = _select_seed_pool(current_pool, top_k=self.seeds_top_k)
+            fut_llm = ex.submit(
+                self._run_llm_round,
+                _seed_block_json(seeds_r1), n_mut, n_cross, 1,
+            )
 
-            seeds = _select_seed_pool(current_pool, top_k=self.seeds_top_k)
-            seed_block = _seed_block_json(seeds)
+            for r in range(1, rounds + 1):
+                if self.logger and hasattr(self.logger, "round_header"):
+                    self.logger.round_header(r, rounds, "EA")
 
-            n_mut = max(0, int(N * mutation_rate))
-            n_cross = max(0, int(N * crossover_rate))
-            while n_mut + n_cross < N:
-                n_mut += 1
-            while n_mut + n_cross > N and n_cross > 0:
-                n_cross -= 1
-
-            mut_prompt = self._compose_mutation_prompt(seed_block, n_mut, round_id=r)
-            cross_prompt = self._compose_crossover_prompt(seed_block, n_cross, round_id=r)
-
-            if verbose:
-                print("\n[MUTATION PROMPT]\n", mut_prompt)
-                print("\n[CROSSOVER PROMPT]\n", cross_prompt)
-
-            # LLM: mutation
-            mut_candidates, mut_elapsed = [], 0.0
-            if n_mut > 0:
-                t0 = time.time()
-                payload = self.search_fn(
-                    instruction=mut_prompt,
-                    model=self.model,
-                    N=n_mut,
-                    verbose=verbose,
-                    temperature=self.temperature,
-                    enable_reason=self.enable_reason,
-                    local=self.local,
-                    local_port=self.local_port,
+                # ── Wait for this round's LLM results ──────────────────────
+                self._log(f"  LLM  mutation({n_mut}) + crossover({n_cross}) — waiting for results …")
+                t_wait = time.time()
+                mut_candidates, cross_candidates, llm_elapsed = fut_llm.result()
+                wait_elapsed = time.time() - t_wait
+                self._log(
+                    f"  LLM  done (total {llm_elapsed:.1f}s, wait {wait_elapsed:.1f}s)  —  "
+                    f"mut: {len(mut_candidates)}  cross: {len(cross_candidates)}"
                 )
-                mut_elapsed = time.time() - t0
-                mut_candidates = self._extract_candidates(payload, provenance="mutation")
 
-            # LLM: crossover
-            cross_candidates, cross_elapsed = [], 0.0
-            if n_cross > 0:
-                t0 = time.time()
-                payload = self.search_fn(
-                    instruction=cross_prompt,
-                    model=self.model,
-                    N=n_cross,
-                    verbose=verbose,
-                    temperature=self.temperature,
-                    enable_reason=self.enable_reason,
-                    local=self.local,
-                    local_port=self.local_port,
+                # ── Pre-submit next round's LLM immediately ─────────────────
+                # Uses current pool (before this round's update) — approximate
+                # but fine, as eval typically dominates and next-round seeding
+                # benefits from pipeline overlap more than from exact pool state.
+                if r < rounds:
+                    seeds_next = _select_seed_pool(current_pool, top_k=self.seeds_top_k)
+                    fut_llm = ex.submit(
+                        self._run_llm_round,
+                        _seed_block_json(seeds_next), n_mut, n_cross, r + 1,
+                    )
+
+                # ── Deduplicate ──────────────────────────────────────────────
+                candidates = mut_candidates + cross_candidates
+                unique_candidates = _get_unique_set(candidates)
+
+                # ── Evaluate via FFO (runs in parallel with next round's LLM) ─
+                eval_input = [
+                    {"name": c["name"], "expression": c["expression"]}
+                    for c in unique_candidates
+                    if c.get("expression")
+                ]
+                self._log(f"  Eval {len(eval_input)} unique candidates …")
+                t_eval = time.time()
+                results = self.batch_evaluate_fn(eval_input)
+                eval_elapsed = time.time() - t_eval
+                n_success = sum(1 for res in results if res.get("success"))
+                self._log(f"  Eval done {eval_elapsed:.1f}s  —  {n_success}/{len(eval_input)} successful")
+
+                for i, res in enumerate(results):
+                    unique_candidates[i]["metrics"] = res.get("metrics", {})
+
+                # ── Log new candidates — top 5 before accept/reject ────────────
+                evaluated = [c for c in unique_candidates if c.get("metrics")]
+                evaluated.sort(
+                    key=lambda x: x.get("metrics", {}).get("rank_ic", -1e9), reverse=True
                 )
-                cross_elapsed = time.time() - t0
-                cross_candidates = self._extract_candidates(payload, provenance="crossover")
+                self._log(f"  Top 5 Generated ({len(evaluated)} total):")
+                for i, f in enumerate(evaluated[:5], 1):
+                    m = f.get("metrics", {}) or {}
+                    ric  = m.get("rank_ic", float("nan"))
+                    ic   = m.get("ic",      float("nan"))
+                    icir = m.get("icir",    float("nan"))
+                    name = (f.get("name") or "")[:24]
+                    expr = (f.get("expression") or "")[:65]
+                    self._log(
+                        f"    {i}. {name:<24} RankIC={ric:.4f}  IC={ic:.4f}  ICIR={icir:.4f}"
+                    )
+                    self._log(f"       {expr}")
 
-            candidates = mut_candidates + cross_candidates
-            unique_candidates = _get_unique_set(candidates)
+                # ── Update pool (threshold filter on new candidates) ──────────
+                eligible_new = [
+                    c for c in unique_candidates
+                    if _safe_metric(c, "rank_ic", -1e9) >= self.accept_threshold
+                ]
+                n_rejected = len(unique_candidates) - len(eligible_new)
+                if n_rejected:
+                    self._log(
+                        f"  Threshold filter: {n_rejected} candidate(s) rejected "
+                        f"(RankIC < {self.accept_threshold:.4f})"
+                    )
+                combined = _get_unique_set(current_pool + eligible_new)
+                current_pool = _rank_by_rank_ic(combined)[:pool_size]
 
-            # Evaluate new candidates
-            eval_input = [
-                {"name": c["name"], "expression": c["expression"]}
-                for c in unique_candidates
-                if c.get("expression")
-            ]
-            results = self.batch_evaluate_fn(eval_input)
-            for i, res in enumerate(results):
-                unique_candidates[i]["metrics"] = res.get("metrics", {})
+                if self.logger and hasattr(self.logger, "pool_status"):
+                    self.logger.pool_status(current_pool, label="Pool")
 
-            # Update pool: keep best (old + new), maintain constant size
-            combined = _get_unique_set(current_pool + unique_candidates)
-            combined = _rank_by_ic(combined)
-            current_pool = combined[:pool_size]
-
-            history.append({
-                "round": r,
-                "mutation_prompt": mut_prompt,
-                "crossover_prompt": cross_prompt,
-                "mutation_candidates": mut_candidates,
-                "crossover_candidates": cross_candidates,
-                "mut_elapsed_time": mut_elapsed,
-                "cross_elapsed_time": cross_elapsed,
-                "candidates": candidates,
-                "unique_candidates": unique_candidates,
-            })
-
-            if verbose:
-                top_ic = _safe_metric(current_pool[0], "ic") if current_pool else 0.0
-                mean_ic = (
-                    sum(_safe_metric(f, "ic", 0.0) for f in current_pool) / max(len(current_pool), 1)
-                )
-                print(f"Round {r} — top IC: {top_ic:.6f}, mean IC: {mean_ic:.6f}")
+                history.append({
+                    "round":                r,
+                    "mutation_candidates":  mut_candidates,
+                    "crossover_candidates": cross_candidates,
+                    "llm_elapsed":          llm_elapsed,
+                    "eval_elapsed":         eval_elapsed,
+                    "candidates":           candidates,
+                    "unique_candidates":    unique_candidates,
+                })
 
         summary = {
-            "baseline_ic": baseline_ic,
-            "history": history,
-            "final_pool": current_pool,
-            "best": current_pool[0] if current_pool else {},
+            "baseline_rank_ic": baseline_rank_ic,
+            "history":          history,
+            "final_pool":       current_pool,
+            "best":             current_pool[0] if current_pool else {},
         }
 
         if save_pickle:
             fname = os.path.join(self.save_dir, f"ea_search_{int(time.time())}.pkl")
-            with open(fname, "wb") as f:
-                pickle.dump(summary, f)
+            with open(fname, "wb") as fh:
+                pickle.dump(summary, fh)
             summary["save_path"] = fname
 
         return summary
 
     # ------------------------------------------------------------------ #
+    # LLM round helper (runs in thread pool)
+    # ------------------------------------------------------------------ #
+
+    def _run_llm_round(
+        self,
+        seed_block: str,
+        n_mut: int,
+        n_cross: int,
+        round_id: int,
+    ) -> Tuple[List[Dict], List[Dict], float]:
+        """
+        Build prompts and run mutation + crossover LLM calls in parallel.
+        Returns (mut_candidates, cross_candidates, elapsed_seconds).
+        Designed to run inside a thread so it can overlap with batch eval.
+        """
+        mut_prompt   = self._compose_mutation_prompt(seed_block, n_mut,   round_id)
+        cross_prompt = self._compose_crossover_prompt(seed_block, n_cross, round_id)
+
+        t0 = time.time()
+        mut_candidates:   List[Dict] = []
+        cross_candidates: List[Dict] = []
+
+        def _call_mut(prompt=mut_prompt, n=n_mut):
+            return self.search_fn(
+                instruction=prompt,
+                model=self.model,
+                N=n,
+                verbose=False,
+                temperature=self.temperature,
+                enable_reason=self.enable_reason,
+                local=self.local,
+                local_port=self.local_port,
+            )
+
+        def _call_cross(prompt=cross_prompt, n=n_cross):
+            return self.search_fn(
+                instruction=prompt,
+                model=self.model,
+                N=n,
+                verbose=False,
+                temperature=self.temperature,
+                enable_reason=self.enable_reason,
+                local=self.local,
+                local_port=self.local_port,
+            )
+
+        if n_mut > 0 and n_cross > 0:
+            with ThreadPoolExecutor(max_workers=2) as inner_ex:
+                fut_mut   = inner_ex.submit(_call_mut)
+                fut_cross = inner_ex.submit(_call_cross)
+                try:
+                    mut_candidates = self._extract_candidates(fut_mut.result(), "mutation")
+                except Exception as e:
+                    self._log(f"Mutation LLM failed: {e}", "warning")
+                try:
+                    cross_candidates = self._extract_candidates(fut_cross.result(), "crossover")
+                except Exception as e:
+                    self._log(f"Crossover LLM failed: {e}", "warning")
+        elif n_mut > 0:
+            try:
+                mut_candidates = self._extract_candidates(_call_mut(), "mutation")
+            except Exception as e:
+                self._log(f"Mutation LLM failed: {e}", "warning")
+        elif n_cross > 0:
+            try:
+                cross_candidates = self._extract_candidates(_call_cross(), "crossover")
+            except Exception as e:
+                self._log(f"Crossover LLM failed: {e}", "warning")
+
+        return mut_candidates, cross_candidates, time.time() - t0
+
+    # ------------------------------------------------------------------ #
+    # Prompt builders
+    # ------------------------------------------------------------------ #
+
     def _compose_mutation_prompt(self, seed_block: str, n: int, round_id: int) -> str:
         return f"""You are a quantitative researcher. Your task is to **mutate** existing alpha factors.
 
@@ -312,6 +419,10 @@ Return a JSON array of length {n}. Each item MUST be an object with:
 No extra text. Output ONLY the JSON array.
 """
 
+    # ------------------------------------------------------------------ #
+    # Candidate extraction + internal helpers
+    # ------------------------------------------------------------------ #
+
     def _extract_candidates(self, payload: Any, provenance: str) -> List[Dict[str, Any]]:
         out: List[Dict[str, Any]] = []
         items = []
@@ -319,10 +430,18 @@ No extra text. Output ONLY the JSON array.
         if isinstance(payload, dict):
             if payload.get("quality"):
                 log_name = provenance + "_" + time.strftime("log_%Y%m%d_%H%M%S.json")
-                with open(os.path.join(self.save_log_dir, log_name), "w") as f:
-                    json.dump(payload["quality"], f)
-            if isinstance(payload.get("factors"), list):
+                with open(os.path.join(self.save_log_dir, log_name), "w") as fh:
+                    json.dump(payload["quality"], fh)
+
+            if isinstance(payload.get("factors"), list) and payload["factors"]:
+                # Primary path: validated factors list from call_qlib_search
                 items = payload["factors"]
+            elif isinstance(payload.get("results"), dict) and payload["results"]:
+                # Fallback: raw {name: expression} dict when all factors failed
+                # check_factor_via_api validation.  FFO eval will re-validate.
+                for name, expr in payload["results"].items():
+                    if name and expr:
+                        items.append({"name": str(name), "expression": str(expr)})
             elif "choices" in payload:
                 try:
                     items = json.loads(payload["choices"][0]["message"]["content"])
@@ -338,12 +457,16 @@ No extra text. Output ONLY the JSON array.
                 continue
             suffix = str(uuid.uuid4())[:6]
             out.append({
-                "name": name + "_" + suffix,
+                "name":       name + "_" + suffix,
                 "expression": expr,
-                "reason": it.get("reason", ""),
+                "reason":     it.get("reason", ""),
                 "provenance": provenance,
             })
         return out
+
+    def _log(self, msg: str, level: str = "info"):
+        if self.logger:
+            getattr(self.logger, level)(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -370,15 +493,16 @@ class EAAlgo(BaseAlgo):
     name = "ea"
 
     def run(self, seeds: List[Dict[str, Any]], save_dir: str) -> Dict[str, Any]:
-        rounds = self.config.get("rounds", 10)
-        N = self.config.get("N", 30)
-        mutation_rate = float(self.config.get("mutation_rate", 0.4))
+        rounds         = self.config.get("rounds", 10)
+        N              = self.config.get("N", 30)
+        mutation_rate  = float(self.config.get("mutation_rate", 0.4))
         crossover_rate = float(self.config.get("crossover_rate", 0.6))
-        pool_size = int(self.config.get("pool_size", max(len(seeds), 30)))
-        seeds_top_k = int(self.config.get("seeds_top_k", 12))
-        model = self.config.get("model", "deepseek-chat")
-        temperature = float(self.config.get("temperature", 1.0))
-        enable_reason = bool(self.config.get("enable_reason", True))
+        pool_size      = int(self.config.get("pool_size", max(len(seeds), 30)))
+        seeds_top_k    = int(self.config.get("seeds_top_k", 12))
+        model             = self.config.get("model", "deepseek-chat")
+        temperature       = float(self.config.get("temperature", 1.0))
+        enable_reason     = bool(self.config.get("enable_reason", True))
+        accept_threshold  = float(self.config.get("accept_threshold", 0.0))
 
         searcher = EA_Searcher(
             batch_evaluate_fn=self.batch_evaluate_fn,
@@ -388,6 +512,8 @@ class EAAlgo(BaseAlgo):
             enable_reason=enable_reason,
             save_dir=save_dir,
             seeds_top_k=seeds_top_k,
+            accept_threshold=accept_threshold,
+            logger=self.logger,
         )
 
         summary = searcher.search_population(
@@ -397,12 +523,11 @@ class EAAlgo(BaseAlgo):
             N=N,
             rounds=rounds,
             pool_size=pool_size,
-            verbose=True,
             save_pickle=True,
         )
 
         return {
-            "best": summary.get("best", {}),
-            "history": summary.get("history", []),
+            "best":       summary.get("best", {}),
+            "history":    summary.get("history", []),
             "final_pool": summary.get("final_pool", []),
         }

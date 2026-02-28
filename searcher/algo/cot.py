@@ -2,21 +2,20 @@
 Chain-of-Thought (CoT) factor search algorithm.
 
 CoTSearcher: single-path iterative refinement (one factor, one chain).
-CoTAlgo:     BaseAlgo wrapper — evaluates each seed independently and returns
-             the best result across all seeds.
+CoTAlgo:     BaseAlgo wrapper — runs on the best seed from the pool.
 """
 
 import json
 import os
-import time
 import pickle
+import time
 from typing import Any, Dict, List, Optional
 
 from .base import BaseAlgo
 
 
 # ---------------------------------------------------------------------------
-# CoTSearcher — core implementation (moved from CoT/CoT_searcher.py)
+# CoTSearcher — core implementation
 # ---------------------------------------------------------------------------
 
 class CoTSearcher:
@@ -29,7 +28,7 @@ class CoTSearcher:
       3) Evaluates that candidate via the FFO evaluation function.
       4) Compares with current best and updates the chain if improved.
 
-    Required external callables (injected via __init__):
+    Required external callables:
       - evaluate_fn(expr: str) -> Dict   (returns dict with "metrics" key)
       - search_fn(instruction, model, N, **kw) -> Dict
     """
@@ -39,21 +38,27 @@ class CoTSearcher:
         *,
         evaluate_fn,
         search_fn,
+        batch_evaluate_fn=None,
         model: str = "deepseek-chat",
         temperature: float = 1.75,
         enable_reason: bool = True,
         local: bool = False,
         local_port: int = 8000,
         save_dir: str = "./runs/cot_search",
+        accept_threshold: float = 0.0,
+        logger=None,
     ) -> None:
-        self.evaluate_fn = evaluate_fn
+        self.evaluate_fn = evaluate_fn        # kept for backward compat; batch path used internally
+        self.batch_evaluate_fn = batch_evaluate_fn
         self.search_fn = search_fn
+        self.accept_threshold = float(accept_threshold)
         self.model = model
         self.temperature = float(temperature)
         self.enable_reason = bool(enable_reason)
         self.local = bool(local)
         self.local_port = int(local_port)
         self.save_dir = save_dir
+        self.logger = logger
         os.makedirs(self.save_dir, exist_ok=True)
         self.save_log_dir = os.path.join(self.save_dir, "logs")
         os.makedirs(self.save_log_dir, exist_ok=True)
@@ -64,41 +69,41 @@ class CoTSearcher:
         rounds: int,
         *,
         run_name: Optional[str] = None,
-        verbose: bool = True,
         save_pickle: bool = True,
         save_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
         assert isinstance(seed, dict) and "name" in seed and "expression" in seed
         rounds = int(rounds)
         save_dir = save_dir or self.save_dir
-
         self.save_log_dir = os.path.join(save_dir, "logs")
         os.makedirs(self.save_log_dir, exist_ok=True)
 
-        if verbose:
-            print("Evaluating seed factor …")
-        seed_metrics = self._safe_eval(seed["expression"])["metrics"]
-        if verbose:
-            print(f"Seed metrics: {self._fmt_metrics(seed_metrics)}")
+        self._log(f"  Seed: {seed['name']}  [{seed['expression'][:70]}]")
+        self._log("  Evaluating seed …")
+        seed_metrics = self._safe_eval_batch(seed["name"], seed["expression"])["metrics"]
+        self._log(f"  Seed  {self._fmt_metrics(seed_metrics)}")
 
         chain: List[Dict[str, Any]] = []
-        best_expr = seed["expression"]
-        best_name = seed["name"]
+        best_expr    = seed["expression"]
+        best_name    = seed["name"]
         best_metrics = seed_metrics
 
         chain.append({
-            "round": 0,
-            "name": best_name,
-            "expression": best_expr,
-            "metrics": best_metrics,
+            "round":       0,
+            "name":        best_name,
+            "expression":  best_expr,
+            "metrics":     best_metrics,
             "instruction": None,
-            "generated": None,
+            "generated":   None,
         })
 
         for r in range(1, rounds + 1):
-            if verbose:
-                print("\n" + "=" * 80)
-                print(f"Round {r}/{rounds}: generating a single candidate …")
+            if self.logger and hasattr(self.logger, "round_header"):
+                self.logger.round_header(r, rounds, "CoT")
+
+            ric = best_metrics.get("rank_ic", float("nan"))
+            ic  = best_metrics.get("ic",      float("nan"))
+            self._log(f"  Best: {best_name}  RankIC={ric:.4f}  IC={ic:.4f}")
 
             instruction = self._compose_instruction(
                 round_id=r,
@@ -109,98 +114,108 @@ class CoTSearcher:
                 best_metrics=best_metrics,
                 chain=chain,
             )
-            if verbose:
-                print("Instruction:\n" + instruction)
 
-            start_time = time.time()
+            self._log("  LLM generating 1 candidate …")
+            t_llm = time.time()
             payload = self.search_fn(
                 instruction=instruction,
                 model=self.model,
                 N=1,
                 max_try=5,
                 avoid_repeat=False,
-                verbose=verbose,
+                verbose=False,
                 debug_mode=False,
                 temperature=self.temperature,
                 enable_reason=self.enable_reason,
                 local=self.local,
                 local_port=self.local_port,
             )
-            elapsed = time.time() - start_time
+            llm_elapsed = time.time() - t_llm
+            self._log(f"  LLM done {llm_elapsed:.1f}s")
 
             cand = self._extract_single_candidate(payload)
             if cand is None:
-                if verbose:
-                    print("No candidate returned; continuing to next round.")
+                self._log("  No candidate returned; skipping round.")
                 chain.append({
-                    "round": r,
-                    "name": best_name,
-                    "expression": best_expr,
-                    "metrics": best_metrics,
-                    "instruction": instruction,
-                    "elapsed_time": elapsed,
-                    "generated": {},
+                    "round":        r,
+                    "name":         best_name,
+                    "expression":   best_expr,
+                    "metrics":      best_metrics,
+                    "instruction":  instruction,
+                    "elapsed_time": llm_elapsed,
+                    "generated":    {},
                 })
                 continue
 
-            cand_name = cand.get("name", f"round{r}_candidate")
-            cand_expr = cand.get("expression", "")
-            cand_reason = cand.get("reason", "")
+            cand_name   = cand.get("name",       f"round{r}_candidate")
+            cand_expr   = cand.get("expression", "")
+            cand_reason = cand.get("reason",     "")
 
-            if verbose:
-                print(f"Evaluating candidate: {cand_name} => {cand_expr}")
-            cand_metrics = self._safe_eval(cand_expr)["metrics"]
-            if verbose:
-                print("Candidate metrics:", self._fmt_metrics(cand_metrics))
+            self._log(f"  Candidate: {cand_name}  [{cand_expr[:70]}]")
+            self._log("  Evaluating …")
+            cand_metrics = self._safe_eval_batch(cand_name, cand_expr)["metrics"]
+            ric_c = cand_metrics.get("rank_ic", float("nan"))
+            ic_c  = cand_metrics.get("ic",      float("nan"))
+            self._log(f"  Eval  RankIC={ric_c:.4f}  IC={ic_c:.4f}")
 
-            improved = self._is_better(best_metrics, cand_metrics)
-            if improved:
+            is_better = self._is_better(best_metrics, cand_metrics)
+            meets_threshold = float(cand_metrics.get("rank_ic", float("-inf"))) >= self.accept_threshold
+            if is_better and meets_threshold:
+                prev_ric = best_metrics.get("rank_ic", float("nan"))
                 best_name, best_expr, best_metrics = cand_name, cand_expr, cand_metrics
-                if verbose:
-                    print("Improved — updating chain best.")
+                self._log(f"  → improved  (RankIC {prev_ric:.4f} → {ric_c:.4f})")
+                improved = True
+            elif is_better and not meets_threshold:
+                self._log(
+                    f"  → better but rejected  "
+                    f"(RankIC {ric_c:.4f} < threshold {self.accept_threshold:.4f})"
+                )
+                improved = False
             else:
-                if verbose:
-                    print("Not improved — keeping previous best.")
+                self._log("  → not improved, keeping previous best")
+                improved = False
 
             chain.append({
-                "round": r,
-                "name": best_name,
-                "expression": best_expr,
-                "metrics": best_metrics,
-                "instruction": instruction,
-                "elapsed_time": elapsed,
+                "round":        r,
+                "name":         best_name,
+                "expression":   best_expr,
+                "metrics":      best_metrics,
+                "instruction":  instruction,
+                "elapsed_time": llm_elapsed,
                 "generated": {
-                    "name": cand_name,
+                    "name":       cand_name,
                     "expression": cand_expr,
-                    "reason": cand_reason,
-                    "metrics": cand_metrics,
-                    "promoted": bool(improved),
+                    "reason":     cand_reason,
+                    "metrics":    cand_metrics,
+                    "promoted":   bool(improved),
                 },
             })
 
         summary = {
-            "seed": seed,
+            "seed":         seed,
             "seed_metrics": seed_metrics,
-            "chain": chain,
+            "chain":        chain,
             "best": {
-                "name": best_name,
+                "name":       best_name,
                 "expression": best_expr,
-                "metrics": best_metrics,
+                "metrics":    best_metrics,
             },
         }
 
         if save_pickle:
             tag = self._safe_tag(run_name or seed["name"]) or "cot"
             out_path = os.path.join(save_dir, f"CoT_single_{tag}.pkl")
-            with open(out_path, "wb") as f:
-                pickle.dump(summary, f)
+            with open(out_path, "wb") as fh:
+                pickle.dump(summary, fh)
             summary["save_path"] = out_path
-            if verbose:
-                print(f"\nSaved search summary to: {out_path}")
+            self._log(f"  Saved: {out_path}")
 
         return summary
 
-    # ---------------------------------------------------------------------- #
+    # ------------------------------------------------------------------ #
+    # Instruction builder
+    # ------------------------------------------------------------------ #
+
     def _compose_instruction(
         self,
         *,
@@ -284,17 +299,21 @@ class CoTSearcher:
 
         return header + "\n" + context + "\n" + policy + "\n" + steering
 
+    # ------------------------------------------------------------------ #
+    # Helpers
+    # ------------------------------------------------------------------ #
+
     def _extract_single_candidate(self, payload: Dict[str, Any]):
         if not isinstance(payload, dict):
             return None
         if payload.get("quality"):
             quality_log_name = time.strftime("log_%Y%m%d_%H%M%S.json")
-            with open(os.path.join(self.save_log_dir, quality_log_name), "w") as f:
-                json.dump(payload["quality"], f)
+            with open(os.path.join(self.save_log_dir, quality_log_name), "w") as fh:
+                json.dump(payload["quality"], fh)
         if isinstance(payload.get("factors"), list) and payload["factors"]:
             first = payload["factors"][0]
-            expr = first.get("expression")
-            name = first.get("name")
+            expr  = first.get("expression")
+            name  = first.get("name")
             if expr and name:
                 return {"name": name, "expression": expr, "reason": first.get("reason", "")}
         if isinstance(payload.get("results"), dict) and payload["results"]:
@@ -303,35 +322,41 @@ class CoTSearcher:
                 return {"name": str(name), "expression": str(expr), "reason": ""}
         return None
 
-    def _safe_eval(self, expr: str) -> Dict[str, Any]:
+    def _safe_eval_batch(self, name: str, expr: str) -> Dict[str, Any]:
+        """Evaluate a single factor via the batch path for consistency."""
         try:
+            if self.batch_evaluate_fn is not None:
+                results = self.batch_evaluate_fn([{"name": name, "expression": expr}])
+                if isinstance(results, list) and results:
+                    return results[0]
+                return {}
+            # Fallback to single-factor evaluator
             result = self.evaluate_fn(expr) or {}
-            if isinstance(result, dict):
-                return result
-            return {}
+            return result if isinstance(result, dict) else {}
         except Exception as e:
             return {"metrics": {}, "error": str(e)}
 
     @staticmethod
     def _is_better(curr: Dict[str, float], cand: Dict[str, float]) -> bool:
-        c_ic = curr.get("ic", float("-inf"))
-        n_ic = cand.get("ic", float("-inf"))
-        if n_ic != c_ic:
-            return n_ic > c_ic
+        """RankIC is the primary metric; IC is tiebreaker; then ICIR."""
         c_r = curr.get("rank_ic", float("-inf"))
         n_r = cand.get("rank_ic", float("-inf"))
         if n_r != c_r:
             return n_r > c_r
-        return cand.get("ir", float("-inf")) > curr.get("ir", float("-inf"))
+        c_ic = curr.get("ic", float("-inf"))
+        n_ic = cand.get("ic", float("-inf"))
+        if n_ic != c_ic:
+            return n_ic > c_ic
+        return cand.get("icir", float("-inf")) > curr.get("icir", float("-inf"))
 
     @staticmethod
     def _fmt_metrics(m: Dict[str, Any]) -> str:
-        keys = ["ic", "rank_ic", "ir", "icir", "rank_icir"]
+        keys  = ["ic", "rank_ic", "ir", "icir", "rank_icir"]
         parts = []
         for k in keys:
             v = m.get(k)
             if isinstance(v, (int, float)):
-                parts.append(f"{k}={v:.6f}")
+                parts.append(f"{k}={v:.4f}")
         return ", ".join(parts)
 
     @staticmethod
@@ -339,6 +364,10 @@ class CoTSearcher:
         if not s:
             return ""
         return "".join(ch if ch.isalnum() or ch in ("-", "_") else "_" for ch in s)[:48]
+
+    def _log(self, msg: str, level: str = "info"):
+        if self.logger:
+            getattr(self.logger, level)(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -360,18 +389,22 @@ class CoTAlgo(BaseAlgo):
     name = "cot"
 
     def run(self, seeds: List[Dict[str, Any]], save_dir: str) -> Dict[str, Any]:
-        rounds = self.config.get("rounds", 10)
-        model = self.config.get("model", "deepseek-chat")
-        temperature = float(self.config.get("temperature", 1.75))
-        enable_reason = bool(self.config.get("enable_reason", True))
+        rounds           = self.config.get("rounds", 10)
+        model            = self.config.get("model", "deepseek-chat")
+        temperature      = float(self.config.get("temperature", 1.75))
+        enable_reason    = bool(self.config.get("enable_reason", True))
+        accept_threshold = float(self.config.get("accept_threshold", 0.0))
 
         searcher = CoTSearcher(
             evaluate_fn=self.evaluate_fn,
             search_fn=self.search_fn,
+            batch_evaluate_fn=self.batch_evaluate_fn,
             model=model,
             temperature=temperature,
             enable_reason=enable_reason,
             save_dir=save_dir,
+            accept_threshold=accept_threshold,
+            logger=self.logger,
         )
 
         # Pick the best seed by IC
@@ -388,7 +421,6 @@ class CoTAlgo(BaseAlgo):
             seed=seed_input,
             rounds=rounds,
             save_dir=save_dir,
-            verbose=True,
         )
 
         # Normalise return format
@@ -396,13 +428,13 @@ class CoTAlgo(BaseAlgo):
         for rec in summary.get("chain", []):
             if rec.get("expression"):
                 chain_factors.append({
-                    "name": rec.get("name", ""),
+                    "name":       rec.get("name", ""),
                     "expression": rec["expression"],
-                    "metrics": rec.get("metrics", {}),
+                    "metrics":    rec.get("metrics", {}),
                 })
 
         return {
-            "best": summary.get("best", {}),
-            "history": summary.get("chain", []),
+            "best":       summary.get("best", {}),
+            "history":    summary.get("chain", []),
             "final_pool": chain_factors,
         }

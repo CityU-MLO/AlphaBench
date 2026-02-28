@@ -4,12 +4,13 @@ AlphaBench - Unified Benchmark Runner
 Usage:
   python benchmark/run_benchmark.py --config config/benchmark.yaml
   python benchmark/run_benchmark.py --config config/benchmark.yaml --tasks t1 t2
-  python benchmark/run_benchmark.py --config config/benchmark.yaml --tasks t3
+  python benchmark/run_benchmark.py --config config/benchmark.yaml --tasks t3 t4
 
 Tasks:
   t1  Factor generation (Text2Alpha, Directional Mining, Stability)
   t2  Factor evaluation (Ranking, Scoring)
   t3  Factor searching (CoT, ToT, EA)
+  t4  Atomic evaluation (Binary Noise Classification, Pairwise Selection)
   all Run all tasks in sequence (default)
 """
 
@@ -39,10 +40,10 @@ def parse_args():
     parser.add_argument(
         "--tasks",
         nargs="+",
-        choices=["t1", "t2", "t3", "all"],
+        choices=["t1", "t2", "t3", "t4", "all"],
         default=["all"],
         metavar="TASK",
-        help="Tasks to run: t1, t2, t3, all (default: all)",
+        help="Tasks to run: t1, t2, t3, t4, all (default: all)",
     )
     return parser.parse_args()
 
@@ -55,12 +56,14 @@ _TASK_LABELS = {
     "t1": "Factor Generation  (Text2Alpha, Directional Mining, Stability)",
     "t2": "Factor Evaluation  (Ranking, Scoring)",
     "t3": "Factor Searching   (CoT, ToT, EA)",
+    "t4": "Atomic Evaluation  (Binary Noise, Pairwise Select)",
 }
 
 _TASK_CONFIG_KEYS = {
     "t1": "T1_GENERATION",
     "t2": "T2_EVALUATION",
     "t3": "T3_SEARCHING",
+    "t4": "T4_ATOMIC_EVAL",
 }
 
 
@@ -167,10 +170,20 @@ def run_t3(config, result_dir):
     print("[T3] Done.")
 
 
+def run_t4(config, result_dir):
+    """T4 - Atomic Evaluation: binary noise classification and pairwise selection."""
+    from benchmark.engine.evaluate.benchmark_main import run_t4_from_config
+
+    print("[T4] Running atomic evaluation benchmark...")
+    run_t4_from_config(config, result_dir)
+    print("[T4] Done.")
+
+
 _TASK_RUNNERS = {
     "t1": run_t1,
     "t2": run_t2,
     "t3": run_t3,
+    "t4": run_t4,
 }
 
 
@@ -198,7 +211,7 @@ if __name__ == "__main__":
     # Resolve task list
     tasks = args.tasks
     if "all" in tasks:
-        tasks = ["t1", "t2", "t3"]
+        tasks = ["t1", "t2", "t3", "t4"]
 
     print("=" * 60)
     print("AlphaBench - Benchmark Run")

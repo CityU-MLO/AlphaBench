@@ -37,12 +37,14 @@ class BaseAlgo(ABC):
         search_fn: Callable,
         config: Dict[str, Any],
         batch_evaluate_fn_dict: Callable = None,
+        logger=None,
     ):
         self.evaluate_fn = evaluate_fn
         self.batch_evaluate_fn = batch_evaluate_fn
         self.batch_evaluate_fn_dict = batch_evaluate_fn_dict or self._list_to_dict_wrapper
         self.search_fn = search_fn
         self.config = config
+        self.logger = logger
 
     def _list_to_dict_wrapper(self, factors: List[Dict]) -> Dict[str, Dict]:
         """Fallback: convert list batch result to dict keyed by name."""

@@ -1,0 +1,52 @@
+"""
+Configuration for building base evaluation datasets (T2: Ranking & Scoring)
+for CSI300 market using paper-standard settings.
+
+Input files assumed at:
+  benchmark/data/evaluate/raw/ic_table_csi300.csv
+  benchmark/data/evaluate/raw/rankic_table_csi300.csv
+  benchmark/data/evaluate/pool/factor_pool.json
+"""
+
+meta:
+  market: CSI300
+  start_date: "2021-01-01"
+  end_date: "2025-06-30"
+
+# Pre-computed IC / RankIC tables (datetime × factor_name)
+ic_table_path: "benchmark/data/evaluate/raw/ic_table_csi300.csv"
+rankic_table_path: "benchmark/data/evaluate/raw/rankic_table_csi300.csv"
+
+# Factor pool: {factor_name: expression}
+factor_pool_path: "benchmark/data/evaluate/pool/factor_pool.json"
+
+# Market regimes (paper §B.2.1)
+regimes:
+  - name: "2021-2025 Overall"
+    start: "2021-01-01"
+    end:   "2025-06-30"
+  - name: "CSI300 Bear (2023-2024)"
+    start: "2023-01-01"
+    end:   "2023-12-31"
+  - name: "CSI300 Bull (2024.10-2025.06)"
+    start: "2024-10-01"
+    end:   "2025-06-30"
+
+# ---- Ranking task (paper §B.2.2) ----
+ranking:
+  good_ic_threshold:     0.025   # |IC| > threshold → "good" factor
+  good_rankic_threshold: 0.03    # |RankIC| > threshold → "good" factor
+  settings:
+    - n: 10   k: 3     # small: 10 factors, pick top-3
+    - n: 20   k: 5     # medium: 20 factors, pick top-5
+    - n: 40   k: 10    # large:  40 factors, pick top-10
+  instances_per_setting: 50      # test cases per (regime, setting)
+  seed: 42
+
+# ---- Scoring task (paper §B.2.3) ----
+scoring:
+  noise_ic_threshold: 0.01       # |IC| < threshold → Noise
+  n_positive: 100                # positive factors per regime
+  n_negative: 100                # negative factors per regime
+  n_noise:     50                # noise factors per regime
+  seed: 42

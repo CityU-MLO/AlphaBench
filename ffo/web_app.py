@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Third-party imports
+import requests
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 import plotly.graph_objs as go
@@ -303,6 +304,102 @@ def batch_evaluate_factor():
                 results[expr] = {"success": False, "message": str(e)}
 
     return jsonify({"success": True, "results": results, "total": len(expressions)})
+
+
+@app.route("/api/beta_batch_evaluate_factor", methods=["POST"])
+def beta_batch_evaluate_factor():
+    """
+    Beta Batch Factor Evaluation — single Qlib data load + GPU IC/RankIC.
+
+    Unlike /api/batch_evaluate_factor (which issues one HTTP call per factor),
+    this endpoint forwards all expressions to the backend's /factors/eval_beta
+    in a single request.  The backend loads all factor data at once and
+    computes IC / RankIC for every factor simultaneously on GPU (or CPU).
+
+    Request JSON:
+    {
+        "expressions": ["expr1", "expr2", ...],
+        "market":      "csi300",        // default
+        "start_date":  "2022-01-01",
+        "end_date":    "2024-01-01",
+        "device":      "auto",          // "auto" | "cuda" | "cpu"
+        "timeout":     600
+    }
+
+    Response JSON:
+    {
+        "success": true,
+        "results": {
+            "expr1": { "success": true, "metrics": {...}, "device": "cuda" },
+            ...
+        },
+        "total": <int>,
+        "elapsed_seconds": <float>
+    }
+    """
+    import time as _time
+
+    data = request.json or {}
+    expressions = data.get("expressions", [])
+    market     = data.get("market", "csi300")
+    start_date = data.get("start_date", "2023-01-01")
+    end_date   = data.get("end_date", "2024-01-01")
+    device     = data.get("device", "auto")
+    timeout    = int(data.get("timeout", 600))
+
+    if not expressions:
+        return jsonify({"success": False, "message": "No expressions provided"})
+
+    t0 = _time.perf_counter()
+    try:
+        resp = requests.post(
+            f"{api_client.base_url}/factors/eval_beta",
+            json={
+                "expression": expressions,
+                "market":     market,
+                "start":      start_date,
+                "end":        end_date,
+                "device":     device,
+                "timeout":    timeout,
+            },
+            timeout=timeout + 30,
+        )
+        resp.raise_for_status()
+        items = resp.json()  # list of per-factor results
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Backend error: {e}"})
+
+    elapsed = _time.perf_counter() - t0
+
+    # Convert list → dict keyed by expression for easy client lookup
+    results = {}
+    for item in items:
+        expr_key = item.get("expression", "")
+        results[expr_key] = item
+
+        # Log successful evaluations to query history
+        if item.get("success"):
+            metrics = item.get("metrics", {})
+            try:
+                cache_manager.add_to_query_history(
+                    expression=expr_key,
+                    market=market,
+                    start_date=start_date,
+                    end_date=end_date,
+                    ic=metrics.get("ic", 0.0),
+                    rank_ic=metrics.get("rank_ic", 0.0),
+                    icir=metrics.get("icir"),
+                    rank_icir=metrics.get("rank_icir"),
+                )
+            except Exception:
+                pass
+
+    return jsonify({
+        "success": True,
+        "results": results,
+        "total": len(expressions),
+        "elapsed_seconds": round(elapsed, 3),
+    })
 
 
 @app.route("/api/get_cached_expressions", methods=["GET"])

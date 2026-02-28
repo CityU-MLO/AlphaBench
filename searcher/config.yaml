@@ -16,30 +16,32 @@ savedir: "./results/search_001"
 # ── Search algorithm ─────────────────────────────────────────────────────────
 searching:
   algo:
-    name: ea              # "ea" | "cot" | "tot"
+    name: tot              # "ea" | "cot" | "tot"
     seed_file: ""         # warm-start seed file (empty = cold start / --alpha158)
 
     param:                # algo-specific parameters (forwarded verbatim)
       # ── EA params ──
-      rounds: 10          # generations
-      N: 30               # new candidates per round
-      mutation_rate: 0.4
-      crossover_rate: 0.6
-      pool_size: 30       # keep top N factors in pool
-      seeds_top_k: 12     # seeds shown to LLM per round
+      # rounds: 10          # generations
+      # N: 20               # new candidates per round
+      # mutation_rate: 0.5
+      # crossover_rate: 0.5
+      # pool_size: 30       # keep top N factors in pool
+      # seeds_top_k: 10     # seeds shown to LLM per round
 
       # ── CoT / ToT params (ignored for EA) ──
-      # rounds: 10        # refinement rounds (CoT) / max tree depth (ToT)
-      # N: 6              # candidates per node per depth (ToT only)
-      # top_k: 3          # max survivors per ToT node
+      rounds: 10        # refinement rounds (CoT) / max tree depth (ToT)
+      N: 6              # candidates per node per depth (ToT only)
+      top_k: 3          # max survivors per ToT node
 
       enable_reason: true
 
   model:
-    name: "deepseek-chat"
-    base_url: "https://api.deepseek.com"
-    key: "${DEEPSEEK_API_KEY}"   # or paste key directly
-    temperature: 0.7
+    # Model name — routing (api_key, base_url) is resolved from config/api_keys.yaml.
+    # Set all_in_one: true on a model entry there to route it via the All-in-One platform.
+    # For local vLLM: set local: true and local_port in the benchmark config, or
+    # pass --local / --local_port flags to start_search.py.
+    name: "gpt-4.1-mini"
+    temperature: 0.5
 
 # ── Backtesting (FFO server) ─────────────────────────────────────────────────
 backtesting:
@@ -56,3 +58,6 @@ backtesting:
                 # false = full portfolio backtest (~10-30 s/factor)
   n_jobs: 4     # parallel evaluation workers
   timeout: 120  # per-factor timeout (seconds)
+
+  accept_threshold: 0.0   # minimum RankIC to accept a factor into the pool
+                          # set to -1.0 to disable filtering

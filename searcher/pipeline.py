@@ -231,23 +231,29 @@ class SearchPipeline:
         if not evaluated_seeds:
             raise RuntimeError("All baseline evaluations failed — check FFO server.")
 
-        baseline_ic = self._mean_ic(evaluated_seeds)
-        self.logger.info(f"Baseline pool: {len(evaluated_seeds)} factors, mean IC={baseline_ic:.4f}")
+        baseline_ic = self._mean_rank_ic(evaluated_seeds)
+        self.logger.info(f"Baseline pool: {len(evaluated_seeds)} factors, mean RankIC={baseline_ic:.4f}")
         self._save_jsonl(evaluated_seeds, "initial_pool.jsonl")
 
         # ── Step 3: Run search algorithm ────────────────────────────────
         self.logger.info("")
         self.logger.info(f"Starting search: algo={self.config.searching.algo.name}")
-        self.logger.info(f"  FFO server : {self.config.backtesting.ffo_server}")
-        self.logger.info(f"  Market     : {self.config.backtesting.market}")
-        self.logger.info(f"  Period     : {self.config.backtesting.period_start} ~ {self.config.backtesting.period_end}")
-        self.logger.info(f"  Fast mode  : {self.config.backtesting.fast}")
+        self.logger.info(f"  FFO server       : {self.config.backtesting.ffo_server}")
+        self.logger.info(f"  Market           : {self.config.backtesting.market}")
+        self.logger.info(f"  Period           : {self.config.backtesting.period_start} ~ {self.config.backtesting.period_end}")
+        self.logger.info(f"  Fast mode        : {self.config.backtesting.fast}")
+        self.logger.info(f"  Accept threshold : RankIC >= {self.config.backtesting.accept_threshold}")
         self.logger.info("")
 
         algo_result = self._run_algo(evaluated_seeds)
 
         # ── Step 4: Save results ────────────────────────────────────────
         self._save_results(algo_result)
+
+        # ── Step 5: Mining summary ───────────────────────────────────────
+        final_pool = algo_result.get("final_pool", [])
+        if hasattr(self.logger, "mining_summary"):
+            self.logger.mining_summary(final_pool, max_show=15)
 
         elapsed = time.time() - t_start
         self.logger.info("")
@@ -256,19 +262,20 @@ class SearchPipeline:
         self.logger.info("=" * 70)
         best = algo_result.get("best", {})
         self.logger.info(f"  Best factor : {best.get('name', 'N/A')}")
-        self.logger.info(f"  Best IC     : {best.get('metrics', {}).get('ic', 0.0):.4f}")
         self.logger.info(f"  Best RankIC : {best.get('metrics', {}).get('rank_ic', 0.0):.4f}")
-        self.logger.info(f"  Final pool  : {len(algo_result.get('final_pool', []))} factors")
+        self.logger.info(f"  Best IC     : {best.get('metrics', {}).get('ic', 0.0):.4f}")
+        self.logger.info(f"  Final pool  : {len(final_pool)} factors")
         self.logger.info(f"  Total time  : {elapsed:.1f}s")
 
         return {
             "best": best,
-            "final_pool": algo_result.get("final_pool", []),
+            "final_pool": final_pool,
             "history": algo_result.get("history", []),
             "stats": {
-                "baseline_ic": baseline_ic,
-                "best_ic": best.get("metrics", {}).get("ic", 0.0),
-                "elapsed_sec": elapsed,
+                "baseline_rank_ic": baseline_ic,
+                "best_rank_ic": best.get("metrics", {}).get("rank_ic", 0.0),
+                "best_ic":      best.get("metrics", {}).get("ic", 0.0),
+                "elapsed_sec":  elapsed,
             },
         }
 
@@ -342,10 +349,11 @@ class SearchPipeline:
         algo_cfg = self.config.searching.algo
         model_cfg = self.config.searching.model
 
-        # Merge model params into algo config so algos can use the right LLM
+        # Merge model params + backtesting params into algo config
         algo_params = dict(algo_cfg.param or {})
         algo_params.setdefault("model", model_cfg.name)
         algo_params.setdefault("temperature", model_cfg.temperature)
+        algo_params.setdefault("accept_threshold", self.config.backtesting.accept_threshold)
 
         algo = create_algo(
             name=algo_cfg.name,
@@ -354,6 +362,7 @@ class SearchPipeline:
             batch_evaluate_fn=self.backtester.as_batch_evaluate_fn(),
             search_fn=self._search_fn,
             batch_evaluate_fn_dict=self.backtester.as_batch_evaluate_fn_dict(),
+            logger=self.logger,
         )
 
         save_dir = str(self.save_dir / algo_cfg.name)
@@ -407,6 +416,6 @@ class SearchPipeline:
         return _search_fn
 
     @staticmethod
-    def _mean_ic(factors: List[Dict[str, Any]]) -> float:
-        ics = [f.get("metrics", {}).get("ic", 0.0) for f in factors if f.get("metrics")]
-        return sum(ics) / max(len(ics), 1)
+    def _mean_rank_ic(factors: List[Dict[str, Any]]) -> float:
+        rics = [f.get("metrics", {}).get("rank_ic", 0.0) for f in factors if f.get("metrics")]
+        return sum(rics) / max(len(rics), 1)

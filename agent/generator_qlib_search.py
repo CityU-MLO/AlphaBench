@@ -379,11 +379,14 @@ def call_qlib_search(
             # Validate expression via API
             try:
                 result = check_factor_via_api(expr)
+                # check_factor_via_api returns List[Dict]; normalise to single dict
+                if isinstance(result, list):
+                    result = result[0] if result else {}
 
             except Exception as e:
                 if verbose:
                     print(f"[WARN] check_factor_via_api failed: {e}")
-                quality_info["error_record"].appen((expr, "API_ERROR"))
+                quality_info["error_record"].append((expr, "API_ERROR"))
                 continue
 
             if isinstance(result, dict) and result.get("success"):

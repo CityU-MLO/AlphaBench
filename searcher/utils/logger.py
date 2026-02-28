@@ -1,12 +1,15 @@
 """
 Logging utilities for AlphaBench search system.
-Follows EvoAlpha's SearchLogger pattern.
+
+Console output: plain messages only (no timestamps).
+File output:    full timestamps + log levels.
 """
 
 import logging
+import math
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 
 def setup_logger(
@@ -15,117 +18,157 @@ def setup_logger(
     level: int = logging.INFO,
     console: bool = True,
 ) -> logging.Logger:
-    """
-    Setup a logger with file and console handlers.
-
-    Args:
-        name: Logger name
-        log_file: Optional log file path
-        level: Logging level
-        console: Whether to log to console
-
-    Returns:
-        Configured logger
-    """
+    """Configure a logger with clean console output and optional file logging."""
     logger = logging.getLogger(name)
     logger.setLevel(level)
     logger.handlers = []
-
-    formatter = logging.Formatter(
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    logger.propagate = False
 
     if console:
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(level)
-        console_handler.setFormatter(formatter)
-        logger.addHandler(console_handler)
+        ch = logging.StreamHandler(sys.stdout)
+        ch.setLevel(level)
+        ch.setFormatter(logging.Formatter("%(message)s"))
+        logger.addHandler(ch)
 
     if log_file:
         log_path = Path(log_file)
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(log_file)
-        file_handler.setLevel(level)
-        file_handler.setFormatter(formatter)
-        logger.addHandler(file_handler)
+        fh = logging.FileHandler(log_file, encoding="utf-8")
+        fh.setLevel(level)
+        fh.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+        logger.addHandler(fh)
 
     return logger
 
 
 class SearchLogger:
     """
-    Specialized logger for search operations.
+    Logger for search operations with structured progress output.
+
+    Console shows clean messages with no timestamps.
+    Log files (if configured) include full timestamps.
     """
 
     def __init__(self, name: str = "AlphaBench", log_file: Optional[str] = None):
         self.logger = setup_logger(name, log_file)
 
+    # ── Raw log methods ──────────────────────────────────────────────── #
+
     def info(self, msg: str):
         self.logger.info(msg)
 
     def warning(self, msg: str):
-        self.logger.warning(msg)
+        self.logger.warning(f"[WARN] {msg}")
 
     def error(self, msg: str):
-        self.logger.error(msg)
+        self.logger.error(f"[ERROR] {msg}")
 
     def debug(self, msg: str):
         self.logger.debug(msg)
 
-    def log_round_start(self, round_num: int, total_rounds: int):
-        self.logger.info("=" * 70)
-        self.logger.info(f"Round {round_num}/{total_rounds}")
-        self.logger.info("=" * 70)
+    # ── Structured progress helpers ───────────────────────────────────── #
 
-    def log_round_end(self, round_num: int, stats: dict):
-        self.logger.info("=" * 70)
-        self.logger.info(f"Round {round_num} Complete")
-        self.logger.info("=" * 70)
+    def section(self, title: str):
+        """Print a major section header (double rule)."""
+        self.logger.info("")
+        self.logger.info("═" * 60)
+        self.logger.info(f"  {title}")
+        self.logger.info("═" * 60)
 
-        self.logger.info(f"  Generated: {stats.get('generated', 0)}")
-        self.logger.info(f"  Evaluated: {stats.get('evaluated', 0)}")
-        self.logger.info(f"  Accepted: {stats.get('accepted', 0)}")
-        self.logger.info(f"  Success rate: {stats.get('success_rate', 0):.1%}")
-        self.logger.info(f"  Time: {stats.get('elapsed_time', 0):.1f}s")
+    def round_header(self, round_num: int, total_rounds: int, algo: str = ""):
+        """Print a round divider with round number."""
+        tag = f" · {algo}" if algo else ""
+        self.logger.info("")
+        self.logger.info("─" * 60)
+        self.logger.info(f"  Round {round_num}/{total_rounds}{tag}")
+        self.logger.info("─" * 60)
 
-        if stats.get("accepted", 0) > 0:
-            self.logger.info(f"  Best IC: {stats.get('best_ic', 0):.4f}")
-            self.logger.info(f"  Best RankIC: {stats.get('best_rank_ic', 0):.4f}")
-            self.logger.info(f"  Best ICIR: {stats.get('best_icir', 0):.4f}")
-
-        pool_stats = stats.get("pool_stats", {})
-        if pool_stats and pool_stats.get("total_factors", 0) > 0:
-            self.logger.info(f"  Factor Pool:")
-            self.logger.info(f"    Total: {pool_stats.get('total_factors', 0)}")
-            self.logger.info(f"    Top 10% IC: {pool_stats.get('top_10pct_avg_ic', 0):.4f}")
-            self.logger.info(f"    Top 10% RankIC: {pool_stats.get('top_10pct_avg_rank_ic', 0):.4f}")
-            self.logger.info(f"    Overall IC: {pool_stats.get('overall_avg_ic', 0):.4f}")
-
-        self.logger.info("=" * 70 + "\n")
-
-    def log_generation(self, operation: str, num_factors: int, success: bool):
-        status = "OK" if success else "FAIL"
-        self.logger.info(f"[{status}] Generated {num_factors} factors via {operation}")
-
-    def log_evaluation(self, num_factors: int, num_success: int, elapsed_time: float):
+    def factor_table(
+        self,
+        factors: List[Dict[str, Any]],
+        title: str = "New candidates",
+        max_show: int = 10,
+    ):
+        """Print a compact table of factors with IC / RankIC / ICIR."""
+        if not factors:
+            return
+        self.logger.info(f"\n  {title} ({len(factors)}):")
         self.logger.info(
-            f"Evaluated {num_factors} factors in {elapsed_time:.1f}s "
-            f"({num_success} successful)"
+            f"    {'Name':<30} {'IC':>8}  {'RankIC':>8}  {'ICIR':>8}  Tag"
+        )
+        self.logger.info(f"    {'─'*30} {'─'*8}  {'─'*8}  {'─'*8}  ────────")
+        for f in factors[:max_show]:
+            m    = f.get("metrics") or {}
+            ic   = m.get("ic",      float("nan"))
+            ric  = m.get("rank_ic", float("nan"))
+            icir = m.get("icir",    float("nan"))
+            tag  = (f.get("provenance") or "")[:8]
+            name = (f.get("name") or "")[:30]
+            self.logger.info(
+                f"    {name:<30} {self._fmt(ic):>8}  {self._fmt(ric):>8}"
+                f"  {self._fmt(icir):>8}  {tag}"
+            )
+        if len(factors) > max_show:
+            self.logger.info(f"    … {len(factors) - max_show} more")
+        self.logger.info("")
+
+    def pool_status(self, pool: List[Dict[str, Any]], label: str = "Pool"):
+        """Print a one-line pool summary (RankIC first)."""
+        if not pool:
+            self.logger.info(f"  {label}: empty")
+            return
+        ics  = [f["metrics"].get("ic",      0.0) for f in pool if f.get("metrics")]
+        rics = [f["metrics"].get("rank_ic", 0.0) for f in pool if f.get("metrics")]
+        top_ric  = max(rics) if rics else 0.0
+        mean_ric = sum(rics) / len(rics) if rics else 0.0
+        top_ic   = max(ics)  if ics  else 0.0
+        self.logger.info(
+            f"  {label} [{len(pool)}]"
+            f"  top RankIC={top_ric:.4f}  mean RankIC={mean_ric:.4f}  top IC={top_ic:.4f}"
         )
 
-    def log_search_start(self, task_id: str, config: dict):
-        self.logger.info("=" * 70)
-        self.logger.info(f"Starting search: {task_id}")
-        self.logger.info("=" * 70)
+    def mining_summary(
+        self,
+        factors: List[Dict[str, Any]],
+        title: str = "Mining Summary — Top Factors",
+        max_show: int = 15,
+    ):
+        """Print a rich summary of the best discovered factors (with expressions)."""
+        if not factors:
+            self.logger.info("  No factors to summarize.")
+            return
+        ranked = sorted(
+            factors,
+            key=lambda f: f.get("metrics", {}).get("rank_ic", float("-inf")),
+            reverse=True,
+        )
+        self.section(title)
+        self.logger.info(
+            f"  {'#':>3}  {'Name':<26}  {'RankIC':>8}  {'IC':>8}  {'ICIR':>7}  Expression"
+        )
+        self.logger.info(f"  {'─'*3}  {'─'*26}  {'─'*8}  {'─'*8}  {'─'*7}  {'─'*45}")
+        for rank, f in enumerate(ranked[:max_show], 1):
+            m    = f.get("metrics") or {}
+            ric  = m.get("rank_ic", float("nan"))
+            ic   = m.get("ic",      float("nan"))
+            icir = m.get("icir",    float("nan"))
+            name = (f.get("name") or "")[:26]
+            expr = (f.get("expression") or "")[:45]
+            self.logger.info(
+                f"  {rank:>3}  {name:<26}  {self._fmt(ric):>8}  {self._fmt(ic):>8}"
+                f"  {self._fmt(icir):>7}  {expr}"
+            )
+        if len(ranked) > max_show:
+            self.logger.info(f"  … {len(ranked) - max_show} more — see final_pool.jsonl")
+        self.logger.info("")
 
-    def log_search_end(self, task_id: str, stats: dict):
-        self.logger.info("=" * 70)
-        self.logger.info(f"Search complete: {task_id}")
-        self.logger.info("=" * 70)
-        self.logger.info(f"  Total generated: {stats.get('total_generated', 0)}")
-        self.logger.info(f"  Total accepted: {stats.get('total_accepted', 0)}")
-        self.logger.info(f"  Best IC: {stats.get('best_ic', 0):.4f}")
-        self.logger.info(f"  Best RankIC: {stats.get('best_rank_ic', 0):.4f}")
-        self.logger.info(f"  Pool size: {stats.get('pool_size', 0)}")
-        self.logger.info(f"  Total time: {stats.get('total_time', 0):.1f}s")
+    # ── Internal ─────────────────────────────────────────────────────── #
+
+    @staticmethod
+    def _fmt(v: Any) -> str:
+        if v is None or (isinstance(v, float) and math.isnan(v)):
+            return "     nan"
+        return f"{float(v):.4f}"

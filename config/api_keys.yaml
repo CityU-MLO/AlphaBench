@@ -1,0 +1,122 @@
+# ===========================================================================
+# AlphaBench — LLM Provider Configuration
+# ===========================================================================
+# This file controls how call_llm / batch_call_llm route requests.
+#
+# Three routing modes (resolved in priority order per call):
+#
+#   1. local: true (call arg)   → local vLLM server (see [local] below)
+#   2. models.<name>.provider   → dedicated provider credentials
+#   3. models.<name>.all_in_one: true  → All-in-One platform (multi-model)
+#   4. (default, no models entry) → All-in-One platform
+#
+# API key format — both styles are supported:
+#   api_key: "${MY_ENV_VAR}"   ← reads from environment variable MY_ENV_VAR
+#   api_key: "sk-abc123..."    ← literal string (not recommended for secrets)
+#
+# Recommended: export keys as environment variables and use ${VAR} here.
+#   export OPENAI_API_KEY="sk-..."
+#   export DEEPSEEK_API_KEY="sk-..."
+#   export ALL_IN_ONE_API_KEY="sk-..."
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Per-provider credentials
+# Each provider has an api_key and base_url.
+# ---------------------------------------------------------------------------
+providers:
+  openai:
+    api_key: "${OPENAI_API_KEY}"
+    base_url: "https://api.openai-proxy.com/v1"
+
+  deepseek:
+    api_key: "${DEEPSEEK_API_KEY}"
+    base_url: "https://api.deepseek.com"
+
+  gemini:
+    api_key: "${GEMINI_API_KEY}"
+    base_url: "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+  claude:
+    api_key: "${CLAUDE_API_KEY}"
+    base_url: "https://api.anthropic.com/v1"
+
+# ---------------------------------------------------------------------------
+# All-in-One platform
+# A single endpoint that serves many models under one API key.
+# Models tagged with `all_in_one: true` in the [models] section use this.
+# ---------------------------------------------------------------------------
+all_in_one:
+  api_key: "${ALL_IN_ONE_API_KEY}"
+  base_url: "https://api2.aigcbest.top/v1"
+
+# ---------------------------------------------------------------------------
+# Local vLLM server
+# Used when call_llm(..., local=True) or model entry has local: true.
+# {port} is replaced at runtime by local_port.
+# ---------------------------------------------------------------------------
+local:
+  base_url: "http://localhost:{port}/v1"
+
+# ---------------------------------------------------------------------------
+# Per-model routing
+#
+# all_in_one: true   → use the [all_in_one] platform credentials
+# provider: <name>   → use the named entry under [providers]
+#
+# If a model is NOT listed here, it defaults to all_in_one.
+# Models listed in both this config AND called with local=True will still
+# use local vLLM — the local flag always wins.
+# ---------------------------------------------------------------------------
+models:
+  # ── OpenAI models via All-in-One ──────────────────────────────────────────
+  gpt-4.1:
+    all_in_one: false
+  gpt-4.1-mini:
+    all_in_one: false
+  gpt-4.1-nano:
+    all_in_one: true
+  gpt-4o:
+    all_in_one: true
+  gpt-4o-mini:
+    all_in_one: true
+  o1:
+    all_in_one: true
+  o3:
+    all_in_one: true
+  o3-mini:
+    all_in_one: true
+  o4-mini:
+    all_in_one: true
+
+  # ── Google Gemini via All-in-One ──────────────────────────────────────────
+  gemini-2.5-flash:
+    all_in_one: true
+  gemini-2.5-pro:
+    all_in_one: true
+  gemini-2.0-flash:
+    all_in_one: true
+
+  # ── Anthropic Claude via All-in-One ───────────────────────────────────────
+  claude-sonnet-4-20250514:
+    all_in_one: true
+  claude-opus-4-20250514:
+    all_in_one: true
+  claude-3-5-sonnet-20241022:
+    all_in_one: true
+
+  # ── DeepSeek via direct provider ──────────────────────────────────────────
+  deepseek-chat:
+    provider: deepseek
+  deepseek-reasoner:
+    provider: deepseek
+
+  gpt-4.1:
+    provider: openai
+
+  # ── Qwen / open-source — local vLLM by default ───────────────────────────
+  # These can also be served locally; pass local=True when calling.
+  Qwen2.5-72B-Instruct:
+    all_in_one: true
+  Qwen2.5-7B-Instruct:
+    all_in_one: true

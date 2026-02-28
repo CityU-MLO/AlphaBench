@@ -1,0 +1,54 @@
+# ===========================================================================
+# AlphaBench T3 Search Config — CSI300
+# ===========================================================================
+# Run with:
+#   python example/search/run_t3_search.py --config example/search/configs/search_csi300.yaml
+# ===========================================================================
+
+# --- LLM Backend -----------------------------------------------------------
+model:
+  name: "deepseek-chat"   # Model name (e.g. gpt-4.1, deepseek-chat, Qwen2.5-72B)
+  local: false             # Set to true when running a local vLLM server
+  local_port: 8000         # Port for local server (ignored if local: false)
+  temperature: 1.5         # Sampling temperature (higher → more exploration)
+
+# --- Target Market ---------------------------------------------------------
+market: "csi300"           # csi300 or sp500
+
+# --- Output Directory ------------------------------------------------------
+# Defaults to runs/T3/<model>_<market> when not set here.
+# save_dir: "runs/T3/deepseek-chat_csi300"
+
+# ===========================================================================
+# CoT — Chain-of-Thought Search
+#   Iteratively refines a single seed factor over `rounds` LLM calls.
+#   Seeds: kbar + price factors from Alpha158.
+# ===========================================================================
+cot:
+  enable: false
+  rounds: 10               # Number of iterative refinement rounds per factor
+
+# ===========================================================================
+# ToT — Tree-of-Thought Search
+#   Maintains a search tree; at each round generates `size` candidate
+#   variations and keeps the best one to branch from next.
+#   Seeds: kbar + price factors from Alpha158.
+# ===========================================================================
+tot:
+  enable: false
+  rounds: 3                # Tree depth (branching search rounds)
+  size: 6                  # Candidates generated per node per round
+
+# ===========================================================================
+# EA — Evolutionary Algorithm Search
+#   Maintains a population of factors; uses LLM-driven mutation and
+#   crossover to evolve the population across `generations`.
+#   Seeds: rolling factors from Alpha158.
+# ===========================================================================
+ea:
+  enable: true
+  mutation_rate: 0.4       # Probability of mutating a factor
+  crossover_rate: 0.6      # Probability of crossing over two factors
+  generations: 10          # Number of evolution generations
+  generate_size: 30        # New candidates generated per generation
+  population_size: 30      # Maximum population size kept between generations

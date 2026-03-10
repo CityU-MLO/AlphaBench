@@ -30,8 +30,8 @@ from .functions import (
     # Core functions
     evaluate_factor,
     batch_evaluate_factors,
-    beta_evaluate_factors,
     check_factor,
+    batch_check_factors,
     # Cache management
     get_cache_stats,
     clear_cache,
@@ -49,8 +49,8 @@ __all__ = [
     # Functions
     "evaluate_factor",
     "batch_evaluate_factors",
-    "beta_evaluate_factors",
     "check_factor",
+    "batch_check_factors",
     "get_cache_stats",
     "clear_cache",
     "server_health",

@@ -214,6 +214,38 @@ def check_factor_syntax(
 
 
 @mcp.tool()
+def batch_check_factors(
+    expressions: List[str],
+    market: str = "csi300",
+) -> List[Dict[str, Any]]:
+    """
+    Validate multiple factor expressions in a single request.
+
+    Checks all expressions at once — much faster than calling
+    check_factor_syntax() in a loop. Use to pre-validate a large
+    batch before running expensive evaluations.
+
+    Args:
+        expressions: List of factor expressions to validate. Each element is
+                     a Qlib-style expression string (see evaluate_factor docs).
+                     Example: ["Rank($close, 20)", "BadOp($close)"]
+        market:      Market to use for validation data: "csi300", "csi500",
+                     or "csi1000".
+
+    Returns:
+        List of result dicts (same order as input). Each dict has:
+          is_valid (bool): True if expression is valid and executable.
+          expression (str): The checked expression.
+          error (str | None): Error description if invalid.
+          name (str): Parsed factor name.
+    """
+    from ffo.api import batch_check_factors as _batch_check
+
+    results = _batch_check(expressions=expressions, market=market)
+    return [r.to_dict() for r in results]
+
+
+@mcp.tool()
 def get_server_health() -> Dict[str, Any]:
     """
     Check if the FFO backend server is running and healthy.

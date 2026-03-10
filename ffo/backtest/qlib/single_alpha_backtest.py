@@ -2,6 +2,7 @@ from pprint import pprint
 
 import qlib
 import pandas as pd
+from pathlib import Path
 
 # import agent.qlib_contrib.qlib_extend_ops
 from qlib.utils.time import Freq
@@ -12,6 +13,25 @@ from qlib.contrib.strategy import TopkDropoutStrategy
 
 from qlib.contrib.data.loader import Alpha158DL
 from qlib.data.dataset.loader import QlibDataLoader
+
+
+# ---- Lazy qlib init: skip if already initialized with same provider ----
+_current_provider_uri = None
+
+
+def _ensure_qlib_init(data_path: str, region: str):
+    """Initialize qlib only when the provider_uri changes.
+
+    Avoids redundant re-initialization and preserves the in-memory
+    data cache (H) across calls with the same provider, which makes
+    repeated D.features() calls much faster.
+    """
+    global _current_provider_uri
+    resolved = str(Path(data_path).expanduser().resolve())
+    if _current_provider_uri == resolved:
+        return  # already initialized with same provider
+    qlib.init(provider_uri=data_path, region=region)
+    _current_provider_uri = resolved
 
 
 def get_portfolio_analysis(report_normal):
@@ -47,7 +67,7 @@ def backtest_by_scores(
     BENCH="SH000300",
 ):
 
-    qlib.init(provider_uri=data_path, region=region)
+    _ensure_qlib_init(data_path, region)
     STRATEGY_CONFIG = {"topk": topk, "n_drop": n_drop, "signal": factor_scores}
 
     strategy_obj = TopkDropoutStrategy(**STRATEGY_CONFIG)
@@ -57,7 +77,7 @@ def backtest_by_scores(
 
     analysis_df = get_portfolio_analysis(report_normal)
 
-    return analysis_df
+    return analysis_df, report_normal, positions_normal
 
 
 def backtest_by_single_alpha(
@@ -129,7 +149,7 @@ def backtest_by_single_alpha(
 
     data_loader_config = {"feature": (fields, names), "label": (labels, label_names)}
 
-    qlib.init(provider_uri=data_path, region=region)
+    _ensure_qlib_init(data_path, region)
     data_loader = QlibDataLoader(config=data_loader_config)
     df = data_loader.load(
         instruments=instruments, start_time=start_time, end_time=end_time

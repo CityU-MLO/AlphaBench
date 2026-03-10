@@ -2,38 +2,39 @@
 # -*- coding: utf-8 -*-
 
 """
-Factor Evaluation API (clean rewrite)
+Factor Evaluation API
 
-Improvements:
+Features:
+- Incremental daily IC/RankIC cache (only compute missing dates)
+- Factor scores saved to disk for portfolio backtest reuse
 - Hard timeouts with kill-on-timeout using subprocesses
-- Persistent SQLite cache keyed by expr hash + params
-- Vectorized IC/RankIC, faster batch eval
-- Smaller, clearer endpoints with robust error handling
+- Vectorized IC/RankIC, efficient batch eval
 """
 
 import os
 import logging
 from datetime import datetime, timezone
-from urllib.parse import unquote
 
-# import agent.qlib_contrib.qlib_extend_ops
 from flask import Blueprint, request, jsonify
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from backtest.qlib.single_alpha_backtest import backtest_by_single_alpha
 
 from flask_cors import CORS
 import utils.qlib_extend_ops as qlib_extend_ops
 
 from utils.utils import (
     PersistentCache,
-    cache_key,
+    expr_hash,
+    _normalize_expr,
     normalize_factors_from_expression_field,
     run_eval_with_timeout,
     run_check_with_timeout,
     run_batch_with_timeout,
-    run_batch_beta_with_timeout,
+    run_batch_check_with_timeout,
     DEFAULT_INSTRUMENTS,
 )
+from utils.factor_store import FactorStore
+from utils.qlib_worker_pool import QlibWorkerPool
+from config.manager import get_config
 
 bp = Blueprint("factors", __name__, url_prefix="/factors")
 
@@ -56,8 +57,31 @@ DEFAULTS = {
     "timeout_batch": int(os.environ.get("TIMEOUT_BATCH_SEC", "600")),
 }
 
-# Persistent cache
+# Incremental daily IC cache + factor score storage
+FACTOR_STORE = FactorStore()
+
+# Legacy KV cache (kept for backward compatibility during migration)
 CACHE = PersistentCache()
+
+# Persistent qlib worker pool (one process per region, eager init at import)
+def _build_worker_pool() -> QlibWorkerPool:
+    """Build the worker pool from market configs — called once at import time."""
+    cfg = get_config()
+    region_configs: dict = {}
+    for market_name in cfg.get("markets", {}):
+        mcfg = cfg.get_market_config(market_name)
+        r = mcfg["region"]
+        if r not in region_configs:
+            region_configs[r] = {"data_path": mcfg["data_path"], "region": r}
+    return QlibWorkerPool(region_configs)
+
+
+WORKER_POOL = _build_worker_pool()
+
+
+def _get_worker_pool() -> QlibWorkerPool:
+    """Return the shared worker pool (for use by web_app.py etc.)."""
+    return WORKER_POOL
 
 
 # -----------------------------
@@ -80,6 +104,217 @@ def _fail_result(expr: str, market: str, start: str, end: str, msg: str):
             "turnover": 1.0,
             "n_dates": 0,
         },
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+
+def _extract_portfolio_metrics(analysis_df):
+    """Extract portfolio metrics dict from qlib analysis DataFrame."""
+    if analysis_df is None or (hasattr(analysis_df, 'empty') and analysis_df.empty):
+        return None
+    portfolio_metrics = {}
+    for return_type in [
+        "benchmark",
+        "pure_return_without_cost",
+        "pure_return_with_cost",
+        "excess_return_without_cost",
+        "excess_return_with_cost",
+    ]:
+        if return_type in analysis_df.index.get_level_values(0):
+            metrics_df = analysis_df.loc[return_type]
+            portfolio_metrics[return_type] = {
+                "mean_return": float(metrics_df.loc["mean", "risk"]) * 100,
+                "std": float(metrics_df.loc["std", "risk"]) * 100,
+                "annualized_return": float(
+                    metrics_df.loc["annualized_return", "risk"]
+                ) * 100,
+                "information_ratio": float(
+                    metrics_df.loc["information_ratio", "risk"]
+                ),
+                "max_drawdown": float(
+                    metrics_df.loc["max_drawdown", "risk"]
+                ) * 100,
+            }
+    return portfolio_metrics or None
+
+
+def _extract_portfolio_details(report_normal, positions_normal):
+    """
+    Extract detailed portfolio data from qlib backtest results.
+
+    Returns JSON-serializable dict with:
+    - daily_summary: daily account value, returns, turnover, costs, cash, benchmark
+    - holdings: per-date stock holdings {date_str: [{stock, amount, weight}, ...]}
+    - actions: buy/sell events detected by diffing consecutive holdings
+    """
+    details = {"daily_summary": [], "holdings": {}, "actions": []}
+
+    # --- daily_summary from report_normal ---
+    if report_normal is not None and not report_normal.empty:
+        for idx, row in report_normal.iterrows():
+            date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx)
+            details["daily_summary"].append({
+                "date": date_str,
+                "account_value": float(row.get("account", 0)),
+                "stock_value": float(row.get("value", 0)),
+                "cash": float(row.get("cash", 0)),
+                "return": float(row.get("return", 0)),
+                "turnover": float(row.get("turnover", 0)),
+                "cost": float(row.get("cost", 0)),
+                "bench_return": float(row.get("bench", 0)),
+            })
+
+    # --- holdings + actions from positions_normal ---
+    if positions_normal:
+        sorted_dates = sorted(positions_normal.keys())
+        prev_amounts = {}
+
+        for date_val in sorted_dates:
+            pos = positions_normal[date_val]
+            date_str = date_val.strftime("%Y-%m-%d") if hasattr(date_val, "strftime") else str(date_val)
+
+            stocks = pos.get_stock_list()
+            weight_dict = pos.get_stock_weight_dict(only_stock=False)
+
+            day_holdings = []
+            curr_amounts = {}
+            for stock in stocks:
+                amount = pos.get_stock_amount(stock)
+                weight = weight_dict.get(stock, 0.0)
+                curr_amounts[stock] = amount
+                day_holdings.append({
+                    "stock": stock,
+                    "amount": float(amount),
+                    "weight": round(float(weight) * 100, 4),
+                })
+
+            # Sort by weight descending
+            day_holdings.sort(key=lambda x: x["weight"], reverse=True)
+            details["holdings"][date_str] = day_holdings
+
+            # Detect actions by diffing with previous day
+            curr_set = set(curr_amounts.keys())
+            prev_set = set(prev_amounts.keys())
+
+            for stock in curr_set - prev_set:
+                details["actions"].append({
+                    "date": date_str, "stock": stock,
+                    "type": "buy", "amount": float(curr_amounts[stock]),
+                })
+            for stock in prev_set - curr_set:
+                details["actions"].append({
+                    "date": date_str, "stock": stock,
+                    "type": "sell", "amount": float(prev_amounts[stock]),
+                })
+            for stock in curr_set & prev_set:
+                diff = curr_amounts[stock] - prev_amounts[stock]
+                if abs(diff) > 0.01:
+                    details["actions"].append({
+                        "date": date_str, "stock": stock,
+                        "type": "buy" if diff > 0 else "sell",
+                        "amount": float(abs(diff)),
+                    })
+
+            prev_amounts = curr_amounts
+
+    return details
+
+
+def _eval_factor_incremental(
+    expr: str,
+    eh: str,
+    market: str,
+    start: str,
+    end: str,
+    label: str,
+    timeout: int,
+    use_cache: bool,
+    data_path: str = None,
+    region: str = None,
+):
+    """
+    Evaluate a single factor using the incremental daily IC cache.
+
+    Returns (success: bool, result_dict: dict).
+    The result_dict contains metrics, daily_metrics, and metadata.
+    """
+    if use_cache:
+        missing = FACTOR_STORE.get_missing_ranges(eh, market, label, start, end)
+    else:
+        missing = [(start, end)]
+
+    if not missing:
+        # Full cache hit — compute summary from cached daily IC
+        daily_data = FACTOR_STORE.get_daily_ic(eh, market, label, start, end)
+        metrics = FactorStore.compute_summary(daily_data)
+        return True, {
+            "success": True,
+            "expression": expr,
+            "market": market,
+            "start_date": start,
+            "end_date": end,
+            "metrics": metrics,
+            "daily_metrics": daily_data,
+            "cached": True,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+    # Compute missing ranges (parallel if 2 sub-ranges: prefix + suffix)
+    # Scores are saved to disk by the subprocess (avoids Queue deadlock with large data)
+    scores_dir = str(FACTOR_STORE.scores_dir)
+    all_new_daily = []
+    eval_failed = False
+    eval_error = ""
+
+    def _eval_range(r_start, r_end):
+        return run_eval_with_timeout(
+            expr, market, r_start, r_end, label, timeout,
+            data_path=data_path, region=region,
+            scores_save_dir=scores_dir,
+        )
+
+    if len(missing) > 1:
+        with ThreadPoolExecutor(max_workers=len(missing)) as pool:
+            futures = {
+                pool.submit(_eval_range, rs, re): (rs, re) for rs, re in missing
+            }
+            for fut in as_completed(futures):
+                res = fut.result()
+                if res.ok and isinstance(res.payload, dict):
+                    all_new_daily.extend(res.payload.get("daily_metrics", []))
+                else:
+                    eval_failed = True
+                    eval_error = f"{res.error_type}: {res.payload}"
+    else:
+        rs, re = missing[0]
+        res = _eval_range(rs, re)
+        if res.ok and isinstance(res.payload, dict):
+            all_new_daily.extend(res.payload.get("daily_metrics", []))
+        else:
+            eval_failed = True
+            eval_error = f"{res.error_type}: {res.payload}"
+
+    if eval_failed:
+        return False, _fail_result(expr, market, start, end, eval_error)
+
+    # Store new daily IC
+    if all_new_daily:
+        FACTOR_STORE.register_expression(eh, expr)
+        FACTOR_STORE.put_daily_ic(eh, market, label, all_new_daily)
+
+    # Load full daily IC for the requested range and compute summary
+    daily_data = FACTOR_STORE.get_daily_ic(eh, market, label, start, end)
+    metrics = FactorStore.compute_summary(daily_data)
+
+    return True, {
+        "success": True,
+        "expression": expr,
+        "market": market,
+        "start_date": start,
+        "end_date": end,
+        "metrics": metrics,
+        "daily_metrics": daily_data,
+        "cached": len(missing) == 0,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -118,13 +353,53 @@ def check():
     end = data.get("end", DEFAULTS["check_end"])
     timeout = int(data.get("timeout", DEFAULTS["timeout_check"]))
 
-    results = []
-    any_fail = False
+    # Resolve market config for data_path/region
+    market = (data.get("market", DEFAULTS["market"]) or DEFAULTS["market"]).lower()
+    mcfg = get_config().get_market_config(market)
+    check_data_path = mcfg["data_path"]
+    check_region = mcfg["region"]
 
+    # ================================================================
+    # BATCH PATH: single subprocess for all factors (1 qlib.init())
+    # ================================================================
+    if len(factors) > 1:
+        factor_defs = []
+        for i, f in enumerate(factors):
+            name = f.get("name", "") or f"__check_{i}__"
+            factor_defs.append({"name": name, "expression": f["expression"]})
+
+        batch_timeout = int(data.get("timeout", DEFAULTS["timeout_batch"]))
+        res = run_batch_check_with_timeout(
+            factor_defs, instruments, start, end, batch_timeout,
+            data_path=check_data_path, region=check_region,
+        )
+
+        if res.ok and isinstance(res.payload, dict) and "results" in res.payload:
+            return jsonify(res.payload["results"]), 200
+
+        error_msg = f"{res.error_type}: {res.payload}" if not res.ok else "Invalid batch response"
+        results = []
+        for f in factors:
+            results.append({
+                "success": False,
+                "name": f.get("name", "") or "",
+                "expression": f["expression"],
+                "error_message": error_msg,
+                "error_type": res.error_type or "BATCH_ERROR",
+            })
+        return jsonify(results), 200
+
+    # ================================================================
+    # SINGLE FACTOR PATH
+    # ================================================================
+    results = []
     for f in factors:
         expr = f["expression"]
         name = f.get("name", "") or ""
-        res = run_check_with_timeout(expr, instruments, start, end, timeout)
+        res = run_check_with_timeout(
+            expr, instruments, start, end, timeout,
+            data_path=check_data_path, region=check_region,
+        )
 
         if res.ok:
             payload = (
@@ -134,7 +409,6 @@ def check():
             )
             item = {"success": True, "name": name, "expression": expr, **payload}
         else:
-            any_fail = True
             item = {
                 "success": False,
                 "name": name,
@@ -153,38 +427,18 @@ def eval_once():
     """
     Evaluate one or many expressions over a time range.
 
-    POST JSON (supported):
-    1) single no-name:
-      {"expression": "Mean($close, 20)", ...}
+    Uses incremental daily IC cache: only computes dates not yet cached.
+    Factor scores are saved to disk for portfolio backtest reuse.
 
-    2) dict name->expr (one or many):
-      {"expression": {"A":"Mean($close,20)", "B":"Std($close,20)"}, ...}
-
-    3) list of expr (no names) OR mixed list:
-      {"expression": ["Mean($close,20)", "Std($close,20)"], ...}
-      {"expression": ["Mean($close,20)", {"B":"Std($close,20)"}], ...}
-
-    Common fields:
-    {
-      "start": "YYYY-MM-DD",
-      "end": "YYYY-MM-DD",
-      "market": "csi300",
-      "label": "close_return",
-      "use_cache": true,
-      "topk": 50,
-      "n_drop": 5,
-      "timeout": 120,
-
-      "fast": true,                 # ✅ new: only eval IC, skip portfolio backtest
-      "n_jobs_backtest": 4          # ✅ new: threads for backtest_by_single_alpha
-    }
+    POST JSON:
+      {"expression": "Mean($close, 20)", "market": "csi300", "start": "2023-01-01",
+       "end": "2024-01-01", "label": "close_return", "fast": true, ...}
 
     Return: always a JSON list, even for single expression.
     """
     try:
         data = request.get_json(force=True, silent=True) or {}
 
-        # ---- parse factors (single / dict / list) ----
         factors, err = normalize_factors_from_expression_field(data)
         if err:
             msg, etype = err
@@ -213,166 +467,225 @@ def eval_once():
         topk = int(data.get("topk", 50))
         n_drop = int(data.get("n_drop", 5))
 
-        # ✅ new params in POST JSON
         fast = bool(data.get("fast", False))
         n_jobs_backtest = int(data.get("n_jobs_backtest", 4))
 
+        # Resolve market config (data_path, region, benchmark)
+        mcfg = get_config().get_market_config(market)
+        data_path = mcfg["data_path"]
+        region = mcfg["region"]
+        benchmark = mcfg.get("benchmark", "SH000300")
+        instruments = mcfg.get("instruments", market)
+
         logger.info(
-            "Evaluating %d expr(s) (market=%s, %s→%s, label=%s, fast=%s, n_jobs_backtest=%d)",
-            len(factors),
-            market,
-            start,
-            end,
-            label,
-            fast,
-            n_jobs_backtest,
+            "Evaluating %d expr(s) (market=%s, %s→%s, label=%s, fast=%s)",
+            len(factors), market, start, end, label, fast,
         )
 
-        def _run_portfolio_backtest(expr_):
-            # Import inside to avoid slow import per request startup issues
+        # ================================================================
+        # FAST BATCH PATH: batch subprocess for uncached factors
+        # ================================================================
+        if fast and len(factors) > 1:
+            results = [None] * len(factors)
+            uncached_indices = []
+            uncached_factor_defs = []
 
-            market_map = {
-                "csi300": ("csi300", "~/.qlib/qlib_data/cn_data", "cn", "SH000300"),
-                "csi500": ("csi500", "~/.qlib/qlib_data/cn_data", "cn", "SH000905"),
-                "csi1000": ("csi1000", "~/.qlib/qlib_data/cn_data", "cn", "SH000852"),
-            }
-            instruments, data_path, region, benchmark = market_map.get(
-                market.lower(), market_map["csi300"]
-            )
+            # Phase 1: check incremental cache per factor
+            for i, f in enumerate(factors):
+                expr = (f.get("expression") or "").strip()
+                name = f.get("name", "") or ""
 
-            analysis_df, report_normal, positions_normal = backtest_by_single_alpha(
-                alpha_factor=expr_,
-                topk=topk,
-                n_drop=n_drop,
-                start_time=start,
-                end_time=end,
-                data_path=data_path,
-                instruments=instruments,
-                region=region,
-                BENCH=benchmark,
-            )
+                if not expr:
+                    results[i] = {
+                        "success": False, "name": name, "expression": expr,
+                        "error": "Missing 'expression'",
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    }
+                    continue
 
-            portfolio_metrics = None
-            if analysis_df is not None and not analysis_df.empty:
-                portfolio_metrics = {}
-                for return_type in [
-                    "benchmark",
-                    "pure_return_without_cost",
-                    "pure_return_with_cost",
-                    "excess_return_without_cost",
-                    "excess_return_with_cost",
-                ]:
-                    if return_type in analysis_df.index.get_level_values(0):
-                        metrics_df = analysis_df.loc[return_type]
-                        portfolio_metrics[return_type] = {
-                            "mean_return": float(metrics_df.loc["mean", "risk"]) * 100,
-                            "std": float(metrics_df.loc["std", "risk"]) * 100,
-                            "annualized_return": float(
-                                metrics_df.loc["annualized_return", "risk"]
-                            )
-                            * 100,
-                            "information_ratio": float(
-                                metrics_df.loc["information_ratio", "risk"]
-                            ),
-                            "max_drawdown": float(
-                                metrics_df.loc["max_drawdown", "risk"]
-                            )
-                            * 100,
+                if use_cache:
+                    eh = expr_hash(_normalize_expr(expr))
+                    missing = FACTOR_STORE.get_missing_ranges(eh, market, label, start, end)
+                    if not missing:
+                        # Full cache hit
+                        daily_data = FACTOR_STORE.get_daily_ic(eh, market, label, start, end)
+                        metrics = FactorStore.compute_summary(daily_data)
+                        results[i] = {
+                            "name": name, "expression": expr,
+                            "success": True, "market": market,
+                            "start_date": start, "end_date": end,
+                            "metrics": metrics,
+                            "daily_metrics": daily_data,
+                            "cached": True,
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
                         }
-            return portfolio_metrics
+                        continue
 
+                # Uncached — collect for batch
+                factor_name = f"__batch_{i}__"
+                uncached_indices.append(i)
+                uncached_factor_defs.append({"name": factor_name, "expression": expr})
+
+            # Phase 2: batch evaluate all uncached factors
+            if uncached_factor_defs:
+                batch_timeout = int(data.get("timeout", DEFAULTS["timeout_batch"]))
+                scores_dir = str(FACTOR_STORE.scores_dir)
+
+                res = run_batch_with_timeout(
+                    uncached_factor_defs, market, start, end, label, batch_timeout,
+                    scores_save_dir=scores_dir,
+                    data_path=data_path, region=region,
+                )
+
+                if res.ok and isinstance(res.payload, dict) and "results" in res.payload:
+                    batch_results = res.payload["results"]
+                    daily_per_factor = res.payload.get("daily_metrics_per_factor", {})
+
+                    for batch_idx, orig_idx in enumerate(uncached_indices):
+                        f = factors[orig_idx]
+                        expr = (f.get("expression") or "").strip()
+                        name = f.get("name", "") or ""
+                        eh = expr_hash(_normalize_expr(expr))
+                        factor_name = f"__batch_{orig_idx}__"
+
+                        if batch_idx < len(batch_results):
+                            br = batch_results[batch_idx]
+                            if br.get("success"):
+                                # Store daily IC in incremental cache
+                                daily_data = daily_per_factor.get(factor_name, [])
+                                if daily_data and use_cache:
+                                    FACTOR_STORE.register_expression(eh, expr)
+                                    FACTOR_STORE.put_daily_ic(eh, market, label, daily_data)
+
+                                payload = {
+                                    k: v for k, v in br.items() if k != "name"
+                                }
+                                payload["daily_metrics"] = daily_data
+                                results[orig_idx] = {"name": name, **payload}
+                            else:
+                                results[orig_idx] = {
+                                    "name": name, "expression": expr,
+                                    **_fail_result(expr, market, start, end,
+                                                   br.get("error", "Unknown batch error")),
+                                }
+                        else:
+                            results[orig_idx] = {
+                                "name": name, "expression": expr,
+                                **_fail_result(expr, market, start, end,
+                                               "Factor missing from batch result"),
+                            }
+                else:
+                    error_msg = (
+                        f"{res.error_type}: {res.payload}" if not res.ok
+                        else "Invalid batch response"
+                    )
+                    for orig_idx in uncached_indices:
+                        f = factors[orig_idx]
+                        expr = (f.get("expression") or "").strip()
+                        name = f.get("name", "") or ""
+                        results[orig_idx] = {
+                            "name": name, "expression": expr,
+                            **_fail_result(expr, market, start, end, error_msg),
+                        }
+
+            return jsonify([r for r in results if r is not None]), 200
+
+        # ================================================================
+        # PER-FACTOR PATH: single factor, or fast=False (needs backtest)
+        # ================================================================
         results = []
-
-        # 先串行 eval（更稳），backtest 再并行（更快）
         indices_need_backtest = []
+        expr_hashes = []  # parallel list tracking expr_hash per result
 
         for f in factors:
             expr = (f.get("expression") or "").strip()
             name = f.get("name", "") or ""
 
             if not expr:
-                results.append(
-                    {
-                        "success": False,
-                        "name": name,
-                        "expression": expr,
-                        "error": "Missing 'expression'",
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                    }
-                )
+                results.append({
+                    "success": False, "name": name, "expression": expr,
+                    "error": "Missing 'expression'",
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                })
+                expr_hashes.append(None)
                 continue
 
-            key = cache_key(expr, market, start, end, label, topk, n_drop)
+            eh = expr_hash(_normalize_expr(expr))
+            expr_hashes.append(eh)
 
-            # cache hit: return directly
-            if use_cache:
-                cached = CACHE.get(key)
-                if cached:
-                    # cached is payload dict, unify output
-                    item = {"name": name, "expression": expr, **cached}
-                    results.append(item)
-                    continue
+            # Use incremental cache
+            ok, result_dict = _eval_factor_incremental(
+                expr, eh, market, start, end, label, timeout, use_cache,
+                data_path=data_path, region=region,
+            )
 
-            # main eval (IC etc.)
-            res = run_eval_with_timeout(expr, market, start, end, label, timeout)
+            item = {"name": name, **result_dict}
+            results.append(item)
 
-            if res.ok:
-                payload = (
-                    res.payload.copy()
-                    if isinstance(res.payload, dict)
-                    else {"result": res.payload}
-                )
-                item = {"name": name, "expression": expr, **payload}
-                results.append(item)
+            if ok and not fast:
+                indices_need_backtest.append(len(results) - 1)
 
-                # fast=True => skip backtest
-                if fast:
-                    if use_cache:
-                        # cache only eval payload
-                        CACHE.set(key, payload)
-                else:
-                    # mark for backtest, cache later after portfolio_metrics filled
-                    item["_cache_key"] = key
-                    indices_need_backtest.append(len(results) - 1)
-
-            else:
-                fail_payload = _fail_result(
-                    expr, market, start, end, f"{res.error_type}: {res.payload}"
-                )
-                item = {"name": name, "expression": expr, **fail_payload}
-                results.append(item)
-
-        # fast=True => done
         if fast or not indices_need_backtest:
             return jsonify(results), 200
 
-        # parallel backtest
+        # ---- Portfolio backtest using saved scores ----
+        # data_path, region, benchmark, instruments already resolved above
+
+        pool = _get_worker_pool()
+
+        def _run_backtest_for_idx(idx):
+            eh = expr_hashes[idx]
+            expr_ = results[idx]["expression"]
+
+            # Try using cached scores first
+            scores_df = FACTOR_STORE.load_scores(eh, market, start, end) if eh else None
+            if scores_df is not None:
+                logger.info("Using cached scores for backtest: %s", eh[:12])
+                analysis_df, report_normal, positions_normal = pool.submit_backtest(
+                    region=region,
+                    job_type="backtest_by_scores",
+                    kwargs=dict(
+                        factor_scores=scores_df,
+                        topk=topk, n_drop=n_drop,
+                        start_time=start, end_time=end,
+                        data_path=data_path, region=region, BENCH=benchmark,
+                    ),
+                )
+            else:
+                # Fallback: compute from expression
+                logger.info("No cached scores, computing from expression for backtest")
+                analysis_df, report_normal, positions_normal = pool.submit_backtest(
+                    region=region,
+                    job_type="backtest_by_single_alpha",
+                    kwargs=dict(
+                        alpha_factor=expr_,
+                        topk=topk, n_drop=n_drop,
+                        start_time=start, end_time=end,
+                        data_path=data_path, instruments=instruments,
+                        region=region, BENCH=benchmark,
+                    ),
+                )
+            pm = _extract_portfolio_metrics(analysis_df)
+            details = _extract_portfolio_details(report_normal, positions_normal)
+            return pm, details
+
         max_workers = max(1, n_jobs_backtest)
         with ThreadPoolExecutor(max_workers=max_workers) as ex:
             future_map = {}
             for idx in indices_need_backtest:
-                expr_ = results[idx]["expression"]
-                future = ex.submit(_run_portfolio_backtest, expr_)
+                future = ex.submit(_run_backtest_for_idx, idx)
                 future_map[future] = idx
 
             for future in as_completed(future_map):
                 idx = future_map[future]
                 try:
-                    pm = future.result()
+                    pm, details = future.result()
                     if pm:
                         results[idx]["portfolio_metrics"] = pm
+                    if details:
+                        results[idx]["portfolio_details"] = details
                 except Exception as e:
-                    logger.warning(f"Portfolio backtest failed (idx={idx}): {e}")
-
-        # write cache after portfolio_metrics ready
-        if use_cache:
-            for item in results:
-                key = item.pop("_cache_key", None)
-                if key and item.get("success") is True:
-                    payload_to_cache = {
-                        k: v for k, v in item.items() if k not in ("name", "expression")
-                    }
-                    CACHE.set(key, payload_to_cache)
+                    logger.warning("Portfolio backtest failed (idx=%d): %s", idx, e)
 
         return jsonify(results), 200
 
@@ -390,154 +703,3 @@ def eval_once():
             ),
             500,
         )
-
-
-@bp.route("/eval_beta", methods=["POST"])
-def eval_beta():
-    """
-    Beta: evaluate a batch of factors using a single compute_factor_data() call
-    and GPU-accelerated (PyTorch) IC / RankIC computation.
-
-    Unlike /eval (which evaluates factors one-by-one), this endpoint:
-    - Packages ALL expressions into one Qlib data-loader call.
-    - Computes IC and RankIC for all factors simultaneously on GPU.
-
-    Recommended for large-scale evaluation (50+ factors).
-
-    POST JSON:
-    {
-        "expression": str | dict | list,   // same formats as /eval
-        "market":     "csi300",            // default
-        "start":      "2023-01-01",        // default
-        "end":        "2024-01-01",        // default
-        "label":      "close_return",      // default
-        "device":     "auto",              // "auto" | "cuda" | "cpu"
-        "timeout":    600                  // seconds for the whole batch
-    }
-
-    Returns: JSON list, one item per factor (same schema as /eval).
-    """
-    try:
-        data = request.get_json(force=True, silent=True) or {}
-
-        factors, err = normalize_factors_from_expression_field(data)
-        if err:
-            msg, etype = err
-            return (
-                jsonify(
-                    [
-                        {
-                            "success": False,
-                            "name": "",
-                            "expression": "",
-                            "error": msg,
-                            "error_type": etype,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                        }
-                    ]
-                ),
-                400,
-            )
-
-        start = data.get("start", DEFAULTS["start"])
-        end = data.get("end", DEFAULTS["end"])
-        market = (data.get("market", DEFAULTS["market"]) or DEFAULTS["market"]).lower()
-        label = data.get("label", DEFAULTS["label"])
-        device = data.get("device", "auto")
-        timeout = int(data.get("timeout", DEFAULTS["timeout_batch"]))
-
-        logger.info(
-            "Beta batch eval: %d factor(s) (market=%s, %s→%s, label=%s, device=%s)",
-            len(factors),
-            market,
-            start,
-            end,
-            label,
-            device,
-        )
-
-        # Ensure unique names so columns don't collide in the feature DataFrame
-        named_factors = []
-        for i, f in enumerate(factors):
-            name = (f.get("name") or "").strip() or f"factor_{i}"
-            named_factors.append({"name": name, "expression": f["expression"]})
-
-        res = run_batch_beta_with_timeout(
-            named_factors, market, start, end, label, timeout, device
-        )
-
-        if not res.ok:
-            error_msg = f"{res.error_type}: {res.payload}"
-            logger.error("eval_beta subprocess failed: %s", error_msg)
-            return jsonify([
-                {
-                    "success": False,
-                    "name": f.get("name", ""),
-                    "expression": f.get("expression", ""),
-                    "error": error_msg,
-                    "market": market,
-                    "start_date": start,
-                    "end_date": end,
-                    "metrics": {"ic": 0.0, "icir": 0.0, "rank_ic": 0.0, "rank_icir": 0.0, "n_dates": 0},
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }
-                for f in named_factors
-            ]), 200
-
-        payload = res.payload
-        if not isinstance(payload, dict) or "results" not in payload:
-            error_msg = "Unexpected response format from beta worker"
-            logger.error("eval_beta: %s", error_msg)
-            return jsonify([
-                {
-                    "success": False,
-                    "name": f.get("name", ""),
-                    "expression": f.get("expression", ""),
-                    "error": error_msg,
-                    "market": market,
-                    "start_date": start,
-                    "end_date": end,
-                    "metrics": {"ic": 0.0, "icir": 0.0, "rank_ic": 0.0, "rank_icir": 0.0, "n_dates": 0},
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                }
-                for f in named_factors
-            ]), 200
-
-        # Normalise to /eval-compatible output schema
-        results = []
-        for r in payload["results"]:
-            item = {
-                "success": r.get("success", False),
-                "name": r.get("name", ""),
-                "expression": r.get("expression", ""),
-                "market": market,
-                "start_date": start,
-                "end_date": end,
-                "device": r.get("device", device),
-                "metrics": r.get("metrics", {}),
-                "timestamp": r.get(
-                    "timestamp", datetime.now(timezone.utc).isoformat()
-                ),
-            }
-            if not r.get("success", False):
-                item["error"] = r.get("error", "Unknown error")
-            results.append(item)
-
-        return jsonify(results), 200
-
-    except Exception as e:
-        logger.exception("eval_beta error")
-        error_msg = f"{type(e).__name__}: {e}"
-        _named = locals().get("named_factors") or locals().get("factors") or []
-        return jsonify([
-            {
-                "success": False,
-                "name": f.get("name", "") if isinstance(f, dict) else "",
-                "expression": f.get("expression", "") if isinstance(f, dict) else "",
-                "error": error_msg,
-                "metrics": {"ic": 0.0, "icir": 0.0, "rank_ic": 0.0, "rank_icir": 0.0, "n_dates": 0},
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
-            for f in _named
-        ] or [{"success": False, "error": error_msg,
-               "timestamp": datetime.now(timezone.utc).isoformat()}]), 200

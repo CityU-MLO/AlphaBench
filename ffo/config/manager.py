@@ -65,6 +65,33 @@ _DEFAULTS: dict[str, Any] = {
         "region": "cn",
         "instruments": "csi300",
     },
+    "markets": {
+        "csi300": {
+            "data_path": "~/.qlib/qlib_data/cn_data",
+            "region": "cn",
+            "benchmark": "SH000300",
+        },
+        "csi500": {
+            "data_path": "~/.qlib/qlib_data/cn_data",
+            "region": "cn",
+            "benchmark": "SH000905",
+        },
+        "csi1000": {
+            "data_path": "~/.qlib/qlib_data/cn_data",
+            "region": "cn",
+            "benchmark": "SH000852",
+        },
+        "sp500": {
+            "data_path": "~/.qlib/qlib_data/us_data_ours",
+            "region": "us",
+            "benchmark": "^gspc",
+        },
+        "nasdaq100": {
+            "data_path": "~/.qlib/qlib_data/us_data_ours",
+            "region": "us",
+            "benchmark": "^ixic",
+        },
+    },
     "runtime": {
         "pid_dir": "~/.ppo/pids",
         "log_dir": "~/.ppo/logs",
@@ -318,6 +345,32 @@ class ConfigManager:
     @property
     def cache_path(self) -> pathlib.Path:
         return pathlib.Path(self.get("cache.path", "~/.ppo/factor_cache.sqlite")).expanduser()
+
+    def get_market_config(self, market: str) -> dict:
+        """
+        Look up (data_path, region, benchmark) for a market name.
+
+        Falls back to qlib defaults if the market is not in the markets table.
+
+        Returns:
+            {"data_path": str, "region": str, "benchmark": str, "instruments": str}
+        """
+        market_lower = market.lower()
+        markets = self.get("markets", {})
+        if market_lower in markets:
+            cfg = dict(markets[market_lower])
+            cfg.setdefault("instruments", market_lower)
+            cfg["data_path"] = os.path.expanduser(cfg["data_path"])
+            return cfg
+        # Fallback: use top-level qlib defaults
+        return {
+            "data_path": os.path.expanduser(
+                self.get("qlib.data_path", "~/.qlib/qlib_data/cn_data")
+            ),
+            "region": self.get("qlib.region", "cn"),
+            "benchmark": "SH000300",
+            "instruments": market_lower,
+        }
 
     # ── dict-like access ──────────────────────────────────────────────────────
 

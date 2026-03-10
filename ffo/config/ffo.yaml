@@ -59,6 +59,33 @@ qlib:
   region: "cn"
   instruments: "csi300"
 
+# ── Market Definitions ────────────────────────────────────────
+# Maps market/instrument names to their qlib data source, region,
+# and benchmark. Add new markets here to support them everywhere.
+markets:
+  # China A-share markets
+  csi300:
+    data_path: "~/.qlib/qlib_data/cn_data"
+    region: "cn"
+    benchmark: "SH000300"
+  csi500:
+    data_path: "~/.qlib/qlib_data/cn_data"
+    region: "cn"
+    benchmark: "SH000905"
+  csi1000:
+    data_path: "~/.qlib/qlib_data/cn_data"
+    region: "cn"
+    benchmark: "SH000852"
+  # US markets
+  sp500:
+    data_path: "~/.qlib/qlib_data/us_data"
+    region: "us"
+    benchmark: "^gspc"
+  nasdaq100:
+    data_path: "~/.qlib/qlib_data/us_data"
+    region: "us"
+    benchmark: "^ixic"
+
 # ── PID / Log File Paths ────────────────────────────────────
 runtime:
   pid_dir: "~/.ppo/pids"

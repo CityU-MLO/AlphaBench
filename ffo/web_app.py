@@ -24,10 +24,16 @@ import plotly.utils
 
 # Local imports
 from ffo.utils.factor_cache_manager import FactorCacheManager
+from ffo.utils.factor_store import FactorStore
+from ffo.utils.utils import expr_hash, _normalize_expr
+from ffo.config.manager import get_config
 from ffo.client import FactorEvalClient
 
 app = Flask(__name__)
 CORS(app)
+
+logging.basicConfig(level=os.environ.get("LOGLEVEL", "INFO"))
+logger = logging.getLogger("WebApp")
 
 
 def convert_to_serializable(obj):
@@ -163,13 +169,16 @@ def build_standardized_export(
     return export_data
 
 
-# Initialize cache manager
-# Use absolute path to ensure correct resolution
+# Initialize cache manager (kept for query history tracking only)
 cache_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cache_data"))
 cache_manager = FactorCacheManager(cache_dir=cache_dir)
 
-# Initialize API client
-api_client = FactorEvalClient(base_url="http://localhost:19777")
+# Incremental daily IC cache + factor score storage (primary data source)
+factor_store = FactorStore(cache_dir=cache_dir)
+
+# Initialize API client — base URL from config
+_cfg = get_config()
+api_client = FactorEvalClient(base_url=_cfg.backend_url)
 
 
 @app.route("/")
@@ -180,41 +189,59 @@ def index():
 
 @app.route("/api/search_cache", methods=["POST"])
 def search_cache():
-    """Search for cached factor results."""
+    """Search for cached factor results using FactorStore."""
     data = request.json
     expr = data.get("expression", "")
-    market = data.get("market", "csi300")
+    market = (data.get("market", "csi300") or "csi300").lower()
     start_date = data.get("start_date", "2023-01-01")
     end_date = data.get("end_date", "2024-01-01")
+    label = data.get("label", "close_return")
 
-    # Check if we have cache for this query
-    if cache_manager.has_cache(expr, market, start_date, end_date):
-        result = cache_manager.get_cache(expr, market, start_date, end_date)
-        if result:
-            return jsonify({"success": True, "data": result, "from_cache": True})
+    eh = expr_hash(_normalize_expr(expr))
+    min_d, max_d, count = factor_store.get_coverage(eh, market, label, start_date, end_date)
+
+    if count > 0:
+        daily_data = factor_store.get_daily_ic(eh, market, label, start_date, end_date)
+        metrics = FactorStore.compute_summary(daily_data)
+        result = {
+            "success": True,
+            "expression": expr,
+            "market": market,
+            "start_date": start_date,
+            "end_date": end_date,
+            "metrics": metrics,
+            "daily_metrics": daily_data,
+            "cached": True,
+        }
+        return jsonify({"success": True, "data": result, "from_cache": True})
 
     return jsonify({"success": False, "message": "No cache found for this query"})
 
 
 @app.route("/api/evaluate_factor", methods=["POST"])
 def evaluate_factor():
-    """Evaluate a factor expression (using API or direct computation)."""
+    """Evaluate a factor expression via backend API."""
     data = request.json
     expr = data.get("expression", "")
-    market = data.get("market", "csi300")
+    market = (data.get("market", "csi300") or "csi300").lower()
     start_date = data.get("start_date", "2023-01-01")
     end_date = data.get("end_date", "2024-01-01")
+    label = data.get("label", "close_return")
     use_cache = data.get("use_cache", True)
+    fast = data.get("fast", True)
 
-    # Try to evaluate via API first
     try:
-        result = api_client.evaluate_factor(
-            expr=expr,
+        # Client returns a list — extract first item
+        results = api_client.evaluate_factor(
+            expression=expr,
             market=market,
             start_date=start_date,
             end_date=end_date,
+            label=label,
             use_cache=use_cache,
+            fast=fast,
         )
+        result = results[0] if isinstance(results, list) and results else results
 
         if result.get("success"):
             # Log to query history
@@ -231,145 +258,62 @@ def evaluate_factor():
             )
             return jsonify({"success": True, "data": result})
         else:
-            # Return the specific error from the API
+            # Pass through backend error directly (don't double-wrap)
             error_msg = result.get("error", "Unknown API error")
-            if "message" in result:
-                error_msg += f" ({result['message']})"
             return jsonify(
-                {"success": False, "message": f"Evaluation failed: {error_msg}"}
+                {"success": False, "message": error_msg}
             )
 
     except Exception as e:
-        import traceback
-
-        traceback.print_exc()
+        logger.exception("evaluate_factor error")
         return jsonify(
             {
                 "success": False,
-                "message": f"Evaluation failed (Internal Error): {str(e)}. Please check the API server is running.",
+                "message": f"API connection error: {e}. Is the API server running?",
             }
         )
-
-    return jsonify(
-        {
-            "success": False,
-            "message": "Evaluation failed. Please check the API server is running.",
-        }
-    )
 
 
 @app.route("/api/batch_evaluate_factor", methods=["POST"])
 def batch_evaluate_factor():
     """
-    Batch Factor Backtest with Multi-threading support.
+    Batch Factor Evaluation — single backend request for all factors.
+
+    Sends all expressions in one request to the backend's /factors/eval
+    endpoint with fast=True. The backend loads Qlib data once and computes
+    IC/RankIC for all factors in a single pass.
     """
-    data = request.json
-    expressions = data.get("expressions", [])
-    market = data.get("market", "csi300")
-    start_date = data.get("start_date", "2023-01-01")
-    end_date = data.get("end_date", "2024-01-01")
-    max_workers = data.get("max_workers", 4)  # Default to 4 threads
-    use_cache = data.get("use_cache", True)
-
-    if not expressions:
-        return jsonify({"success": False, "message": "No expressions provided"})
-
-    results = {}
-
-    def _eval_single(expr):
-        try:
-            res = api_client.evaluate_factor(
-                expr=expr,
-                market=market,
-                start_date=start_date,
-                end_date=end_date,
-                use_cache=use_cache,
-            )
-            return expr, res
-        except Exception as e:
-            return expr, {"success": False, "message": str(e)}
-
-    # Execute in parallel
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_expr = {
-            executor.submit(_eval_single, expr): expr for expr in expressions
-        }
-
-        for future in as_completed(future_to_expr):
-            expr = future_to_expr[future]
-            try:
-                expr_key, res = future.result()
-                results[expr_key] = res
-            except Exception as e:
-                results[expr] = {"success": False, "message": str(e)}
-
-    return jsonify({"success": True, "results": results, "total": len(expressions)})
-
-
-@app.route("/api/beta_batch_evaluate_factor", methods=["POST"])
-def beta_batch_evaluate_factor():
-    """
-    Beta Batch Factor Evaluation — single Qlib data load + GPU IC/RankIC.
-
-    Unlike /api/batch_evaluate_factor (which issues one HTTP call per factor),
-    this endpoint forwards all expressions to the backend's /factors/eval_beta
-    in a single request.  The backend loads all factor data at once and
-    computes IC / RankIC for every factor simultaneously on GPU (or CPU).
-
-    Request JSON:
-    {
-        "expressions": ["expr1", "expr2", ...],
-        "market":      "csi300",        // default
-        "start_date":  "2022-01-01",
-        "end_date":    "2024-01-01",
-        "device":      "auto",          // "auto" | "cuda" | "cpu"
-        "timeout":     600
-    }
-
-    Response JSON:
-    {
-        "success": true,
-        "results": {
-            "expr1": { "success": true, "metrics": {...}, "device": "cuda" },
-            ...
-        },
-        "total": <int>,
-        "elapsed_seconds": <float>
-    }
-    """
-    import time as _time
-
     data = request.json or {}
     expressions = data.get("expressions", [])
-    market     = data.get("market", "csi300")
+    market = (data.get("market", "csi300") or "csi300").lower()
     start_date = data.get("start_date", "2023-01-01")
-    end_date   = data.get("end_date", "2024-01-01")
-    device     = data.get("device", "auto")
-    timeout    = int(data.get("timeout", 600))
+    end_date = data.get("end_date", "2024-01-01")
+    label = data.get("label", "close_return")
+    use_cache = data.get("use_cache", True)
+    timeout = int(data.get("timeout", 600))
 
     if not expressions:
         return jsonify({"success": False, "message": "No expressions provided"})
 
-    t0 = _time.perf_counter()
     try:
         resp = requests.post(
-            f"{api_client.base_url}/factors/eval_beta",
+            f"{api_client.base_url}/factors/eval",
             json={
                 "expression": expressions,
-                "market":     market,
-                "start":      start_date,
-                "end":        end_date,
-                "device":     device,
-                "timeout":    timeout,
+                "market": market,
+                "start": start_date,
+                "end": end_date,
+                "label": label,
+                "fast": True,
+                "use_cache": use_cache,
+                "timeout": timeout,
             },
             timeout=timeout + 30,
         )
         resp.raise_for_status()
-        items = resp.json()  # list of per-factor results
+        items = resp.json()
     except Exception as e:
         return jsonify({"success": False, "message": f"Backend error: {e}"})
-
-    elapsed = _time.perf_counter() - t0
 
     # Convert list → dict keyed by expression for easy client lookup
     results = {}
@@ -394,23 +338,79 @@ def beta_batch_evaluate_factor():
             except Exception:
                 pass
 
-    return jsonify({
-        "success": True,
-        "results": results,
-        "total": len(expressions),
-        "elapsed_seconds": round(elapsed, 3),
-    })
+    return jsonify({"success": True, "results": results, "total": len(expressions)})
 
 
 @app.route("/api/get_cached_expressions", methods=["GET"])
 def get_cached_expressions():
-    """Get list of cached expressions."""
+    """Get list of cached expressions from FactorStore."""
     limit = request.args.get("limit", 100, type=int)
-    order_by = request.args.get("order_by", "last_accessed")
 
-    expressions = cache_manager.get_cached_expressions(limit=limit, order_by=order_by)
+    # Query expressions table in FactorStore
+    try:
+        with factor_store._connect() as conn:
+            rows = conn.execute(
+                "SELECT expr_hash, expression, created_at FROM expressions ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        expressions = [
+            {"expr_hash": r[0], "expression": r[1], "created_at": r[2]}
+            for r in rows
+        ]
+    except Exception:
+        expressions = []
 
     return jsonify({"success": True, "expressions": expressions})
+
+
+@app.route("/api/run_portfolio_backtest", methods=["POST"])
+def run_portfolio_backtest():
+    """Run portfolio backtest for a single factor (fast=False triggers backtest on backend)."""
+    data = request.json
+    expr = data.get("expression", "")
+    market = (data.get("market", "csi300") or "csi300").lower()
+    start_date = data.get("start_date", "2023-01-01")
+    end_date = data.get("end_date", "2024-01-01")
+    label = data.get("label", "close_return")
+
+    try:
+        # Call backend with fast=False to trigger portfolio backtest
+        results = api_client.evaluate_factor(
+            expression=expr,
+            market=market,
+            start_date=start_date,
+            end_date=end_date,
+            label=label,
+            use_cache=True,
+            fast=False,
+        )
+        result = results[0] if isinstance(results, list) and results else results
+
+        if result.get("success") and result.get("portfolio_metrics"):
+            resp = {
+                "success": True,
+                "portfolio_metrics": result["portfolio_metrics"],
+            }
+            if result.get("portfolio_details"):
+                resp["portfolio_details"] = result["portfolio_details"]
+            return jsonify(resp)
+        elif result.get("success"):
+            return jsonify({
+                "success": False,
+                "message": "Backtest completed but no portfolio metrics returned",
+            })
+        else:
+            return jsonify({
+                "success": False,
+                "message": result.get("error", "Portfolio backtest failed"),
+            })
+
+    except Exception as e:
+        logger.exception("run_portfolio_backtest error")
+        return jsonify({
+            "success": False,
+            "message": f"Portfolio backtest error: {e}",
+        })
 
 
 @app.route("/api/get_daily_chart", methods=["POST"])
@@ -418,16 +418,18 @@ def get_daily_chart():
     """Generate daily IC/RankIC chart data."""
     data = request.json
     expr = data.get("expression", "")
-    market = data.get("market", "csi300")
+    market = (data.get("market", "csi300") or "csi300").lower()
     start_date = data.get("start_date", "2023-01-01")
     end_date = data.get("end_date", "2024-01-01")
+    label = data.get("label", "close_return")
 
-    result = cache_manager.get_cache(expr, market, start_date, end_date)
+    eh = expr_hash(_normalize_expr(expr))
+    daily_data = factor_store.get_daily_ic(eh, market, label, start_date, end_date)
 
-    if not result or "daily_metrics" not in result:
+    if not daily_data:
         return jsonify({"success": False, "message": "No daily data available"})
 
-    df = pd.DataFrame(result["daily_metrics"])
+    df = pd.DataFrame(daily_data)
 
     # Create plotly chart
     fig = go.Figure()
@@ -479,17 +481,18 @@ def get_performance_stats():
     """Get performance statistics for a factor."""
     data = request.json
     expr = data.get("expression", "")
-    market = data.get("market", "csi300")
+    market = (data.get("market", "csi300") or "csi300").lower()
     start_date = data.get("start_date", "2023-01-01")
     end_date = data.get("end_date", "2024-01-01")
+    label = data.get("label", "close_return")
 
-    result = cache_manager.get_cache(expr, market, start_date, end_date)
+    eh = expr_hash(_normalize_expr(expr))
+    daily_metrics = factor_store.get_daily_ic(eh, market, label, start_date, end_date)
 
-    if not result:
+    if not daily_metrics:
         return jsonify({"success": False, "message": "No data available"})
 
-    metrics = result.get("metrics", {})
-    daily_metrics = result.get("daily_metrics", [])
+    metrics = FactorStore.compute_summary(daily_metrics)
 
     # Calculate additional statistics
     stats = {
@@ -522,19 +525,20 @@ def get_performance_stats():
 
 @app.route("/api/cache_stats", methods=["GET"])
 def get_cache_stats():
-    """Get cache statistics."""
-    stats = cache_manager.get_cache_stats()
+    """Get cache statistics from FactorStore."""
+    stats = factor_store.get_store_stats()
     return jsonify({"success": True, "stats": stats})
 
 
 @app.route("/api/clear_cache", methods=["POST"])
 def clear_cache():
-    """Clear cache entries."""
-    data = request.json
-    older_than_days = data.get("older_than_days")
+    """Clear FactorStore cache entries."""
+    data = request.json or {}
+    expr = data.get("expression")
 
     try:
-        cache_manager.clear_cache(older_than_days=older_than_days)
+        eh = expr_hash(_normalize_expr(expr)) if expr else None
+        factor_store.clear(expr_hash=eh)
         return jsonify({"success": True, "message": "Cache cleared successfully"})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
@@ -542,64 +546,60 @@ def clear_cache():
 
 @app.route("/api/compare_factors", methods=["POST"])
 def compare_factors():
-    """Compare multiple factors."""
+    """Compare multiple factors via backend batch eval."""
     data = request.json
     expressions = data.get("expressions", [])
-    market = data.get("market", "csi300")
+    market = (data.get("market", "csi300") or "csi300").lower()
     start_date = data.get("start_date", "2023-01-01")
     end_date = data.get("end_date", "2024-01-01")
+    label = data.get("label", "close_return")
 
     if len(expressions) < 2:
         return jsonify(
             {"success": False, "message": "Need at least 2 expressions to compare"}
         )
 
-    # Use API client to compare factors
     try:
-        # Construct factors list for batch eval
-        factors_list = [
-            {"name": f"factor_{i}", "expression": expr}
-            for i, expr in enumerate(expressions)
-        ]
-
-        # Use batch eval
-        results = api_client.batch_evaluate_factors(
-            factors=factors_list,
-            market=market,
-            start_date=start_date,
-            end_date=end_date,
+        # Call backend /factors/eval with all expressions (batch mode)
+        resp = requests.post(
+            f"{api_client.base_url}/factors/eval",
+            json={
+                "expression": expressions,
+                "market": market,
+                "start": start_date,
+                "end": end_date,
+                "label": label,
+                "fast": True,
+                "use_cache": True,
+            },
+            timeout=300,
         )
+        resp.raise_for_status()
+        items = resp.json()
 
-        # Process results into comparison format
         comparison = []
-        if results.get("success"):
-            for i, res in enumerate(results.get("results", [])):
-                metrics = res.get("metrics", {})
-                comparison.append(
-                    {
-                        "expression": expressions[i],
-                        "ic": metrics.get("ic", 0),
-                        "rank_ic": metrics.get("rank_ic", 0),
-                        "icir": metrics.get("icir", 0),
-                        "rank_icir": metrics.get("rank_icir", 0),
-                        "turnover": metrics.get("turnover", 0),
-                    }
-                )
-            return jsonify({"success": True, "comparison": comparison})
-        else:
-            return jsonify(
+        for i, item in enumerate(items):
+            metrics = item.get("metrics", {})
+            comparison.append(
                 {
-                    "success": False,
-                    "message": results.get("error", "Batch evaluation failed"),
+                    "expression": item.get("expression", expressions[i] if i < len(expressions) else ""),
+                    "ic": metrics.get("ic", 0),
+                    "rank_ic": metrics.get("rank_ic", 0),
+                    "icir": metrics.get("icir", 0),
+                    "rank_icir": metrics.get("rank_icir", 0),
+                    "turnover": metrics.get("turnover", 0),
+                    "n_dates": metrics.get("n_dates", 0),
                 }
             )
+        return jsonify({"success": True, "comparison": comparison})
+
     except Exception as e:
         return jsonify({"success": False, "message": str(e)})
 
 
 @app.route("/api/get_factor_history", methods=["POST"])
 def get_factor_history():
-    """Get evaluation history for a factor."""
+    """Get evaluation history for a factor from query history."""
     data = request.json
     expr = data.get("expression", "")
     market = data.get("market")
@@ -607,8 +607,8 @@ def get_factor_history():
     if not expr:
         return jsonify({"success": False, "message": "Expression required"})
 
+    # Use query history from cache_manager (tracks evaluations over time)
     history = cache_manager.get_factor_history(expr, market)
-
     return jsonify({"success": True, "history": history})
 
 
@@ -623,10 +623,12 @@ def export_data():
     export_format = data.get("format", "csv")
 
     try:
-        # Get data via evaluate_factor
-        result = api_client.evaluate_factor(
-            expr=expr, market=market, start_date=start_date, end_date=end_date
+        # Get data via evaluate_factor (returns list)
+        results_list = api_client.evaluate_factor(
+            expression=expr, market=market, start_date=start_date, end_date=end_date,
+            fast=True, use_cache=True,
         )
+        result = results_list[0] if isinstance(results_list, list) and results_list else results_list
 
         if not result.get("success"):
             return jsonify(
@@ -692,16 +694,18 @@ def get_distribution_chart():
     """Generate IC distribution chart data."""
     data = request.json
     expr = data.get("expression", "")
-    market = data.get("market", "csi300")
+    market = (data.get("market", "csi300") or "csi300").lower()
     start_date = data.get("start_date", "2023-01-01")
     end_date = data.get("end_date", "2024-01-01")
+    label = data.get("label", "close_return")
 
-    result = cache_manager.get_cache(expr, market, start_date, end_date)
+    eh = expr_hash(_normalize_expr(expr))
+    daily_data = factor_store.get_daily_ic(eh, market, label, start_date, end_date)
 
-    if not result or "daily_metrics" not in result:
+    if not daily_data:
         return jsonify({"success": False, "message": "No daily data available"})
 
-    df = pd.DataFrame(result["daily_metrics"])
+    df = pd.DataFrame(daily_data)
 
     # Create IC distribution histogram
     fig = go.Figure()
@@ -736,16 +740,18 @@ def get_cumulative_chart():
     """Generate cumulative IC chart data."""
     data = request.json
     expr = data.get("expression", "")
-    market = data.get("market", "csi300")
+    market = (data.get("market", "csi300") or "csi300").lower()
     start_date = data.get("start_date", "2023-01-01")
     end_date = data.get("end_date", "2024-01-01")
+    label = data.get("label", "close_return")
 
-    result = cache_manager.get_cache(expr, market, start_date, end_date)
+    eh = expr_hash(_normalize_expr(expr))
+    daily_data = factor_store.get_daily_ic(eh, market, label, start_date, end_date)
 
-    if not result or "daily_metrics" not in result:
+    if not daily_data:
         return jsonify({"success": False, "message": "No daily data available"})
 
-    df = pd.DataFrame(result["daily_metrics"])
+    df = pd.DataFrame(daily_data)
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date")
 
@@ -1495,8 +1501,15 @@ def run_backtest_from_weights():
             return jsonify({"success": False, "message": "weights_data is required"})
 
         # Extract configuration
-        market = backtest_config.get("market", "csi300")
+        market = (backtest_config.get("market", "csi300") or "csi300").lower()
         method = backtest_config.get("method", "lasso")
+
+        # Resolve market config from centralized config
+        mcfg = get_config().get_market_config(market)
+        bt_data_path = mcfg["data_path"]
+        bt_region = mcfg["region"]
+        bt_benchmark = mcfg.get("benchmark", "SH000300")
+        bt_instruments = mcfg.get("instruments", market)
 
         # Extract weights and factors from the uploaded data
         periods = weights_data.get("periods", [])
@@ -1505,13 +1518,16 @@ def run_backtest_from_weights():
                 {"success": False, "message": "No periods found in weights_data"}
             )
 
-        # Import backtest engine
-        from backtest.qlib.single_alpha_backtest import backtest_by_single_alpha
-        import qlib
+        # Import backtest engine + worker pool
+        from backtest.qlib.single_alpha_backtest import _ensure_qlib_init
         from qlib.data import D
+        from routes.factors import _get_worker_pool
 
-        # Initialize Qlib
-        qlib.init(provider_uri="~/.qlib/qlib_data/cn_data", region="cn")
+        # Initialize Qlib in main process for D.features() benchmark calls
+        _ensure_qlib_init(bt_data_path, bt_region)
+
+        # Get worker pool for heavy backtest calls
+        bt_pool = _get_worker_pool()
 
         # ============ DETECT MODE: DYNAMIC vs FIXED ============
         # Check if periods have date ranges (dynamic) or not (fixed)
@@ -1658,9 +1674,8 @@ def run_backtest_from_weights():
 
             # Fetch Benchmark Data
             try:
-                bench_code = "SH000300" if market == "csi300" else "SH000905"
                 bench_df = D.features(
-                    [bench_code],
+                    [bt_benchmark],
                     ["$close/$close(1)-1"],
                     start_time=start_date,
                     end_time=end_date,
@@ -1676,7 +1691,7 @@ def run_backtest_from_weights():
                             }
                         )
             except Exception as e:
-                print(f"[WARNING] Failed to fetch benchmark data: {e}")
+                logger.warning("Failed to fetch benchmark data: %s", e)
                 benchmark_returns = []
 
             if not weighted_terms:
@@ -1796,9 +1811,8 @@ def run_backtest_from_weights():
 
             # Fetch Benchmark Data for Dynamic Mode
             try:
-                bench_code = "SH000300" if market == "csi300" else "SH000905"
                 bench_df = D.features(
-                    [bench_code],
+                    [bt_benchmark],
                     ["$close/$close(1)-1"],
                     start_time=start_date,
                     end_time=end_date,
@@ -1814,7 +1828,7 @@ def run_backtest_from_weights():
                             }
                         )
             except Exception as e:
-                print(f"[WARNING] Failed to fetch benchmark data: {e}")
+                logger.warning("Failed to fetch benchmark data: %s", e)
                 benchmark_returns = []
 
             print(
@@ -1847,15 +1861,16 @@ def run_backtest_from_weights():
                     f"[BACKTEST] Expression hash: {hash(combined_expression)}"
                 )  # To detect if expression changes
 
-                analysis_df, report_normal, positions_normal = backtest_by_single_alpha(
-                    alpha_factor=combined_expression,
-                    topk=50,
-                    n_drop=5,
-                    start_time=start_date,
-                    end_time=end_date,
-                    instruments=market,
-                    region="cn",
-                    BENCH="SH000300" if market == "csi300" else "SH000905",
+                analysis_df, report_normal, positions_normal = bt_pool.submit_backtest(
+                    region=bt_region,
+                    job_type="backtest_by_single_alpha",
+                    kwargs=dict(
+                        alpha_factor=combined_expression,
+                        topk=50, n_drop=5,
+                        start_time=start_date, end_time=end_date,
+                        data_path=bt_data_path, instruments=bt_instruments,
+                        region=bt_region, BENCH=bt_benchmark,
+                    ),
                 )
 
                 # Extract daily returns
@@ -1929,17 +1944,16 @@ def run_backtest_from_weights():
 
                     # Run backtest for this period
                     try:
-                        analysis_df, report_normal, positions_normal = (
-                            backtest_by_single_alpha(
+                        analysis_df, report_normal, positions_normal = bt_pool.submit_backtest(
+                            region=bt_region,
+                            job_type="backtest_by_single_alpha",
+                            kwargs=dict(
                                 alpha_factor=period_expression,
-                                topk=50,
-                                n_drop=5,
-                                start_time=period_start_str,
-                                end_time=period_end_str,
-                                instruments=market,
-                                region="cn",
-                                BENCH="SH000300" if market == "csi300" else "SH000905",
-                            )
+                                topk=50, n_drop=5,
+                                start_time=period_start_str, end_time=period_end_str,
+                                data_path=bt_data_path, instruments=bt_instruments,
+                                region=bt_region, BENCH=bt_benchmark,
+                            ),
                         )
 
                         # Extract period metrics
@@ -2075,10 +2089,14 @@ def run_backtest_from_weights():
         )
 
 
-# ==================== MAIN OPTIMIZATION ENDPOINTS ====================
 if __name__ == "__main__":
-    # Initialize factor cache
-    if not hasattr(app, "factor_cache"):
-        app.factor_cache = {}
+    # Eagerly spawn qlib worker pool so workers are warm at startup
+    from routes.factors import _get_worker_pool
+    _get_worker_pool()
 
-    app.run(debug=True, port=19787)
+    web_cfg = get_config()
+    app.run(
+        debug=web_cfg.get("server.web.debug", False),
+        host=web_cfg.get("server.web.host", "0.0.0.0"),
+        port=web_cfg.get("server.web.port", 19787),
+    )

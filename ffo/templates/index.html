@@ -339,6 +339,9 @@
                                 <button type="button" class="btn btn-success" onclick="evaluateFactor()">
                                     <i class="fas fa-play"></i> Evaluate New
                                 </button>
+                                <button type="button" class="btn btn-info ms-2 text-white" id="portfolioBacktestBtn" onclick="runPortfolioBacktest()" style="display: none;">
+                                    <i class="fas fa-wallet"></i> Run Portfolio Backtest
+                                </button>
                                 <button type="button" class="btn btn-warning ms-2" onclick="exportCurrentData()">
                                     <i class="fas fa-download"></i> Export Data
                                 </button>
@@ -427,19 +430,50 @@
                         </div>
                     </div>
                     
-                    <div class="col-lg-10 col-md-12 mt-3">
-                        <!-- Cumulative Chart -->
-                        <div class="card">
-                            <div class="card-header">
-                                <h5><i class="fas fa-chart-bar"></i> Cumulative Performance</h5>
-                            </div>
-                            <div class="card-body chart-container">
-                                <div class="export-buttons">
-                                    <button class="btn btn-sm btn-outline-secondary" onclick="exportChart('cumulativeChart')">
-                                        <i class="fas fa-image"></i>
-                                    </button>
+                    <!-- Portfolio Details Section (populated after portfolio backtest) -->
+                    <div class="col-lg-10 col-md-12 mt-3" id="portfolioDetailsSection" style="display: none;">
+                        <!-- Portfolio Value Chart -->
+                        <div class="card mb-3">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0"><i class="fas fa-chart-area"></i> Portfolio Value</h5>
+                                <div class="btn-group btn-group-sm" role="group" id="valueChartToggle">
+                                    <button type="button" class="btn btn-primary active" data-chart="total" onclick="switchValueChart('total')">Total Value</button>
+                                    <button type="button" class="btn btn-outline-primary" data-chart="stock" onclick="switchValueChart('stock')">Stock Value</button>
+                                    <button type="button" class="btn btn-outline-primary" data-chart="cash" onclick="switchValueChart('cash')">Cash</button>
                                 </div>
-                                <div id="cumulativeChart"></div>
+                            </div>
+                            <div class="card-body">
+                                <div id="portfolioValueChart" style="min-height: 400px;"></div>
+                            </div>
+                        </div>
+
+                        <!-- Holdings Table -->
+                        <div class="card mb-3">
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0"><i class="fas fa-briefcase"></i> Holdings</h5>
+                                <div class="d-flex align-items-center">
+                                    <label class="me-2 mb-0" style="white-space: nowrap;">Date:</label>
+                                    <input type="date" class="form-control form-control-sm" id="holdingsDateInput" onchange="displayHoldingsForDate()" style="width: 180px;">
+                                </div>
+                            </div>
+                            <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                                <table class="table table-sm table-striped" id="holdingsTable">
+                                    <thead><tr><th>Stock</th><th>Amount</th><th>Weight (%)</th></tr></thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Actions Table -->
+                        <div class="card mb-3">
+                            <div class="card-header">
+                                <h5><i class="fas fa-exchange-alt"></i> Trading Actions</h5>
+                            </div>
+                            <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                                <table class="table table-sm table-striped" id="actionsTable">
+                                    <thead><tr><th>Date</th><th>Stock</th><th>Action</th><th>Amount</th></tr></thead>
+                                    <tbody></tbody>
+                                </table>
                             </div>
                         </div>
                     </div>
@@ -1202,6 +1236,9 @@
             document.getElementById('portfolioMetricsCard').style.display = 'none';
             document.getElementById('chartsSection').style.display = 'none';
             document.getElementById('cachedExpressionsCard').style.display = 'none';
+            document.getElementById('portfolioBacktestBtn').style.display = 'none';
+            document.getElementById('portfolioDetailsSection').style.display = 'none';
+            currentPortfolioDetails = null;
         }
         
         // Cache search
@@ -1271,31 +1308,73 @@
             }
         }
         
+        // Run portfolio backtest for current factor
+        async function runPortfolioBacktest() {
+            const expression = document.getElementById('expression').value.trim();
+            if (!expression) {
+                alert('Please enter a factor expression');
+                return;
+            }
+
+            showLoading(true);
+
+            try {
+                const response = await axios.post('/api/run_portfolio_backtest', {
+                    expression: expression,
+                    market: document.getElementById('market').value,
+                    start_date: document.getElementById('startDate').value,
+                    end_date: document.getElementById('endDate').value,
+                });
+
+                if (response.data.success) {
+                    currentPortfolioMetrics = response.data.portfolio_metrics;
+                    displayPortfolioMetrics(response.data.portfolio_metrics);
+                    if (response.data.portfolio_details) {
+                        displayPortfolioDetails(response.data.portfolio_details);
+                    }
+                    showNotification('Portfolio backtest completed!', 'success');
+                } else {
+                    showNotification('Portfolio backtest failed: ' + response.data.message, 'error');
+                }
+            } catch (error) {
+                showNotification('Error running portfolio backtest: ' + error.message, 'error');
+            } finally {
+                showLoading(false);
+            }
+        }
+
         // Display results
         function displayResults(data) {
             // Display metrics
             if (data.metrics) {
                 displayMetrics(data.metrics);
             }
-            
+
             // Display charts
             if (data.daily_metrics && data.daily_metrics.length > 0) {
                 document.getElementById('chartsSection').style.display = 'flex';
                 displayDailyChart(data);
-                displayCumulativeChart(data);
             }
-            
+
             // Get performance stats
             getPerformanceStats();
-            
+
             // Display portfolio metrics if available (now included in the response)
             if (data.portfolio_metrics) {
                 currentPortfolioMetrics = data.portfolio_metrics;
                 displayPortfolioMetrics(data.portfolio_metrics);
+                if (data.portfolio_details) {
+                    displayPortfolioDetails(data.portfolio_details);
+                }
                 showNotification('Factor evaluation and portfolio backtest completed!', 'success');
             } else {
-                // Portfolio metrics not available in response
+                // Portfolio metrics not available — show the backtest button
                 document.getElementById('portfolioMetricsCard').style.display = 'none';
+            }
+
+            // Show portfolio backtest button when we have successful evaluation results
+            if (data.success !== false && data.expression) {
+                document.getElementById('portfolioBacktestBtn').style.display = 'inline-block';
             }
         }
         
@@ -1405,72 +1484,131 @@
         // Display distribution chart - REMOVED (not needed)
         // function displayDistributionChart(data) { ... }
         
-        // Display cumulative chart
-        function displayCumulativeChart(data) {
-            try {
-                if (!data.daily_metrics || data.daily_metrics.length === 0) {
-                    console.error('No daily metrics data available');
-                    return;
-                }
-                
-                // Sort by date to ensure correct cumulative calculation
-                const sortedData = [...data.daily_metrics].sort((a, b) => 
-                    new Date(a.date) - new Date(b.date)
-                );
-                
-                // Calculate cumulative IC and Rank IC
-                let cumulativeIC = 0;
-                let cumulativeRankIC = 0;
-                const dates = [];
-                const cumulativeICValues = [];
-                const cumulativeRankICValues = [];
-                
-                sortedData.forEach(d => {
-                    cumulativeIC += d.ic || 0;
-                    cumulativeRankIC += d.rank_ic || 0;
-                    dates.push(d.date);
-                    cumulativeICValues.push(cumulativeIC);
-                    cumulativeRankICValues.push(cumulativeRankIC);
-                });
-                
-                // Create traces
-                const traces = [
-                    {
-                        x: dates,
-                        y: cumulativeICValues,
-                        mode: 'lines',
-                        name: 'Cumulative IC',
-                        line: { color: 'blue', width: 2 }
-                    },
-                    {
-                        x: dates,
-                        y: cumulativeRankICValues,
-                        mode: 'lines',
-                        name: 'Cumulative Rank IC',
-                        line: { color: 'red', width: 2 }
-                    }
-                ];
-                
-                // Create layout
-                const layout = {
-                    title: `Cumulative IC - ${data.market ? data.market.toUpperCase() : ''}`,
-                    xaxis: { title: 'Date' },
-                    yaxis: { title: 'Cumulative Value' },
-                    hovermode: 'x unified',
-                    template: 'plotly_white',
-                    height: 400
+        // Portfolio details display functions
+        let currentPortfolioDetails = null;
+        let portfolioChartData = null;  // cached chart data for switching
+
+        function displayPortfolioDetails(details) {
+            if (!details) return;
+            currentPortfolioDetails = details;
+
+            // Show the section
+            document.getElementById('portfolioDetailsSection').style.display = 'block';
+
+            // Portfolio value chart — skip first day, cache data for tab switching
+            if (details.daily_summary && details.daily_summary.length > 1) {
+                const summary = details.daily_summary.slice(1);  // skip first day
+                portfolioChartData = {
+                    dates: summary.map(d => d.date),
+                    total: summary.map(d => d.account_value),
+                    stock: summary.map(d => d.stock_value),
+                    cash: summary.map(d => d.cash),
                 };
-                
-                // Apply dark theme if needed
-                if (isDarkMode) {
-                    layout.plot_bgcolor = '#1a1a2e';
-                    layout.paper_bgcolor = '#1a1a2e';
-                    layout.font = { color: '#e0e0e0' };
+                switchValueChart('total');
+            }
+
+            // Populate holdings date input
+            if (details.holdings) {
+                const dateInput = document.getElementById('holdingsDateInput');
+                const dates = Object.keys(details.holdings).sort();
+                // Store available trading dates for lookup
+                dateInput.dataset.tradingDates = JSON.stringify(dates);
+                if (dates.length > 0) {
+                    dateInput.min = dates[0];
+                    dateInput.max = dates[dates.length - 1];
+                    dateInput.value = dates[dates.length - 1];  // default to latest
+                    displayHoldingsForDate();
                 }
-                
-                Plotly.newPlot('cumulativeChart', traces, layout);
-            } catch (error) {
-                console.error('Error displaying cumulative chart:', error);
+            }
+
+            // Populate actions table
+            if (details.actions && details.actions.length > 0) {
+                const tbody = document.querySelector('#actionsTable tbody');
+                tbody.innerHTML = '';
+                // Show most recent first
+                const sortedActions = [...details.actions].sort((a, b) => b.date.localeCompare(a.date));
+                sortedActions.forEach(a => {
+                    const tr = document.createElement('tr');
+                    const actionClass = a.type === 'buy' ? 'text-success' : 'text-danger';
+                    const actionIcon = a.type === 'buy' ? 'fa-arrow-up' : 'fa-arrow-down';
+                    tr.innerHTML = `
+                        <td>${a.date}</td>
+                        <td><code>${a.stock}</code></td>
+                        <td class="${actionClass}"><i class="fas ${actionIcon}"></i> ${a.type.toUpperCase()}</td>
+                        <td>${a.amount.toLocaleString()}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            }
+        }
+
+        function switchValueChart(chartType) {
+            if (!portfolioChartData) return;
+
+            // Update button states
+            document.querySelectorAll('#valueChartToggle button').forEach(btn => {
+                if (btn.dataset.chart === chartType) {
+                    btn.className = 'btn btn-primary active btn-sm';
+                } else {
+                    btn.className = 'btn btn-outline-primary btn-sm';
+                }
+            });
+
+            const config = {
+                total: { y: portfolioChartData.total, name: 'Total Value', color: '#667eea' },
+                stock: { y: portfolioChartData.stock, name: 'Stock Value', color: '#28a745' },
+                cash:  { y: portfolioChartData.cash,  name: 'Cash',        color: '#ffc107' },
+            };
+            const c = config[chartType];
+            const traces = [{ x: portfolioChartData.dates, y: c.y, mode: 'lines', name: c.name, line: { color: c.color, width: 2 }, fill: 'tozeroy', fillcolor: c.color + '20' }];
+            const layout = {
+                title: c.name + ' Over Time',
+                xaxis: { title: 'Date' },
+                yaxis: { title: 'Value' },
+                hovermode: 'x unified',
+                template: 'plotly_white',
+                height: 400,
+            };
+            if (isDarkMode) {
+                layout.plot_bgcolor = '#1a1a2e';
+                layout.paper_bgcolor = '#1a1a2e';
+                layout.font = { color: '#e0e0e0' };
+            }
+            Plotly.newPlot('portfolioValueChart', traces, layout);
+        }
+
+        function displayHoldingsForDate() {
+            if (!currentPortfolioDetails || !currentPortfolioDetails.holdings) return;
+            const dateInput = document.getElementById('holdingsDateInput');
+            const selectedDate = dateInput.value;
+            const tradingDates = JSON.parse(dateInput.dataset.tradingDates || '[]');
+
+            // Find nearest trading date <= selected date
+            let matchDate = null;
+            for (let i = tradingDates.length - 1; i >= 0; i--) {
+                if (tradingDates[i] <= selectedDate) {
+                    matchDate = tradingDates[i];
+                    break;
+                }
+            }
+            if (!matchDate && tradingDates.length > 0) matchDate = tradingDates[0];
+
+            const holdings = currentPortfolioDetails.holdings[matchDate] || [];
+            const tbody = document.querySelector('#holdingsTable tbody');
+            tbody.innerHTML = '';
+            holdings.forEach(h => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><code>${h.stock}</code></td>
+                    <td>${h.amount.toLocaleString()}</td>
+                    <td>${h.weight.toFixed(2)}%</td>
+                `;
+                tbody.appendChild(tr);
+            });
+
+            // Show matched date if different from input
+            if (matchDate && matchDate !== selectedDate) {
+                dateInput.value = matchDate;
             }
         }
         

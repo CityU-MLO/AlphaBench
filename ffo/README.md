@@ -1,7 +1,7 @@
 # FFO — Factor Feature Oracle
 
-High-performance quantitative factor evaluation platform for A-share markets.
-Exposes a REST API, a typed Python API, a CLI (`ppo`), and an MCP server for LLM agents.
+High-performance quantitative factor evaluation platform with multi-market support (China A-share & US equities).
+Exposes a REST API, a typed Python API, a CLI (`ppo`), an MCP server for LLM agents, and a web UI with portfolio backtest visualization.
 
 ---
 
@@ -9,12 +9,17 @@ Exposes a REST API, a typed Python API, a CLI (`ppo`), and an MCP server for LLM
 
 - [Installation](#installation)
 - [Quick Start](#quick-start)
+- [Architecture](#architecture)
+- [Cache & Storage System](#cache--storage-system)
+- [Multi-Market Worker Pool](#multi-market-worker-pool)
 - [CLI Reference](#cli-reference)
 - [Python API](#python-api)
 - [Configuration](#configuration)
 - [MCP Server (LLM Agents)](#mcp-server-llm-agents)
 - [REST API Endpoints](#rest-api-endpoints)
+- [Web UI](#web-ui)
 - [Package Structure](#package-structure)
+- [Performance](#performance)
 - [Troubleshooting](#troubleshooting)
 
 ---
@@ -48,22 +53,219 @@ ppo status               # confirm it's running
 ```bash
 ppo eval "Rank($close, 20)"
 ppo eval "Mean($volume, 5) / Std($volume, 20)" --market csi500
+ppo eval "Rank($close, 20)" --market sp500    # US market
 ```
 
 **Python:**
 ```python
 from ffo.api import evaluate_factor
 
-result = evaluate_factor("Rank($close, 20)")
+result = evaluate_factor("Rank($close, 20)", market="csi300")
 if result.success:
     print(f"IC={result.metrics.ic:.4f}  Rank_IC={result.metrics.rank_ic:.4f}")
 ```
 
-### 3. Stop the backend
+### 3. Open the web UI
 
 ```bash
-ppo stop backend
+ppo start web   # http://127.0.0.1:19787
 ```
+
+The web UI provides interactive factor evaluation, daily IC charts, portfolio backtest with
+holdings/actions detail, and factor comparison.
+
+### 4. Stop services
+
+```bash
+ppo stop all
+```
+
+---
+
+## Architecture
+
+```
+                  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+                  │ Python API   │    │ CLI (ppo)    │    │ MCP Server   │
+                  │ ffo.api.*    │    │ ffo.cli      │    │ ffo.mcp      │
+                  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘
+                         │                   │                   │
+                         └───────────┬───────┘───────────────────┘
+                                     │  HTTP
+                              ┌──────▼──────┐
+                              │ Backend API  │ :19777
+                              │ Flask        │
+                              │ factors.py   │
+                              └──┬───────┬──┘
+                                 │       │
+                    ┌────────────▼─┐   ┌─▼────────────┐
+                    │ Factor Eval  │   │ Worker Pool   │
+                    │ Subprocesses │   │ (persistent)  │
+                    │ (IC/RankIC)  │   │               │
+                    └──────┬───────┘   │  ┌─────────┐  │
+                           │           │  │CN Worker │  │  qlib.init(cn_data)
+                    ┌──────▼───────┐   │  └─────────┘  │
+                    │ FactorStore  │   │  ┌─────────┐  │
+                    │ (SQLite +    │   │  │US Worker │  │  qlib.init(us_data)
+                    │  pickle)     │   │  └─────────┘  │
+                    └──────────────┘   └───────────────┘
+                                              │
+                              ┌───────────────▼──────────┐
+                              │ Web UI (Flask)            │ :19787
+                              │ Plotly charts, Holdings,  │
+                              │ Actions, Portfolio detail │
+                              └──────────────────────────┘
+```
+
+**Key components:**
+
+| Component | Purpose |
+|---|---|
+| **Backend API** (`backend_app.py`) | Flask server exposing `/factors/eval`, `/factors/check`, `/combination/*` |
+| **Factor Eval Subprocesses** (`utils/utils.py`) | Isolated `multiprocessing.Process` workers with hard timeout + kill. Each calls `qlib.init()` to compute IC/RankIC |
+| **FactorStore** (`utils/factor_store.py`) | Incremental daily IC cache in SQLite + factor scores on disk as pickle files |
+| **Worker Pool** (`utils/qlib_worker_pool.py`) | Two persistent processes (CN, US) for portfolio backtests. Each initialises qlib once and preserves the in-memory data cache across requests |
+| **Web UI** (`web_app.py`) | Interactive frontend with factor evaluation, daily IC charts, portfolio backtest visualisation (value chart, holdings table, trading actions) |
+
+---
+
+## Cache & Storage System
+
+FFO uses a two-layer caching system that enables incremental evaluation and avoids redundant computation.
+
+### Layer 1: Daily IC Cache (SQLite)
+
+Stored in `cache_data/factor_perf.sqlite`. Each row records the IC and Rank IC for a single
+factor on a single trading day:
+
+```
+PRIMARY KEY (expr_hash, market, label, date)
+```
+
+| Column | Type | Description |
+|---|---|---|
+| `expr_hash` | TEXT | SHA-256 of the normalised expression |
+| `market` | TEXT | Market universe (csi300, sp500, ...) |
+| `label` | TEXT | Return label used (e.g. close_return) |
+| `date` | TEXT | Trading date (YYYY-MM-DD) |
+| `ic` | REAL | Information Coefficient for that day |
+| `rank_ic` | REAL | Rank IC for that day |
+
+**Incremental updates:** When you evaluate a factor for `2023-01-01` to `2024-01-01`, the system
+checks which dates are already cached. If `2023-01-01` to `2023-06-30` exists, only
+`2023-07-01` to `2024-01-01` is computed. The results are merged automatically.
+
+```python
+# How it works internally
+missing = store.get_missing_ranges(expr_hash, market, label, start, end)
+# Returns: [("2023-07-01", "2024-01-01")]  — only the gap
+# If fully cached: []
+# If nothing cached: [("2023-01-01", "2024-01-01")]
+```
+
+**Summary metrics** (IC, ICIR, Rank IC, Rank ICIR) are computed on-the-fly from the daily
+values, so extending the date range seamlessly incorporates old + new data.
+
+### Layer 2: Factor Scores (Pickle on Disk)
+
+Raw factor scores (the per-stock, per-day signal values) are stored as pickle files:
+
+```
+cache_data/
+  factor_scores/
+    <expr_hash>/
+      csi300.pkl      # pd.DataFrame, MultiIndex (datetime, instrument), col: "score"
+      sp500.pkl
+```
+
+These are used by portfolio backtests (`backtest_by_scores`) to avoid recomputing the
+factor expression. Scores are merged incrementally with atomic writes (temp file + `os.replace`)
+to prevent corruption.
+
+### Cache Lifecycle
+
+```
+Request: evaluate "Rank($close, 20)" on csi300, 2023-01-01 → 2024-01-01
+
+1. Hash expression → expr_hash = "a1b2c3..."
+2. Query FactorStore: get_missing_ranges(expr_hash, "csi300", "close_return", "2023-01-01", "2024-01-01")
+3. If fully cached → return stored daily IC, compute summary → done (instant)
+4. If partially cached → compute only missing date ranges in subprocess
+5. Subprocess: qlib.init() → QlibDataLoader → compute IC/RankIC per day → save scores to disk
+6. Store new daily IC rows in SQLite, merge scores pickle
+7. Return combined results (old + new)
+```
+
+### Cache Management
+
+```bash
+ppo cache stats    # entries, score files, DB size
+ppo cache clear    # wipe everything
+```
+
+```python
+from ffo.api import get_cache_stats, clear_cache
+stats = get_cache_stats()
+clear_cache()
+```
+
+---
+
+## Multi-Market Worker Pool
+
+FFO supports both China A-share and US equity markets. Since qlib can only initialise one
+data provider at a time (global singleton), FFO runs **persistent worker processes** — one
+per region — so both markets are always warm and ready.
+
+### Supported Markets
+
+| Market | Region | Data Path | Benchmark | Instruments |
+|---|---|---|---|---|
+| `csi300` | cn | `~/.qlib/qlib_data/cn_data` | SH000300 | CSI 300 |
+| `csi500` | cn | `~/.qlib/qlib_data/cn_data` | SH000905 | CSI 500 |
+| `csi1000` | cn | `~/.qlib/qlib_data/cn_data` | SH000852 | CSI 1000 |
+| `sp500` | us | `~/.qlib/qlib_data/us_data` | ^gspc | S&P 500 |
+| `nasdaq100` | us | `~/.qlib/qlib_data/us_data` | ^ixic | NASDAQ 100 |
+
+### How the Worker Pool Works
+
+```
+Server starts
+  └── QlibWorkerPool spawns:
+        ├── CN Worker (Process) → qlib.init(cn_data) once
+        └── US Worker (Process) → qlib.init(us_data) once
+
+Request: backtest csi300 factor
+  └── Router → CN Worker (already warm)
+        └── backtest_by_scores() runs with cached qlib data
+        └── D.features() hits in-memory cache → ~2-5s (vs ~30s cold)
+
+Request: backtest sp500 factor
+  └── Router → US Worker (already warm, no interference with CN)
+```
+
+**Benefits:**
+- First backtest per region: ~30s (one-time data loading)
+- Subsequent backtests: ~2-5s (qlib's in-memory `H` cache is preserved)
+- Switching CN ↔ US: no penalty (separate processes)
+- Auto-restart on worker crash
+- Hard timeout with kill + restart if stuck
+
+### Adding a New Market
+
+Add an entry to `ffo/config/ffo.yaml`:
+
+```yaml
+markets:
+  # ... existing markets ...
+  my_market:
+    data_path: "~/.qlib/qlib_data/my_data"
+    region: "cn"          # or "us"
+    benchmark: "SH000001"
+```
+
+The worker pool picks up new regions automatically on restart. Markets sharing the
+same region reuse the same worker process.
 
 ---
 
@@ -154,11 +356,11 @@ from ffo.api import evaluate_factor
 
 result = evaluate_factor(
     expression="Rank($close, 20)",
-    market="csi300",       # csi300 | csi500 | csi1000
+    market="csi300",       # csi300 | csi500 | csi1000 | sp500 | nasdaq100
     start="2023-01-01",
     end="2024-01-01",
-    fast=True,             # IC only (default). False = full backtest
-    use_cache=True,
+    fast=True,             # IC only (default). False = IC + portfolio backtest
+    use_cache=True,        # Uses incremental daily IC cache
 )
 
 if result.success:
@@ -295,6 +497,24 @@ cache:
 qlib:
   data_path: ~/.qlib/qlib_data/cn_data
   region:    cn
+
+markets:
+  csi300:
+    data_path: "~/.qlib/qlib_data/cn_data"
+    region: "cn"
+    benchmark: "SH000300"
+  csi500:
+    data_path: "~/.qlib/qlib_data/cn_data"
+    region: "cn"
+    benchmark: "SH000905"
+  sp500:
+    data_path: "~/.qlib/qlib_data/us_data"
+    region: "us"
+    benchmark: "^gspc"
+  nasdaq100:
+    data_path: "~/.qlib/qlib_data/us_data"
+    region: "us"
+    benchmark: "^ixic"
 ```
 
 ### Override via environment variables
@@ -373,7 +593,7 @@ ppo start mcp --transport sse --port 8765
 | URI | Description |
 |---|---|
 | `ffo://operators` | List of all supported Qlib operators |
-| `ffo://markets` | Supported market universes (csi300, csi500, csi1000) |
+| `ffo://markets` | Supported market universes (csi300, csi500, csi1000, sp500, nasdaq100) |
 
 ### Direct MCP usage (Python SDK)
 
@@ -430,6 +650,20 @@ For full REST API documentation see [README_API.md](README_API.md).
 
 ---
 
+## Web UI
+
+The web UI (`ppo start web`, port 19787) provides:
+
+- **Single Factor Analysis**: Enter an expression, select market/date range, evaluate. See IC, Rank IC, ICIR, daily IC chart.
+- **Portfolio Backtest**: One-click backtest with TopkDropout strategy. View:
+  - Portfolio value chart (total value / stock value / cash — switchable tabs)
+  - Daily holdings table (date picker with calendar input)
+  - Trading actions log (buy/sell events detected from position diffs)
+- **Factor Comparison**: Evaluate multiple factors side-by-side, ranked by Rank IC.
+- **Factor Combination**: Optimise factor weights via LASSO or IC optimisation across multiple periods.
+
+---
+
 ## Package Structure
 
 ```
@@ -464,19 +698,26 @@ ffo/
 │   └── 04_config_and_cli.py
 │
 ├── routes/                  # Flask route handlers
-│   ├── factors.py           # /factors/check, /factors/eval
+│   ├── factors.py           # /factors/check, /factors/eval + worker pool
 │   └── combinations.py      # /combination/...
 │
 ├── utils/                   # Internal utilities
-│   ├── utils.py             # Cache, timeouts, parsing
-│   ├── execution_engine.py
-│   └── qlib_extend_ops.py
+│   ├── utils.py             # Subprocess workers, timeouts, IC computation
+│   ├── factor_store.py      # Incremental daily IC cache (SQLite + pickle)
+│   ├── qlib_worker_pool.py  # Persistent multi-region worker pool
+│   └── qlib_extend_ops.py   # Custom Qlib operators
 │
 ├── backtest/                # Backtesting (Qlib integration)
+│   └── qlib/
+│       └── single_alpha_backtest.py  # backtest_by_scores, backtest_by_single_alpha
+│
 ├── data/                    # Optimization pipelines
 ├── tests/                   # Test suite
-├── examples/                # Legacy usage examples
-├── templates/               # Web UI templates
+├── templates/               # Web UI (Jinja2 + Plotly + Bootstrap)
+│
+├── cache_data/              # Generated at runtime
+│   ├── factor_perf.sqlite   # Daily IC/RankIC cache
+│   └── factor_scores/       # Pickle files per (expr_hash, market)
 │
 ├── backend_app.py           # Flask app entry point (gunicorn target)
 ├── web_app.py               # Web UI Flask app
@@ -487,17 +728,29 @@ ffo/
 
 ## Performance
 
+### Factor Evaluation
+
 | Scenario | Method | Typical time (100 factors) |
 |---|---|---|
 | Single call | `evaluate_factor()` | ~5s each |
 | Sequential batch | `batch_evaluate_factors(parallel=False)` | ~500s |
-| Parallel (4 workers) | `batch_evaluate_factors(max_workers=4)` | ~130s |
 | Parallel (8 workers) | `batch_evaluate_factors(max_workers=8)` | ~70s |
-| Parallel (16 workers) | `batch_evaluate_factors(max_workers=16)` | ~50s |
+| Cached (any) | automatic | <100ms |
 
-Tips:
-- Use `fast=True` (default) to skip portfolio backtest — 5-10× faster
-- Results are cached in SQLite; repeated calls are instant
+### Portfolio Backtest
+
+| Scenario | Time |
+|---|---|
+| First backtest (cold start) | ~30s (Exchange + data loading) |
+| Subsequent backtest (warm worker) | ~2-5s (in-memory cache) |
+| Switch market (CN ↔ US) | No penalty (separate workers) |
+
+### Tips
+
+- Use `fast=True` (default) to skip portfolio backtest — 5-10x faster
+- Results are cached incrementally in SQLite; repeated calls with the same or overlapping date ranges are instant
+- Extending a date range only computes the missing dates, not the full range
+- The worker pool preserves qlib's in-memory cache, so repeated backtests on the same market are much faster
 - Set `use_cache=False` only when you need a fresh evaluation
 
 ---
@@ -569,7 +822,7 @@ ppo logs web           # last 50 lines of web UI log
 
 | File | Contents |
 |---|---|
-| `README.md` (this file) | Overview, CLI, Python API, configuration |
+| `README.md` (this file) | Overview, architecture, cache system, CLI, Python API, configuration |
 | [`README_API.md`](README_API.md) | Full REST API reference |
 | [`README_DESIGN.md`](README_DESIGN.md) | Architecture and design decisions |
 | [`ffo/demos/`](demos/) | Runnable end-to-end examples |

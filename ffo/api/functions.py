@@ -318,11 +318,15 @@ def batch_evaluate_factors(
     progress: bool = False,
 ) -> List[FactorResult]:
     """
-    Evaluate multiple factor expressions, optionally in parallel.
+    Evaluate multiple factor expressions efficiently.
 
-    This is the recommended way to evaluate many factors efficiently.
-    With ``parallel=True`` and ``max_workers=8``, throughput is ~6-10x
-    faster than sequential evaluation.
+    When ``fast=True`` (default), all expressions are sent in a single
+    HTTP request. The server loads Qlib data once and computes IC/RankIC
+    for all factors in one pass — typically 5-8x faster than per-factor
+    evaluation.
+
+    When ``fast=False``, factors are evaluated individually (with optional
+    parallel threads) so that portfolio backtests can run per factor.
 
     Args:
         expressions:  List of Qlib-style factor expressions to evaluate.
@@ -334,9 +338,13 @@ def batch_evaluate_factors(
         use_cache:    Use cache. Default: True.
         topk:         Long portfolio size. Default: 50.
         n_drop:       Rebalance drop count. Default: 5.
-        timeout:      Per-factor timeout (seconds). Default: 180.
-        parallel:     Evaluate in parallel using thread pool. Default: True.
-        max_workers:  Number of parallel threads. Default: 8.
+        timeout:      Timeout in seconds. For fast=True this is the total
+                      batch timeout; for fast=False it is per-factor.
+                      Default: 180.
+        parallel:     Evaluate in parallel using thread pool (only used
+                      when fast=False). Default: True.
+        max_workers:  Number of parallel threads (fast=False only).
+                      Default: 8.
         progress:     Print progress to stdout. Default: False.
 
     Returns:
@@ -346,7 +354,6 @@ def batch_evaluate_factors(
 
         results = batch_evaluate_factors(
             ["Rank($close, 20)", "Mean($volume, 5)", "Corr($close, $volume, 10)"],
-            parallel=True,
             fast=True,
             progress=True,
         )
@@ -355,6 +362,42 @@ def batch_evaluate_factors(
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
+    # ── Fast batch path: single HTTP request, server-side batch eval ──────
+    if fast and len(expressions) > 1:
+        payload = {
+            "expression": expressions,
+            "market": market,
+            "start": start,
+            "end": end,
+            "label": label,
+            "fast": True,
+            "use_cache": use_cache,
+            "topk": topk,
+            "n_drop": n_drop,
+            "timeout": timeout,
+        }
+        raw = _post("/factors/eval", payload, timeout=timeout + 60)
+
+        if raw is None:
+            return [
+                FactorResult(
+                    success=False,
+                    expression=expr,
+                    error="No response from FFO backend. Is it running? Try: ppo start backend",
+                )
+                for expr in expressions
+            ]
+
+        items = raw if isinstance(raw, list) else [raw]
+        results: List[FactorResult] = []
+        for i, expr in enumerate(expressions):
+            item = items[i] if i < len(items) else {}
+            results.append(
+                FactorResult.from_api_response({**item, "expression": expr})
+            )
+        return results
+
+    # ── Per-factor path: sequential or parallel HTTP requests ─────────────
     kwargs = dict(
         market=market,
         start=start,
@@ -377,8 +420,7 @@ def batch_evaluate_factors(
             print()
         return results
 
-    # Parallel path
-    index_map: Dict[Any, int] = {}
+    # Parallel path (fast=False with backtest)
     futures = {}
     results: List[Optional[FactorResult]] = [None] * len(expressions)
 
@@ -409,93 +451,11 @@ def batch_evaluate_factors(
     return [r for r in results if r is not None]
 
 
-def beta_evaluate_factors(
-    expressions: List[str],
-    market: str = "csi300",
-    start: str = "2023-01-01",
-    end: str = "2024-01-01",
-    label: str = "close_return",
-    device: str = "auto",
-    timeout: int = 600,
-) -> List[FactorResult]:
-    """
-    Large-scale factor evaluation using a single batch data load and
-    GPU-accelerated IC / RankIC computation.
-
-    Unlike :func:`batch_evaluate_factors` (which evaluates factors one-by-one
-    or in parallel threads), this function:
-
-    1. Packages **all** factor expressions into a single
-       ``compute_factor_data()`` call so Qlib loads the data only once.
-    2. Computes IC and RankIC for every factor simultaneously via PyTorch
-       matrix operations on GPU.
-
-    This is significantly more efficient for large batches (50+ factors)
-    because data loading overhead is amortised and GPU parallelism replaces
-    per-factor Python loops.
-
-    Args:
-        expressions: List of Qlib-style factor expressions to evaluate.
-        market:      Market universe. Default: "csi300".
-        start:       Evaluation start date. Default: "2023-01-01".
-        end:         Evaluation end date. Default: "2024-01-01".
-        label:       Return label type. Default: "close_return".
-        device:      PyTorch device: "auto" (use CUDA if available),
-                     "cuda", or "cpu". Default: "auto".
-        timeout:     Total timeout in seconds for the entire batch.
-                     Default: 600.
-
-    Returns:
-        List of :class:`FactorResult`, one per expression (same order as
-        input).
-
-    Example::
-
-        results = beta_evaluate_factors(
-            ["Rank($close, 20)", "Mean($volume, 5)", "Corr($close, $volume, 10)"],
-            device="auto",
-        )
-        for r in sorted(results, key=lambda x: -x.metrics.rank_ic):
-            print(f"{r.expression[:40]:40s}  IC={r.metrics.ic:.4f}")
-    """
-    payload = {
-        "expression": expressions,
-        "market": market,
-        "start": start,
-        "end": end,
-        "label": label,
-        "device": device,
-        "timeout": timeout,
-    }
-    raw = _post("/factors/eval_beta", payload, timeout=timeout + 60)
-
-    if raw is None:
-        return [
-            FactorResult(
-                success=False,
-                expression=expr,
-                error="No response from FFO backend. Is it running? Try: ppo start backend",
-            )
-            for expr in expressions
-        ]
-
-    items = raw if isinstance(raw, list) else [raw]
-
-    results: List[FactorResult] = []
-    for i, expr in enumerate(expressions):
-        item = items[i] if i < len(items) else {}
-        results.append(
-            FactorResult.from_api_response({**item, "expression": expr})
-        )
-
-    return results
-
-
 def check_factor(
     expression: str,
     market: str = "csi300",
     start: str = "2020-01-01",
-    end: str = "2020-01-15",
+    end: str = "2020-01-06",
 ) -> SyntaxCheckResult:
     """
     Validate a factor expression without running a full evaluation.
@@ -545,6 +505,75 @@ def check_factor(
         error=item.get("error") or item.get("message"),
         name=item.get("name", ""),
     )
+
+
+def batch_check_factors(
+    expressions: List[str],
+    market: str = "csi300",
+    start: str = "2020-01-01",
+    end: str = "2020-01-15",
+    timeout: int = 120,
+) -> List[SyntaxCheckResult]:
+    """
+    Validate multiple factor expressions in a single request.
+
+    Sends all expressions to the server in one HTTP call. The server
+    checks each expression against Qlib in a short date window.
+
+    Args:
+        expressions: List of factor expressions to validate.
+        market:      Market to use for validation data. Default: "csi300".
+        start:       Short date window start. Default: "2020-01-01".
+        end:         Short date window end. Default: "2020-01-15".
+        timeout:     Request timeout in seconds. Default: 120.
+
+    Returns:
+        List of SyntaxCheckResult, one per expression (same order as input).
+
+    Example::
+
+        results = batch_check_factors([
+            "Rank($close, 20)",
+            "InvalidOp($close)",
+            "Mean($volume, 5)",
+        ])
+        for r in results:
+            status = "VALID" if r.is_valid else f"INVALID: {r.error}"
+            print(f"{r.expression:40s}  {status}")
+    """
+    payload = {
+        "expression": expressions,
+        "instruments": market.upper(),
+        "start": start,
+        "end": end,
+    }
+    raw = _post("/factors/check", payload, timeout=timeout)
+
+    if raw is None:
+        return [
+            SyntaxCheckResult(
+                is_valid=False,
+                expression=expr,
+                error="No response from FFO backend. Is it running? Try: ppo start backend",
+            )
+            for expr in expressions
+        ]
+
+    items = raw if isinstance(raw, list) else [raw]
+
+    results: List[SyntaxCheckResult] = []
+    for i, expr in enumerate(expressions):
+        item = items[i] if i < len(items) else {}
+        results.append(
+            SyntaxCheckResult(
+                is_valid=bool(item.get("is_valid", item.get("success", False))),
+                expression=expr,
+                error=item.get("error") or item.get("error_message"),
+                name=item.get("name", ""),
+            )
+        )
+
+    return results
 
 
 def get_cache_stats() -> CacheStats:

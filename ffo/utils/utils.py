@@ -64,11 +64,12 @@ def expr_hash(expr: str) -> str:
 
 
 def cache_key(
-    expr: str, market: str, start: str, end: str, label: str, topk: int, n_drop: int
+    expr: str, market: str, start: str, end: str, label: str, topk: int, n_drop: int,
+    fast: bool = True,
 ) -> str:
     """Key = hash(expr) + params (keeps key short, ignores whitespace diffs)."""
     h = expr_hash(_normalize_expr(expr))
-    return f"{h}|{market}|{start}|{end}|{label}|{topk}|{n_drop}"
+    return f"{h}|{market}|{start}|{end}|{label}|{topk}|{n_drop}|fast={int(fast)}"
 
 
 def _normalize_expr(expr: str) -> str:
@@ -378,38 +379,44 @@ def _subprocess_wrapper(q: Queue, target, args):
         payload = target(*args)
         q.put((True, payload, None))
     except Exception as e:
-        # pass back a trimmed error string + type
-        q.put((False, f"{type(e).__name__}: {e}", type(e).__name__))
+        # pass back error message (without type prefix) + type separately
+        q.put((False, str(e), type(e).__name__))
 
 
 def _spawn_and_run(target, args: tuple, timeout: int) -> SubprocessResult:
     """
     Run `target(*args)` in a separate process, return its (ok, payload).
     If timeout exceeded, kill the process and return TIMEOUT.
+
+    NOTE: We read from the Queue BEFORE joining the process.
+    This avoids a deadlock when the result is large (e.g., pickled DataFrames):
+    the subprocess blocks in q.put() waiting for the pipe buffer to drain,
+    but p.join() waits for the process to exit — creating a deadlock.
     """
     q: Queue = Queue(maxsize=1)
     p = Process(target=_subprocess_wrapper, args=(q, target, args), daemon=True)
     p.start()
-    p.join(timeout)
 
-    if p.is_alive():
-        # Hard kill and clean
-        p.terminate()
-        p.join(5)
+    # Read result from queue first (with timeout) to avoid deadlock
+    try:
+        ok, payload, err_type = q.get(timeout=timeout)
+    except Exception:
+        # Timeout or empty — kill the process
+        if p.is_alive():
+            p.terminate()
+            p.join(5)
         return SubprocessResult(
             ok=False,
             payload=f"Timeout: execution exceeded {timeout}s",
             error_type="TIMEOUT",
         )
 
-    if q.empty():
-        return SubprocessResult(
-            ok=False,
-            payload="No result returned from subprocess.",
-            error_type="NO_RESULT",
-        )
+    # Now safe to join — process should exit quickly after queue is drained
+    p.join(10)
+    if p.is_alive():
+        p.terminate()
+        p.join(5)
 
-    ok, payload, err_type = q.get_nowait()
     return SubprocessResult(ok=ok, payload=payload, error_type=err_type)
 
 
@@ -468,19 +475,34 @@ def summarize_ic_rankic(
 # Child-process workers
 # -----------------------------
 def _child_eval_expr(
-    expr: str, market: str, start: str, end: str, label: str
+    expr: str, market: str, start: str, end: str, label: str,
+    return_scores: bool = False,
+    data_path: str = None, region: str = None,
+    scores_save_dir: str = None,
 ) -> Dict[str, Any]:
     """
     Runs inside child process. Heavy libs are imported here, so the parent can hard-kill safely.
+
+    Args:
+        return_scores: If True, include pickled factor scores DataFrame in the result
+            (sent via Queue — may deadlock with very large DataFrames).
+        data_path: Qlib data directory (overrides DEFAULT_PROVIDER_URI).
+        region: Qlib region (overrides DEFAULT_REGION).
+        scores_save_dir: If provided, save factor scores to disk at
+            {scores_save_dir}/{expr_hash}/{market}.pkl (preferred over return_scores).
     """
+    import pickle as _pickle
     import qlib
     from backtest.qlib.dataloader import compute_factor_data
 
     # Per-process init (safer across OS / forks)
     import logging
 
+    provider_uri = data_path or DEFAULT_PROVIDER_URI
+    qlib_region = region or DEFAULT_REGION
+
     logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
-    qlib.init(provider_uri=DEFAULT_PROVIDER_URI, region=DEFAULT_REGION)
+    qlib.init(provider_uri=provider_uri, region=qlib_region)
 
     factor_list = [{"name": "api_factor", "expression": expr}]
     out = compute_factor_data(
@@ -498,7 +520,25 @@ def _child_eval_expr(
         or "api_factor" not in out["feature"]
         or "LABEL" not in out["label"]
     ):
-        raise RuntimeError("Missing feature/label output from compute_factor_data")
+        # Gracefully handle empty date ranges (e.g., non-trading days only)
+        # instead of raising, which would break incremental cache for prefix/suffix gaps
+        import logging as _logging
+        _logging.getLogger("_child_eval_expr").warning(
+            "No data for %s in [%s, %s] — likely non-trading days", expr[:60], start, end,
+        )
+        return {
+            "success": True,
+            "expression": expr,
+            "market": market,
+            "start_date": start,
+            "end_date": end,
+            "metrics": {
+                "ic": 0.0, "rank_ic": 0.0, "ir": 0.0,
+                "icir": 0.0, "rank_icir": 0.0, "turnover": 0.0, "n_dates": 0,
+            },
+            "daily_metrics": [],
+            "timestamp": pd.Timestamp.utcnow().isoformat(),
+        }
 
     f_s: pd.Series = out["feature"]["api_factor"]
     y_s: pd.Series = out["label"]["LABEL"]
@@ -530,7 +570,7 @@ def _child_eval_expr(
                 }
             )
 
-    return {
+    result = {
         "success": True,
         "expression": expr,
         "market": market,
@@ -549,17 +589,60 @@ def _child_eval_expr(
         "timestamp": pd.Timestamp.utcnow().isoformat(),
     }
 
+    # Save factor scores to disk (preferred — avoids large Queue transfers)
+    # Merge with existing scores to preserve data from previous incremental runs
+    if scores_save_dir:
+        import os as _os
+        import tempfile as _tempfile
+        scores_df = f_s.to_frame("score")
+        eh = expr_hash(_normalize_expr(expr))
+        score_dir = _os.path.join(scores_save_dir, eh)
+        _os.makedirs(score_dir, exist_ok=True)
+        score_path = _os.path.join(score_dir, f"{market.lower()}.pkl")
+
+        # Merge with existing scores if present
+        if _os.path.exists(score_path):
+            try:
+                existing = pd.read_pickle(score_path)
+                scores_df = pd.concat([existing, scores_df])
+                scores_df = scores_df[~scores_df.index.duplicated(keep="last")]
+                scores_df = scores_df.sort_index()
+            except Exception:
+                pass  # overwrite on merge failure
+
+        # Atomic write: temp file + rename
+        fd, tmp_path = _tempfile.mkstemp(dir=score_dir, suffix=".pkl.tmp")
+        try:
+            _os.close(fd)
+            scores_df.to_pickle(tmp_path)
+            _os.replace(tmp_path, score_path)
+        except Exception:
+            if _os.path.exists(tmp_path):
+                _os.unlink(tmp_path)
+            raise
+        result["scores_saved"] = True
+    elif return_scores:
+        # Fallback: send via Queue (may deadlock with very large DataFrames)
+        scores_df = f_s.to_frame("score")
+        result["factor_scores_bytes"] = _pickle.dumps(scores_df)
+
+    return result
+
 
 def _child_check_expr(
-    expr: str, instruments: str, start_time: str, end_time: str
+    expr: str, instruments: str, start_time: str, end_time: str,
+    data_path: str = None, region: str = None,
 ) -> Dict[str, Any]:
     import qlib
     from qlib.data.dataset.loader import QlibDataLoader
 
     import logging
 
+    provider_uri = data_path or DEFAULT_PROVIDER_URI
+    qlib_region = region or DEFAULT_REGION
+
     logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
-    qlib.init(provider_uri=DEFAULT_PROVIDER_URI, region=DEFAULT_REGION)
+    qlib.init(provider_uri=provider_uri, region=qlib_region)
 
     cfg = {"feature": ([expr], ["test_expr"])}
     dl = QlibDataLoader(config=cfg)
@@ -606,38 +689,166 @@ def _child_check_expr(
     return {"success": True, "nan_ratio": nan_ratio}
 
 
+def _check_single_column(col_name: str, feat_col: pd.Series) -> Dict[str, Any]:
+    """Check a single feature column for validity (used by batch check)."""
+    if feat_col.empty or feat_col.dropna().empty:
+        return {
+            "success": False,
+            "error_message": "Empty feature matrix",
+            "error_type": "EMPTY_DATA",
+        }
+    nan_ratio = float(feat_col.isna().mean())
+    if nan_ratio > 0.01:
+        return {
+            "success": False,
+            "error_message": f"High NaN ratio: {nan_ratio:.2%}",
+            "error_type": "HIGH_NAN_RATIO",
+        }
+    return {"success": True, "nan_ratio": nan_ratio}
+
+
+def _classify_qlib_error(error_message: str) -> str:
+    """Classify a Qlib error message into an error type."""
+    if re.search(r"missing \d+ required positional argument", error_message):
+        return "INVALID_PARA"
+    elif re.search(r"The operator \[.*?\] is not registered", error_message):
+        return "UNREGISTERED_OPERATOR"
+    return "UNKNOWN_ERROR"
+
+
+def _child_batch_check(
+    factors: List[Dict[str, str]],
+    instruments: str,
+    start_time: str,
+    end_time: str,
+    data_path: str = None, region: str = None,
+) -> Dict[str, Any]:
+    """
+    Batch syntax check: load ALL expressions in a single QlibDataLoader call.
+    If the batch load fails (e.g. one bad expression), fall back to checking
+    each expression individually — still only one qlib.init().
+    """
+    import qlib
+    from qlib.data.dataset.loader import QlibDataLoader
+    import logging
+
+    provider_uri = data_path or DEFAULT_PROVIDER_URI
+    qlib_region = region or DEFAULT_REGION
+
+    logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
+    qlib.init(provider_uri=provider_uri, region=qlib_region)
+
+    names = [f["name"] for f in factors]
+    fields = [f["expression"] for f in factors]
+
+    # Try loading all expressions at once
+    cfg = {"feature": (fields, names)}
+    dl = QlibDataLoader(config=cfg)
+    try:
+        df = dl.load(instruments=instruments, start_time=start_time, end_time=end_time)
+        feat = df.get("feature", pd.DataFrame())
+    except Exception:
+        feat = None  # batch load failed, fall back to per-expression check
+
+    results = []
+
+    if feat is not None and not feat.empty:
+        # Batch load succeeded — check each column
+        for nm, expr in zip(names, fields):
+            if nm in feat.columns:
+                check = _check_single_column(nm, feat[nm])
+                results.append({"name": nm, "expression": expr, **check})
+            else:
+                results.append({
+                    "name": nm, "expression": expr,
+                    "success": False, "error_message": "Column missing from batch load",
+                    "error_type": "EMPTY_DATA",
+                })
+    else:
+        # Batch load failed or empty — check each expression individually
+        # (still uses the same qlib.init(), so no redundant init overhead)
+        for nm, expr in zip(names, fields):
+            single_cfg = {"feature": ([expr], [nm])}
+            single_dl = QlibDataLoader(config=single_cfg)
+            try:
+                single_df = single_dl.load(
+                    instruments=instruments,
+                    start_time=start_time,
+                    end_time=end_time,
+                )
+                single_feat = single_df.get("feature", pd.DataFrame())
+            except Exception as e:
+                error_message = str(e)
+                results.append({
+                    "name": nm, "expression": expr,
+                    "success": False, "error_message": error_message,
+                    "error_type": _classify_qlib_error(error_message),
+                })
+                continue
+
+            if single_feat.empty or nm not in single_feat.columns:
+                results.append({
+                    "name": nm, "expression": expr,
+                    "success": False, "error_message": "Empty feature matrix",
+                    "error_type": "EMPTY_DATA",
+                })
+            else:
+                check = _check_single_column(nm, single_feat[nm])
+                results.append({"name": nm, "expression": expr, **check})
+
+    return {"success": True, "count": len(results), "results": results}
+
+
+_LABEL_MAP = {
+    "close_return": "Ref($close, -1)/$close - 1",
+    "close_return_lag": "Ref($close, -2)/Ref($close, -1) - 1",
+    "close": "Ref($close, -1)",
+}
+
+
 def _child_batch_eval(
     factors: List[Dict[str, str]],
     instruments: str,
     start: str,
     end: str,
     label_spec: str,
-    n_jobs: int = 1,
+    scores_save_dir: str = None,
+    data_path: str = None, region: str = None,
 ) -> Dict[str, Any]:
     """
     Efficient batch IC/RankIC:
     - Load all factor columns + one returns label in a single dataloader call
     - For each date, compute corrwith across columns (Pearson), and Spearman by ranking
+
+    Args:
+        scores_save_dir: If provided, save each factor's scores to disk at
+            {scores_save_dir}/{expr_hash}/{market}.pkl
+        data_path: Qlib data directory (overrides DEFAULT_PROVIDER_URI).
+        region: Qlib region (overrides DEFAULT_REGION).
     """
+    import os as _os
     import qlib
     from qlib.data.dataset.loader import QlibDataLoader
-    import os
-
-    # Configure parallel loading
-    if n_jobs > 1:
-        os.environ["QLIB_ENABLE_PARALLEL"] = str(n_jobs)
-    else:
-        os.environ["QLIB_ENABLE_PARALLEL"] = "0"
-
     import logging
 
+    provider_uri = data_path or DEFAULT_PROVIDER_URI
+    qlib_region = region or DEFAULT_REGION
+
     logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
-    qlib.init(provider_uri=DEFAULT_PROVIDER_URI, region=DEFAULT_REGION)
+    qlib.init(provider_uri=provider_uri, region=qlib_region)
+
+    # Translate friendly label name to Qlib expression
+    label_expr = _LABEL_MAP.get(label_spec)
+    if label_expr is None:
+        raise ValueError(
+            f"Unsupported label: {label_spec}. "
+            f"Supported: {list(_LABEL_MAP.keys())}"
+        )
 
     names = [f["name"] for f in factors]
     fields = [f["expression"] for f in factors]
 
-    cfg = {"feature": (fields, names), "label": ([label_spec], ["RET"])}
+    cfg = {"feature": (fields, names), "label": ([label_expr], ["RET"])}
     dl = QlibDataLoader(config=cfg)
     data = dl.load(instruments=instruments, start_time=start, end_time=end)
 
@@ -646,6 +857,40 @@ def _child_batch_eval(
 
     X = data["feature"]  # MultiIndex (datetime, instrument) columns per factor
     y = data["label"]["RET"]  # Series on same MI
+
+    # Save factor scores to disk (before dropna, to preserve full cross-section)
+    # Merges with existing scores to preserve data from previous incremental runs
+    if scores_save_dir:
+        import tempfile as _tmpfile
+        for nm in X.columns:
+            expr = next((f["expression"] for f in factors if f["name"] == nm), "")
+            if expr:
+                eh = expr_hash(_normalize_expr(expr))
+                score_dir = _os.path.join(scores_save_dir, eh)
+                _os.makedirs(score_dir, exist_ok=True)
+                score_path = _os.path.join(score_dir, f"{instruments}.pkl")
+                scores_df = X[[nm]].rename(columns={nm: "score"})
+
+                # Merge with existing scores if present
+                if _os.path.exists(score_path):
+                    try:
+                        existing = pd.read_pickle(score_path)
+                        scores_df = pd.concat([existing, scores_df])
+                        scores_df = scores_df[~scores_df.index.duplicated(keep="last")]
+                        scores_df = scores_df.sort_index()
+                    except Exception:
+                        pass  # overwrite on merge failure
+
+                # Atomic write
+                fd, tmp_path = _tmpfile.mkstemp(dir=score_dir, suffix=".pkl.tmp")
+                try:
+                    _os.close(fd)
+                    scores_df.to_pickle(tmp_path)
+                    _os.replace(tmp_path, score_path)
+                except Exception:
+                    if _os.path.exists(tmp_path):
+                        _os.unlink(tmp_path)
+                    raise
 
     # Align and drop NA once
     df = X.join(y.rename("RET"), how="inner").dropna()
@@ -685,8 +930,16 @@ def _child_batch_eval(
     ic_table = pd.concat(ic_rows, axis=1).T  # shape: n_dates x n_factors
     ric_table = pd.concat(ric_rows, axis=1).T
 
-    # Summaries
+    # Format date strings for daily metrics
+    date_strs = [
+        d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)
+        for d in uniq_dates
+    ]
+
+    # Summaries + daily metrics per factor
     results: List[Dict[str, Any]] = []
+    daily_metrics_per_factor: Dict[str, List[Dict]] = {}
+
     for nm in X.columns:
         ic_series = ic_table[nm].dropna()
         ric_series = ric_table[nm].dropna()
@@ -703,288 +956,36 @@ def _child_batch_eval(
                 "name": nm,
                 "expression": expr,
                 "success": True,
+                "market": instruments,
+                "start_date": start,
+                "end_date": end,
                 "timestamp": pd.Timestamp.utcnow().isoformat(),
                 "metrics": {
                     "ic": ic_mean,
+                    "ir": _ir(ic_mean, ic_std),
                     "icir": _ir(ic_mean, ic_std),
                     "rank_ic": ric_mean,
                     "rank_icir": _ir(ric_mean, ric_std),
+                    "turnover": 0.0,
                     "n_dates": int(len(ic_series.index)),
                 },
             }
         )
 
-    return {
-        "success": True,
-        "count": len(results),
-        "results": results,
-        "timestamp": pd.Timestamp.utcnow().isoformat(),
-    }
-
-
-# -----------------------------
-# GPU-accelerated batch IC / RankIC (beta)
-# -----------------------------
-def _rankdata_torch(x: "torch.Tensor") -> "torch.Tensor":
-    """
-    Vectorized average rank for all columns simultaneously.
-
-    Args:
-        x: (n, m) float32 tensor — ranked column-wise.
-
-    Returns:
-        (n, m) float32 tensor of ranks (1-indexed, average method for ties).
-
-    Method: avg_rank = (forward_rank + backward_rank) / 2
-    where backward_rank is the rank when sorting descending, converted
-    to the same ascending scale (n+1 - bwd_pos).
-    """
-    import torch
-
-    n, m = x.shape
-    pos = (
-        torch.arange(n, dtype=torch.float32, device=x.device)
-        .unsqueeze(1)
-        .expand(n, m)
-    )
-
-    fwd_idx = x.argsort(dim=0, stable=True)
-    fwd_rank = torch.empty(n, m, dtype=torch.float32, device=x.device)
-    fwd_rank.scatter_(0, fwd_idx, pos + 1.0)
-
-    bwd_idx = (-x).argsort(dim=0, stable=True)
-    bwd_rank = torch.empty(n, m, dtype=torch.float32, device=x.device)
-    bwd_rank.scatter_(0, bwd_idx, pos + 1.0)
-
-    return (fwd_rank + (n + 1.0 - bwd_rank)) * 0.5
-
-
-def _gpu_batch_ic_rankic(
-    X: pd.DataFrame,
-    y: pd.Series,
-    device: Optional[str] = None,
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    GPU-accelerated batch IC (Pearson) and RankIC (Spearman via rank transform)
-    computed per date for all factors simultaneously.
-
-    Processes all factor columns in a single matrix operation per date,
-    making it dramatically faster than per-factor pandas loops when
-    evaluating dozens or hundreds of factors.
-
-    Falls back to CPU if CUDA is unavailable.
-
-    Args:
-        X:      Feature DataFrame (MultiIndex with 'datetime' level), shape
-                (n_samples, n_factors).  Must be NaN-free after alignment.
-        y:      Label Series aligned to X.  Must be NaN-free.
-        device: PyTorch device string.  Defaults to 'cuda' if available,
-                else 'cpu'.  Pass 'cpu' to force CPU mode.
-
-    Returns:
-        ic_table:  DataFrame (n_dates, n_factors) of daily IC values.
-        ric_table: DataFrame (n_dates, n_factors) of daily RankIC values.
-    """
-    import torch
-
-    if device is None or device == "auto":
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-
-    dates_arr = X.index.get_level_values("datetime").values
-    uniq_dates = np.unique(dates_arr)
-    factor_names = X.columns.tolist()
-
-    # Pre-convert to float32 numpy arrays once to avoid repeated dtype conversion
-    X_vals = X.values.astype(np.float32)
-    y_vals = y.values.astype(np.float32)
-
-    ic_rows: List = []
-    ric_rows: List = []
-
-    for d in uniq_dates:
-        mask = dates_arr == d
-        Xd_np = X_vals[mask]  # (n_stocks, n_factors)
-        yd_np = y_vals[mask]  # (n_stocks,)
-
-        n = Xd_np.shape[0]
-        if n < 2:
-            nan_s = pd.Series([float("nan")] * len(factor_names), index=factor_names)
-            ic_rows.append(nan_s)
-            ric_rows.append(nan_s.copy())
-            continue
-
-        Xd = torch.as_tensor(Xd_np, device=device)  # (n, F)
-        yd = torch.as_tensor(yd_np, device=device)  # (n,)
-
-        # ── IC: Pearson correlation of each factor column with yd ─────────────
-        Xd_c = Xd - Xd.mean(dim=0, keepdim=True)  # (n, F)
-        yd_c = yd - yd.mean()  # (n,)
-
-        ic_num = Xd_c.T @ yd_c  # (F,)
-        ic_den = Xd_c.norm(dim=0) * yd_c.norm() + 1e-8
-        ic = ic_num / ic_den  # (F,)
-
-        # ── RankIC: Pearson on average ranks ──────────────────────────────────
-        Xd_r = _rankdata_torch(Xd)  # (n, F)
-        yd_r = _rankdata_torch(yd.unsqueeze(1)).squeeze(1)  # (n,)
-
-        Xr_c = Xd_r - Xd_r.mean(dim=0, keepdim=True)
-        yr_c = yd_r - yd_r.mean()
-
-        ric_num = Xr_c.T @ yr_c
-        ric_den = Xr_c.norm(dim=0) * yr_c.norm() + 1e-8
-        ric = ric_num / ric_den
-
-        ic_rows.append(pd.Series(ic.cpu().numpy(), index=factor_names))
-        ric_rows.append(pd.Series(ric.cpu().numpy(), index=factor_names))
-
-    ic_table = pd.DataFrame(ic_rows, index=uniq_dates, columns=factor_names)
-    ric_table = pd.DataFrame(ric_rows, index=uniq_dates, columns=factor_names)
-
-    return ic_table, ric_table
-
-
-def _child_batch_eval_beta(
-    factors: List[Dict[str, str]],
-    instruments: str,
-    start: str,
-    end: str,
-    label_spec: str,
-    device: str = "auto",
-) -> Dict[str, Any]:
-    """
-    Beta batch evaluator: load ALL factors in a single compute_factor_data()
-    call, then compute IC / RankIC on GPU via PyTorch.
-
-    Compared to evaluating factors one-by-one, this approach:
-    - Issues only ONE Qlib data-loader call regardless of factor count.
-    - Runs matrix-level IC / RankIC on the GPU for all factors at once.
-
-    Runs inside a child process (safe to hard-kill on timeout).
-
-    Args:
-        factors:      List of {"name": str, "expression": str}.
-        instruments:  Market universe string (e.g. "csi300").
-        start:        Evaluation start date "YYYY-MM-DD".
-        end:          Evaluation end date "YYYY-MM-DD".
-        label_spec:   Label name accepted by compute_factor_data
-                      ("close_return", "close_return_lag", "close").
-        device:       PyTorch device: "auto", "cuda", or "cpu".
-
-    Returns:
-        Dict with "success", "count", "results", "device", "timestamp".
-    """
-    import qlib
-    import logging
-    from backtest.qlib.dataloader import compute_factor_data  # triggers module-level qlib.init
-
-    # Re-init with project defaults (same pattern as _child_eval_expr)
-    logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
-    qlib.init(provider_uri=DEFAULT_PROVIDER_URI, region=DEFAULT_REGION)
-
-    # Ensure every factor has a unique name
-    factor_list: List[Dict[str, str]] = []
-    for i, f in enumerate(factors):
-        name = (f.get("name") or "").strip() or f"__beta_factor_{i}__"
-        factor_list.append({"name": name, "expression": f["expression"]})
-
-    # Single batched Qlib data load via compute_factor_data
-    data = compute_factor_data(
-        factor_definitions=factor_list,
-        label=label_spec,
-        instruments=instruments.lower(),
-        start_time=start,
-        end_time=end,
-    )
-
-    if data is None or "feature" not in data or "label" not in data:
-        exprs = [fl["expression"] for fl in factor_list]
-        raise RuntimeError(
-            f"compute_factor_data returned None or missing columns "
-            f"(likely an invalid expression). "
-            f"Expressions tried: {exprs}"
-        )
-
-    X: pd.DataFrame = data["feature"]  # MultiIndex (datetime, instrument) x n_factors
-    y: pd.Series = data["label"]["LABEL"]
-
-    # Align and drop any remaining NaN in one pass
-    joined = X.join(y.rename("__LABEL__"), how="inner").dropna()
-    if joined.empty:
-        raise RuntimeError("Empty aligned feature/label data after dropna")
-
-    X_clean = joined.drop(columns=["__LABEL__"])
-    y_clean = joined["__LABEL__"]
-
-    # Resolve device
-    actual_device = device
-    if device == "auto":
-        try:
-            import torch
-
-            actual_device = "cuda" if torch.cuda.is_available() else "cpu"
-        except ImportError:
-            actual_device = "cpu"
-
-    # GPU-accelerated IC / RankIC for all factors simultaneously
-    ic_table, ric_table = _gpu_batch_ic_rankic(X_clean, y_clean, device=actual_device)
-
-    # Build per-factor result dicts
-    name_to_expr: Dict[str, str] = {
-        fl["name"]: f["expression"] for fl, f in zip(factor_list, factors)
-    }
-
-    results: List[Dict[str, Any]] = []
-    for fl in factor_list:
-        nm = fl["name"]
-        if nm not in X_clean.columns:
-            results.append(
-                {
-                    "name": nm,
-                    "expression": name_to_expr.get(nm, ""),
-                    "success": False,
-                    "error": "Factor column not found in loaded data",
-                    "metrics": {
-                        "ic": 0.0,
-                        "icir": 0.0,
-                        "rank_ic": 0.0,
-                        "rank_icir": 0.0,
-                        "n_dates": 0,
-                    },
-                }
-            )
-            continue
-
-        ic_s = ic_table[nm].dropna()
-        ric_s = ric_table[nm].dropna()
-
-        ic_m = float(ic_s.mean()) if len(ic_s) else 0.0
-        ic_sd = float(ic_s.std(ddof=1)) if len(ic_s) > 1 else 0.0
-        ric_m = float(ric_s.mean()) if len(ric_s) else 0.0
-        ric_sd = float(ric_s.std(ddof=1)) if len(ric_s) > 1 else 0.0
-
-        results.append(
-            {
-                "name": nm,
-                "expression": name_to_expr.get(nm, ""),
-                "success": True,
-                "device": actual_device,
-                "timestamp": pd.Timestamp.utcnow().isoformat(),
-                "metrics": {
-                    "ic": ic_m,
-                    "icir": _ir(ic_m, ic_sd),
-                    "rank_ic": ric_m,
-                    "rank_icir": _ir(ric_m, ric_sd),
-                    "n_dates": int(len(ic_s)),
-                },
-            }
-        )
+        # Build daily metrics for this factor
+        factor_daily = []
+        for i, d_str in enumerate(date_strs):
+            d_ts = uniq_dates[i]
+            ic_val = float(ic_table.iloc[i][nm]) if d_ts in ic_series.index else 0.0
+            ric_val = float(ric_table.iloc[i][nm]) if d_ts in ric_series.index else 0.0
+            factor_daily.append({"date": d_str, "ic": ic_val, "rank_ic": ric_val})
+        daily_metrics_per_factor[nm] = factor_daily
 
     return {
         "success": True,
         "count": len(results),
         "results": results,
-        "device": actual_device,
+        "daily_metrics_per_factor": daily_metrics_per_factor,
         "timestamp": pd.Timestamp.utcnow().isoformat(),
     }
 
@@ -993,15 +994,40 @@ def _child_batch_eval_beta(
 # Public API (used by server)
 # -----------------------------
 def run_eval_with_timeout(
-    expr: str, market: str, start: str, end: str, label: str, timeout: int
+    expr: str, market: str, start: str, end: str, label: str, timeout: int,
+    return_scores: bool = False,
+    data_path: str = None, region: str = None,
+    scores_save_dir: str = None,
 ) -> SubprocessResult:
-    return _spawn_and_run(_child_eval_expr, (expr, market, start, end, label), timeout)
+    return _spawn_and_run(
+        _child_eval_expr,
+        (expr, market, start, end, label, return_scores, data_path, region, scores_save_dir),
+        timeout,
+    )
 
 
 def run_check_with_timeout(
-    expr: str, instruments: str, start: str, end: str, timeout: int
+    expr: str, instruments: str, start: str, end: str, timeout: int,
+    data_path: str = None, region: str = None,
 ) -> SubprocessResult:
-    return _spawn_and_run(_child_check_expr, (expr, instruments, start, end), timeout)
+    return _spawn_and_run(
+        _child_check_expr, (expr, instruments, start, end, data_path, region), timeout
+    )
+
+
+def run_batch_check_with_timeout(
+    factors: List[Dict[str, str]],
+    instruments: str,
+    start: str,
+    end: str,
+    timeout: int,
+    data_path: str = None, region: str = None,
+) -> SubprocessResult:
+    return _spawn_and_run(
+        _child_batch_check,
+        (factors, instruments, start, end, data_path, region),
+        timeout,
+    )
 
 
 def run_batch_with_timeout(
@@ -1011,47 +1037,16 @@ def run_batch_with_timeout(
     end: str,
     label_spec: str,
     timeout: int,
-    n_jobs: int = 1,
+    scores_save_dir: str = None,
+    data_path: str = None, region: str = None,
 ) -> SubprocessResult:
     return _spawn_and_run(
         _child_batch_eval,
-        (factors, instruments, start, end, label_spec, n_jobs),
+        (factors, instruments, start, end, label_spec, scores_save_dir, data_path, region),
         timeout,
     )
 
 
-def run_batch_beta_with_timeout(
-    factors: List[Dict[str, str]],
-    instruments: str,
-    start: str,
-    end: str,
-    label_spec: str,
-    timeout: int,
-    device: str = "auto",
-) -> SubprocessResult:
-    """
-    Run _child_batch_eval_beta in a child process with a hard timeout.
-
-    Loads all factors in one compute_factor_data() call, then uses
-    GPU-accelerated (PyTorch) IC / RankIC computation.
-
-    Args:
-        factors:     List of {"name": str, "expression": str}.
-        instruments: Market universe (e.g. "csi300").
-        start:       Start date "YYYY-MM-DD".
-        end:         End date "YYYY-MM-DD".
-        label_spec:  Label name ("close_return", "close_return_lag", "close").
-        timeout:     Hard timeout in seconds for the entire batch.
-        device:      PyTorch device: "auto", "cuda", or "cpu".
-
-    Returns:
-        SubprocessResult with ok=True and payload=dict on success.
-    """
-    return _spawn_and_run(
-        _child_batch_eval_beta,
-        (factors, instruments, start, end, label_spec, device),
-        timeout,
-    )
 
 
 def normalize_factors_from_expression_field(data: dict):

@@ -479,6 +479,7 @@ def _child_eval_expr(
     return_scores: bool = False,
     data_path: str = None, region: str = None,
     scores_save_dir: str = None,
+    forward_n: int = 1,
 ) -> Dict[str, Any]:
     """
     Runs inside child process. Heavy libs are imported here, so the parent can hard-kill safely.
@@ -490,10 +491,14 @@ def _child_eval_expr(
         region: Qlib region (overrides DEFAULT_REGION).
         scores_save_dir: If provided, save factor scores to disk at
             {scores_save_dir}/{expr_hash}/{market}.pkl (preferred over return_scores).
+        forward_n: Number of forward days over which to average IC/RankIC.
+            forward_n=1 (default): compute IC against next-day return only.
+            forward_n=n: compute IC against each of the n forward daily returns,
+            then average — giving a smoother, multi-horizon IC estimate.
     """
     import pickle as _pickle
     import qlib
-    from backtest.qlib.dataloader import compute_factor_data
+    from qlib.data.dataset.loader import QlibDataLoader
 
     # Per-process init (safer across OS / forks)
     import logging
@@ -503,47 +508,100 @@ def _child_eval_expr(
 
     logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
     qlib.init(provider_uri=provider_uri, region=qlib_region)
+    import utils.qlib_extend_ops as _ext_ops; _ext_ops.register()  # re-register after qlib.init() reset
 
-    factor_list = [{"name": "api_factor", "expression": expr}]
-    out = compute_factor_data(
-        factor_list,
-        label=label,
-        instruments=market.lower(),
-        start_time=start,
-        end_time=end,
-    )
+    # Build label spec(s) depending on forward_n
+    _empty_result = {
+        "success": True,
+        "expression": expr,
+        "market": market,
+        "start_date": start,
+        "end_date": end,
+        "metrics": {
+            "ic": 0.0, "rank_ic": 0.0, "ir": 0.0,
+            "icir": 0.0, "rank_icir": 0.0, "turnover": 0.0, "n_dates": 0,
+        },
+        "daily_metrics": [],
+        "timestamp": pd.Timestamp.utcnow().isoformat(),
+    }
 
-    if (
-        out is None
-        or "feature" not in out
-        or "label" not in out
-        or "api_factor" not in out["feature"]
-        or "LABEL" not in out["label"]
-    ):
-        # Gracefully handle empty date ranges (e.g., non-trading days only)
-        # instead of raising, which would break incremental cache for prefix/suffix gaps
-        import logging as _logging
-        _logging.getLogger("_child_eval_expr").warning(
-            "No data for %s in [%s, %s] — likely non-trading days", expr[:60], start, end,
-        )
-        return {
-            "success": True,
-            "expression": expr,
-            "market": market,
-            "start_date": start,
-            "end_date": end,
-            "metrics": {
-                "ic": 0.0, "rank_ic": 0.0, "ir": 0.0,
-                "icir": 0.0, "rank_icir": 0.0, "turnover": 0.0, "n_dates": 0,
-            },
-            "daily_metrics": [],
-            "timestamp": pd.Timestamp.utcnow().isoformat(),
+    if forward_n <= 1:
+        # Single label — load directly via QlibDataLoader (avoids dataloader.py
+        # re-initialising qlib with CN defaults at module-import time)
+        label_expr = _LABEL_MAP.get(label, _LABEL_MAP["close_return"])
+        cfg = {
+            "feature": ([expr], ["api_factor"]),
+            "label": ([label_expr], ["LABEL"]),
         }
+        dl = QlibDataLoader(config=cfg)
+        try:
+            out = dl.load(instruments=market.lower(), start_time=start, end_time=end)
+        except Exception as _exc:
+            import logging as _logging
+            _logging.getLogger("_child_eval_expr").warning(
+                "Exception during factor computation: %s", _exc,
+            )
+            return _empty_result
 
-    f_s: pd.Series = out["feature"]["api_factor"]
-    y_s: pd.Series = out["label"]["LABEL"]
+        if out is None or out.empty or "feature" not in out or "label" not in out:
+            import logging as _logging
+            _logging.getLogger("_child_eval_expr").warning(
+                "No data for %s in [%s, %s] — likely non-trading days", expr[:60], start, end,
+            )
+            return _empty_result
 
-    ic_d, rankic_d = _daily_ic_rankic(f_s, y_s)
+        feat = out["feature"]
+        lbl = out["label"]
+        if "api_factor" not in feat.columns or "LABEL" not in lbl.columns:
+            return _empty_result
+
+        f_s: pd.Series = feat["api_factor"]
+        y_s: pd.Series = lbl["LABEL"]
+        ic_d, rankic_d = _daily_ic_rankic(f_s, y_s)
+
+    else:
+        # Multi-day forward IC: average IC over forward_n consecutive daily returns
+        fwd_labels = _build_forward_label_exprs(forward_n)
+        label_names_fw = [nm for nm, _ in fwd_labels]
+        label_fields_fw = [ex for _, ex in fwd_labels]
+
+        cfg = {
+            "feature": ([expr], ["api_factor"]),
+            "label": (label_fields_fw, label_names_fw),
+        }
+        dl = QlibDataLoader(config=cfg)
+        try:
+            out = dl.load(instruments=market.lower(), start_time=start, end_time=end)
+        except Exception:
+            return _empty_result
+
+        if out is None or out.empty or "feature" not in out or "label" not in out:
+            return _empty_result
+
+        feat = out["feature"]
+        if "api_factor" not in feat.columns:
+            return _empty_result
+
+        f_s = feat["api_factor"]
+        lbl = out["label"]
+
+        # Compute IC/RankIC against each forward day, then average per date
+        ic_ds: List[pd.Series] = []
+        rankic_ds: List[pd.Series] = []
+        for nm in label_names_fw:
+            if nm not in lbl.columns:
+                continue
+            ic_d_k, rankic_d_k = _daily_ic_rankic(f_s, lbl[nm])
+            if not ic_d_k.empty:
+                ic_ds.append(ic_d_k)
+                rankic_ds.append(rankic_d_k)
+
+        if not ic_ds:
+            return _empty_result
+
+        ic_d = pd.concat(ic_ds, axis=1).mean(axis=1)
+        rankic_d = pd.concat(rankic_ds, axis=1).mean(axis=1)
+
     metrics = summarize_ic_rankic(ic_d, rankic_d)
 
     # Format daily metrics for response
@@ -643,6 +701,7 @@ def _child_check_expr(
 
     logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
     qlib.init(provider_uri=provider_uri, region=qlib_region)
+    import utils.qlib_extend_ops as _ext_ops; _ext_ops.register()  # re-register after qlib.init() reset
 
     cfg = {"feature": ([expr], ["test_expr"])}
     dl = QlibDataLoader(config=cfg)
@@ -737,6 +796,7 @@ def _child_batch_check(
 
     logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
     qlib.init(provider_uri=provider_uri, region=qlib_region)
+    import utils.qlib_extend_ops as _ext_ops; _ext_ops.register()  # re-register after qlib.init() reset
 
     names = [f["name"] for f in factors]
     fields = [f["expression"] for f in factors]
@@ -806,6 +866,32 @@ _LABEL_MAP = {
 }
 
 
+def _build_forward_label_exprs(forward_n: int) -> List[Tuple[str, str]]:
+    """
+    Build (name, qlib_expr) pairs for n consecutive forward daily returns.
+
+    Day k return = price change from close of day k-1 to close of day k (forward).
+      k=1: Ref($close,-1)/$close - 1
+      k=2: Ref($close,-2)/Ref($close,-1) - 1
+      ...
+      k=n: Ref($close,-n)/Ref($close,-(n-1)) - 1
+
+    Args:
+        forward_n: Number of forward days (>=1).
+
+    Returns:
+        List of (label_name, qlib_expression) tuples.
+    """
+    labels = []
+    for k in range(1, forward_n + 1):
+        if k == 1:
+            expr = "Ref($close, -1)/$close - 1"
+        else:
+            expr = f"Ref($close, -{k})/Ref($close, -{k - 1}) - 1"
+        labels.append((f"RET_d{k}", expr))
+    return labels
+
+
 def _child_batch_eval(
     factors: List[Dict[str, str]],
     instruments: str,
@@ -814,17 +900,20 @@ def _child_batch_eval(
     label_spec: str,
     scores_save_dir: str = None,
     data_path: str = None, region: str = None,
+    forward_n: int = 1,
 ) -> Dict[str, Any]:
     """
     Efficient batch IC/RankIC:
-    - Load all factor columns + one returns label in a single dataloader call
+    - Load all factor columns + label(s) in a single dataloader call
     - For each date, compute corrwith across columns (Pearson), and Spearman by ranking
+    - When forward_n > 1, loads n forward daily return labels and averages IC per date
 
     Args:
         scores_save_dir: If provided, save each factor's scores to disk at
             {scores_save_dir}/{expr_hash}/{market}.pkl
         data_path: Qlib data directory (overrides DEFAULT_PROVIDER_URI).
         region: Qlib region (overrides DEFAULT_REGION).
+        forward_n: Number of forward days to average IC over (default 1 = next-day only).
     """
     import os as _os
     import qlib
@@ -836,19 +925,27 @@ def _child_batch_eval(
 
     logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
     qlib.init(provider_uri=provider_uri, region=qlib_region)
-
-    # Translate friendly label name to Qlib expression
-    label_expr = _LABEL_MAP.get(label_spec)
-    if label_expr is None:
-        raise ValueError(
-            f"Unsupported label: {label_spec}. "
-            f"Supported: {list(_LABEL_MAP.keys())}"
-        )
+    import utils.qlib_extend_ops as _ext_ops; _ext_ops.register()  # re-register after qlib.init() reset
 
     names = [f["name"] for f in factors]
     fields = [f["expression"] for f in factors]
 
-    cfg = {"feature": (fields, names), "label": ([label_expr], ["RET"])}
+    # Build label expressions
+    if forward_n <= 1:
+        label_expr = _LABEL_MAP.get(label_spec)
+        if label_expr is None:
+            raise ValueError(
+                f"Unsupported label: {label_spec}. "
+                f"Supported: {list(_LABEL_MAP.keys())}"
+            )
+        label_fields = [label_expr]
+        label_names = ["RET"]
+    else:
+        fwd_labels = _build_forward_label_exprs(forward_n)
+        label_names = [nm for nm, _ in fwd_labels]
+        label_fields = [ex for _, ex in fwd_labels]
+
+    cfg = {"feature": (fields, names), "label": (label_fields, label_names)}
     dl = QlibDataLoader(config=cfg)
     data = dl.load(instruments=instruments, start_time=start, end_time=end)
 
@@ -856,7 +953,7 @@ def _child_batch_eval(
         raise RuntimeError("Missing data for batch evaluation")
 
     X = data["feature"]  # MultiIndex (datetime, instrument) columns per factor
-    y = data["label"]["RET"]  # Series on same MI
+    Y = data["label"]    # DataFrame with one or more label columns
 
     # Save factor scores to disk (before dropna, to preserve full cross-section)
     # Merges with existing scores to preserve data from previous incremental runs
@@ -892,14 +989,14 @@ def _child_batch_eval(
                         _os.unlink(tmp_path)
                     raise
 
-    # Align and drop NA once
-    df = X.join(y.rename("RET"), how="inner").dropna()
+    # Align features with all label columns and drop NA
+    df = X.join(Y, how="inner").dropna()
     if df.empty:
         raise RuntimeError("Empty aligned feature/label after dropna")
 
     # Split back
-    X = df.drop(columns=["RET"])
-    y = df["RET"]
+    X = df[X.columns]
+    Y = df[Y.columns]
 
     # Group by date
     groups = X.index.get_level_values("datetime")
@@ -913,18 +1010,31 @@ def _child_batch_eval(
     for d in uniq_dates:
         mask = groups == d
         Xd = X.loc[mask]
-        yd = y.loc[mask]
+        Yd = Y.loc[mask]
 
-        # IC: Pearson correlation column-wise
-        ic = Xd.corrwith(yd, axis=0)
+        if forward_n <= 1:
+            # Single label — fast vectorized path
+            yd = Yd.iloc[:, 0]
+            ic = Xd.corrwith(yd, axis=0)
+            Xr = Xd.rank(method="average")
+            yr = yd.rank(method="average")
+            ric = Xr.corrwith(yr, axis=0)
+        else:
+            # Multi-day forward: average IC/RankIC across all label columns
+            ic_mats: List[pd.Series] = []
+            ric_mats: List[pd.Series] = []
+            Xr = Xd.rank(method="average")  # rank features once
+            for col in Yd.columns:
+                yd_k = Yd[col]
+                ic_mats.append(Xd.corrwith(yd_k, axis=0))
+                yr_k = yd_k.rank(method="average")
+                ric_mats.append(Xr.corrwith(yr_k, axis=0))
+            ic = pd.concat(ic_mats, axis=1).mean(axis=1)
+            ric = pd.concat(ric_mats, axis=1).mean(axis=1)
+
         ic.index.name = "factor"
-        ic_rows.append(ic)
-
-        # RankIC: rank features and y within date, then Pearson
-        Xr = Xd.rank(method="average")
-        yr = yd.rank(method="average")
-        ric = Xr.corrwith(yr, axis=0)
         ric.index.name = "factor"
+        ic_rows.append(ic)
         ric_rows.append(ric)
 
     ic_table = pd.concat(ic_rows, axis=1).T  # shape: n_dates x n_factors
@@ -998,10 +1108,11 @@ def run_eval_with_timeout(
     return_scores: bool = False,
     data_path: str = None, region: str = None,
     scores_save_dir: str = None,
+    forward_n: int = 1,
 ) -> SubprocessResult:
     return _spawn_and_run(
         _child_eval_expr,
-        (expr, market, start, end, label, return_scores, data_path, region, scores_save_dir),
+        (expr, market, start, end, label, return_scores, data_path, region, scores_save_dir, forward_n),
         timeout,
     )
 
@@ -1039,10 +1150,11 @@ def run_batch_with_timeout(
     timeout: int,
     scores_save_dir: str = None,
     data_path: str = None, region: str = None,
+    forward_n: int = 1,
 ) -> SubprocessResult:
     return _spawn_and_run(
         _child_batch_eval,
-        (factors, instruments, start, end, label_spec, scores_save_dir, data_path, region),
+        (factors, instruments, start, end, label_spec, scores_save_dir, data_path, region, forward_n),
         timeout,
     )
 

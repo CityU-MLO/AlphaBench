@@ -231,21 +231,29 @@ def _eval_factor_incremental(
     use_cache: bool,
     data_path: str = None,
     region: str = None,
+    forward_n: int = 1,
 ):
     """
     Evaluate a single factor using the incremental daily IC cache.
 
     Returns (success: bool, result_dict: dict).
     The result_dict contains metrics, daily_metrics, and metadata.
+
+    When forward_n > 1 the IC at each date is averaged over the next forward_n
+    daily returns, giving a multi-horizon IC estimate.  The cache is keyed on
+    cache_label = "{label}_fwd{n}" so results don't collide with n=1 entries.
     """
+    # Use a distinct cache label so forward-n results don't overwrite 1-day results
+    cache_label = label if forward_n <= 1 else f"{label}_fwd{forward_n}"
+
     if use_cache:
-        missing = FACTOR_STORE.get_missing_ranges(eh, market, label, start, end)
+        missing = FACTOR_STORE.get_missing_ranges(eh, market, cache_label, start, end)
     else:
         missing = [(start, end)]
 
     if not missing:
         # Full cache hit — compute summary from cached daily IC
-        daily_data = FACTOR_STORE.get_daily_ic(eh, market, label, start, end)
+        daily_data = FACTOR_STORE.get_daily_ic(eh, market, cache_label, start, end)
         metrics = FactorStore.compute_summary(daily_data)
         return True, {
             "success": True,
@@ -271,6 +279,7 @@ def _eval_factor_incremental(
             expr, market, r_start, r_end, label, timeout,
             data_path=data_path, region=region,
             scores_save_dir=scores_dir,
+            forward_n=forward_n,
         )
 
     if len(missing) > 1:
@@ -297,13 +306,13 @@ def _eval_factor_incremental(
     if eval_failed:
         return False, _fail_result(expr, market, start, end, eval_error)
 
-    # Store new daily IC
+    # Store new daily IC (use cache_label to namespace forward-n results)
     if all_new_daily:
         FACTOR_STORE.register_expression(eh, expr)
-        FACTOR_STORE.put_daily_ic(eh, market, label, all_new_daily)
+        FACTOR_STORE.put_daily_ic(eh, market, cache_label, all_new_daily)
 
     # Load full daily IC for the requested range and compute summary
-    daily_data = FACTOR_STORE.get_daily_ic(eh, market, label, start, end)
+    daily_data = FACTOR_STORE.get_daily_ic(eh, market, cache_label, start, end)
     metrics = FactorStore.compute_summary(daily_data)
 
     return True, {
@@ -466,16 +475,32 @@ def eval_once():
         timeout = int(data.get("timeout", DEFAULTS["timeout_eval"]))
         topk = int(data.get("topk", 50))
         n_drop = int(data.get("n_drop", 5))
+        forward_n = max(1, int(data.get("forward_n", 1)))
+
+        # Cache key includes forward_n so forward-n results don't collide with n=1
+        cache_label = label if forward_n <= 1 else f"{label}_fwd{forward_n}"
 
         fast = bool(data.get("fast", False))
         n_jobs_backtest = int(data.get("n_jobs_backtest", 4))
 
-        # Resolve market config (data_path, region, benchmark)
+        # Resolve market config (data_path, region, benchmark, trade costs)
         mcfg = get_config().get_market_config(market)
         data_path = mcfg["data_path"]
         region = mcfg["region"]
         benchmark = mcfg.get("benchmark", "SH000300")
         instruments = mcfg.get("instruments", market)
+
+        # Build exchange kwargs: trade costs and daily limit differ between CN and US.
+        # CN: limit_threshold=0.095 (10% daily price limit), higher costs with stamp duty.
+        # US: limit_threshold=None (no daily limit), lower costs without stamp duty.
+        exchange_kwargs = {
+            "freq": "day",
+            "deal_price": "close",
+            "limit_threshold": mcfg.get("limit_threshold", 0.095 if region == "cn" else None),
+            "open_cost": mcfg.get("open_cost", 0.0005 if region == "cn" else 0.0001),
+            "close_cost": mcfg.get("close_cost", 0.0015 if region == "cn" else 0.0001),
+            "min_cost": mcfg.get("min_cost", 5 if region == "cn" else 0),
+        }
 
         logger.info(
             "Evaluating %d expr(s) (market=%s, %s→%s, label=%s, fast=%s)",
@@ -505,10 +530,10 @@ def eval_once():
 
                 if use_cache:
                     eh = expr_hash(_normalize_expr(expr))
-                    missing = FACTOR_STORE.get_missing_ranges(eh, market, label, start, end)
+                    missing = FACTOR_STORE.get_missing_ranges(eh, market, cache_label, start, end)
                     if not missing:
                         # Full cache hit
-                        daily_data = FACTOR_STORE.get_daily_ic(eh, market, label, start, end)
+                        daily_data = FACTOR_STORE.get_daily_ic(eh, market, cache_label, start, end)
                         metrics = FactorStore.compute_summary(daily_data)
                         results[i] = {
                             "name": name, "expression": expr,
@@ -535,6 +560,7 @@ def eval_once():
                     uncached_factor_defs, market, start, end, label, batch_timeout,
                     scores_save_dir=scores_dir,
                     data_path=data_path, region=region,
+                    forward_n=forward_n,
                 )
 
                 if res.ok and isinstance(res.payload, dict) and "results" in res.payload:
@@ -551,11 +577,11 @@ def eval_once():
                         if batch_idx < len(batch_results):
                             br = batch_results[batch_idx]
                             if br.get("success"):
-                                # Store daily IC in incremental cache
+                                # Store daily IC in incremental cache (keyed by cache_label)
                                 daily_data = daily_per_factor.get(factor_name, [])
                                 if daily_data and use_cache:
                                     FACTOR_STORE.register_expression(eh, expr)
-                                    FACTOR_STORE.put_daily_ic(eh, market, label, daily_data)
+                                    FACTOR_STORE.put_daily_ic(eh, market, cache_label, daily_data)
 
                                 payload = {
                                     k: v for k, v in br.items() if k != "name"
@@ -617,6 +643,7 @@ def eval_once():
             ok, result_dict = _eval_factor_incremental(
                 expr, eh, market, start, end, label, timeout, use_cache,
                 data_path=data_path, region=region,
+                forward_n=forward_n,
             )
 
             item = {"name": name, **result_dict}
@@ -649,6 +676,7 @@ def eval_once():
                         topk=topk, n_drop=n_drop,
                         start_time=start, end_time=end,
                         data_path=data_path, region=region, BENCH=benchmark,
+                        exchange_kwargs=exchange_kwargs,
                     ),
                 )
             else:
@@ -663,6 +691,7 @@ def eval_once():
                         start_time=start, end_time=end,
                         data_path=data_path, instruments=instruments,
                         region=region, BENCH=benchmark,
+                        exchange_kwargs=exchange_kwargs,
                     ),
                 )
             pm = _extract_portfolio_metrics(analysis_df)

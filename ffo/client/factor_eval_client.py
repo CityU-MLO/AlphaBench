@@ -238,6 +238,7 @@ class FactorEvalClient:
         timeout: int = 120,
         fast: bool = False,
         n_jobs_backtest: int = 4,
+        forward_n: int = 1,
     ) -> List[Dict]:
         """
         POST /factors/eval
@@ -255,6 +256,7 @@ class FactorEvalClient:
             "timeout": int(timeout),
             "fast": bool(fast),
             "n_jobs_backtest": int(n_jobs_backtest),
+            "forward_n": int(forward_n),
         }
 
         result = self._make_request("POST", "/factors/eval", json=payload)

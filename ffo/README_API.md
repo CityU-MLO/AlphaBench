@@ -126,7 +126,8 @@ Evaluate factor performance with IC metrics and optional portfolio backtest.
   "topk": 50,
   "n_drop": 5,
   "fast": false,
-  "n_jobs_backtest": 4
+  "n_jobs_backtest": 4,
+  "forward_n": 1
 }
 ```
 
@@ -134,13 +135,29 @@ Evaluate factor performance with IC metrics and optional portfolio backtest.
 - `expression` (string|dict|list): Factor expression(s) to evaluate
 - `start` (string): Start date (YYYY-MM-DD)
 - `end` (string): End date (YYYY-MM-DD)
-- `market` (string): Market identifier (csi300, csi500, csi1000)
-- `label` (string): Label column for IC calculation (default: close_return)
+- `market` (string): Market identifier (csi300, csi500, csi1000, sp500, nasdaq100)
+- `label` (string): Label column for IC calculation (default: `close_return`)
 - `use_cache` (boolean): Enable caching (default: true)
 - `topk` (integer): Top K stocks to select (default: 50)
 - `n_drop` (integer): Stocks to drop (default: 5)
 - `fast` (boolean): Skip portfolio backtest, only compute IC (default: false)
 - `n_jobs_backtest` (integer): Parallel threads for backtest (default: 4)
+- `forward_n` (integer): Number of forward days to average IC over (default: 1)
+
+**`forward_n` explained:**
+
+By default (`forward_n=1`) IC is computed against the **next-day** return only.
+Setting `forward_n=n` computes IC against each of the **n consecutive forward daily returns**
+and reports the per-date average — producing a smoother, multi-horizon signal quality estimate.
+
+| `forward_n` | Labels computed | Meaning |
+|---|---|---|
+| 1 (default) | day+1 return | Standard next-day IC |
+| 5 | day+1 … day+5 returns | Avg IC over 1-week horizon |
+| 10 | day+1 … day+10 returns | Avg IC over 2-week horizon |
+
+Cache entries for different `forward_n` values are stored separately
+(key = `{label}_fwd{n}` when n > 1) so they never overwrite each other.
 
 **Response:**
 ```json

@@ -298,7 +298,19 @@ class Clip(ElemOperator):
 Ext_OpsList = [Sqrt, Exp, Square, Sin, Cos, Tan, Tanh, Reciprocal, Clip, CSRank]
 
 
-for op in Ext_OpsList:
-    if op not in OpsList:
-        OpsList.append(op)
-        print(f"Inject extended operator {op.__name__} into OpsList")
+def register():
+    """Explicitly inject all extended operators into qlib's OpsList.
+
+    Must be called after every qlib.init() because qlib resets OpsList on
+    re-initialisation.  A plain 'import' is not sufficient when the module is
+    already cached in sys.modules (e.g. in a forked or previously-importing
+    process).
+    """
+    for op in Ext_OpsList:
+        if op not in OpsList:
+            OpsList.append(op)
+            print(f"Inject extended operator {op.__name__} into OpsList")
+
+
+# Auto-register on first import (parent process / module load)
+register()

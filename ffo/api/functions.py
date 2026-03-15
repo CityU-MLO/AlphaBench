@@ -231,6 +231,7 @@ def evaluate_factor(
     topk: int = 50,
     n_drop: int = 5,
     timeout: int = 180,
+    forward_n: int = 1,
 ) -> FactorResult:
     """
     Evaluate a quantitative alpha factor expression.
@@ -285,6 +286,7 @@ def evaluate_factor(
         "topk": topk,
         "n_drop": n_drop,
         "timeout": timeout,
+        "forward_n": forward_n,
     }
     raw = _post("/factors/eval", payload, timeout=timeout + 30)
 
@@ -315,6 +317,7 @@ def batch_evaluate_factors(
     timeout: int = 180,
     parallel: bool = True,
     max_workers: int = 8,
+    forward_n: int = 1,
     progress: bool = False,
 ) -> List[FactorResult]:
     """
@@ -375,6 +378,7 @@ def batch_evaluate_factors(
             "topk": topk,
             "n_drop": n_drop,
             "timeout": timeout,
+            "forward_n": forward_n,
         }
         raw = _post("/factors/eval", payload, timeout=timeout + 60)
 
@@ -408,6 +412,7 @@ def batch_evaluate_factors(
         topk=topk,
         n_drop=n_drop,
         timeout=timeout,
+        forward_n=forward_n,
     )
 
     if not parallel or len(expressions) == 1:

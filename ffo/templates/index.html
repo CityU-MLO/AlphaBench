@@ -314,27 +314,45 @@
                                         <option value="sp500">S&P500</option>
                                     </select>
                                 </div>
-                                
+
                                 <div class="col-md-3">
                                     <label for="startDate" class="form-label">Start Date:</label>
                                     <input type="date" class="form-control" id="startDate" value="2023-01-01">
                                 </div>
-                                
+
                                 <div class="col-md-3">
                                     <label for="endDate" class="form-label">End Date:</label>
                                     <input type="date" class="form-control" id="endDate" value="2024-01-01">
                                 </div>
-                                
+
                                 <div class="col-md-3">
+                                    <label for="forwardN" class="form-label">Forward Days (n):</label>
+                                    <input type="number" class="form-control" id="forwardN" value="1" min="1" max="20" title="Average IC over next n daily returns. n=1 = next-day only (default).">
+                                </div>
+                            </div>
+
+                            <div class="row mt-2">
+                                <div class="col-md-3">
+                                    <label for="topK" class="form-label">Top K Stocks:</label>
+                                    <input type="number" class="form-control" id="topK" value="50" min="1" max="500" title="Number of top-ranked stocks to hold in the portfolio.">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="nDrop" class="form-label">Drop N Stocks:</label>
+                                    <input type="number" class="form-control" id="nDrop" value="5" min="0" max="100" title="Number of stocks to drop (turnover control) per rebalance.">
+                                </div>
+                            </div>
+
+                            <div class="row mt-2">
+                                <div class="col-md-12">
                                     <label class="form-label">&nbsp;</label>
                                     <div>
-                                        <button type="submit" class="btn btn-primary w-100">
+                                        <button type="submit" class="btn btn-primary">
                                             <i class="fas fa-search"></i> Search Cache
                                         </button>
                                     </div>
                                 </div>
                             </div>
-                            
+
                             <div class="mt-3">
                                 <button type="button" class="btn btn-success" onclick="evaluateFactor()">
                                     <i class="fas fa-play"></i> Evaluate New
@@ -1292,6 +1310,9 @@
                     market: document.getElementById('market').value,
                     start_date: document.getElementById('startDate').value,
                     end_date: document.getElementById('endDate').value,
+                    forward_n: parseInt(document.getElementById('forwardN').value) || 1,
+                    topk: parseInt(document.getElementById('topK').value) || 50,
+                    n_drop: parseInt(document.getElementById('nDrop').value) || 5,
                     use_cache: true
                 });
                 
@@ -1324,6 +1345,8 @@
                     market: document.getElementById('market').value,
                     start_date: document.getElementById('startDate').value,
                     end_date: document.getElementById('endDate').value,
+                    topk: parseInt(document.getElementById('topK').value) || 50,
+                    n_drop: parseInt(document.getElementById('nDrop').value) || 5,
                 });
 
                 if (response.data.success) {

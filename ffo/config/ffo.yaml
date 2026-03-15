@@ -64,27 +64,49 @@ qlib:
 # and benchmark. Add new markets here to support them everywhere.
 markets:
   # China A-share markets
+  # CN: 10% daily price limit (limit_threshold=0.095), higher trade costs (stamp duty)
   csi300:
     data_path: "~/.qlib/qlib_data/cn_data"
     region: "cn"
     benchmark: "SH000300"
+    limit_threshold: 0.095   # CN 10% daily price limit (slightly below to avoid exact limit)
+    open_cost: 0.0005        # buy-side cost: 0.05% (commission)
+    close_cost: 0.0015       # sell-side cost: 0.05% commission + 0.10% stamp duty
+    min_cost: 5
   csi500:
     data_path: "~/.qlib/qlib_data/cn_data"
     region: "cn"
     benchmark: "SH000905"
+    limit_threshold: 0.095
+    open_cost: 0.0005
+    close_cost: 0.0015
+    min_cost: 5
   csi1000:
     data_path: "~/.qlib/qlib_data/cn_data"
     region: "cn"
     benchmark: "SH000852"
+    limit_threshold: 0.095
+    open_cost: 0.0005
+    close_cost: 0.0015
+    min_cost: 5
   # US markets
+  # US: no daily price limit, lower trade costs (no stamp duty)
   sp500:
     data_path: "~/.qlib/qlib_data/us_data"
     region: "us"
     benchmark: "^gspc"
+    limit_threshold: null    # no daily price limit in US markets
+    open_cost: 0.0001        # 0.01% commission (no stamp duty)
+    close_cost: 0.0001       # 0.01% commission (no stamp duty)
+    min_cost: 0
   nasdaq100:
     data_path: "~/.qlib/qlib_data/us_data"
     region: "us"
     benchmark: "^ixic"
+    limit_threshold: null
+    open_cost: 0.0001
+    close_cost: 0.0001
+    min_cost: 0
 
 # ── PID / Log File Paths ────────────────────────────────────
 runtime:

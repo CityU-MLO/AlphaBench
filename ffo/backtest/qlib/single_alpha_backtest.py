@@ -65,6 +65,7 @@ def backtest_by_scores(
     data_path="~/.qlib/qlib_data/cn_data",
     region="cn",
     BENCH="SH000300",
+    exchange_kwargs=None,
 ):
 
     _ensure_qlib_init(data_path, region)
@@ -72,7 +73,8 @@ def backtest_by_scores(
 
     strategy_obj = TopkDropoutStrategy(**STRATEGY_CONFIG)
     report_normal, positions_normal = backtest_daily(
-        start_time=start_time, end_time=end_time, strategy=strategy_obj, benchmark=BENCH
+        start_time=start_time, end_time=end_time, strategy=strategy_obj, benchmark=BENCH,
+        exchange_kwargs=exchange_kwargs,
     )
 
     analysis_df = get_portfolio_analysis(report_normal)
@@ -90,6 +92,7 @@ def backtest_by_single_alpha(
     instruments="csi300",
     region="cn",
     BENCH="SH000300",
+    exchange_kwargs=None,
 ):
     """
     Run a simple backtest using a single alpha factor.
@@ -159,7 +162,8 @@ def backtest_by_single_alpha(
 
     strategy_obj = TopkDropoutStrategy(**STRATEGY_CONFIG)
     report_normal, positions_normal = backtest_daily(
-        start_time=start_time, end_time=end_time, strategy=strategy_obj, benchmark=BENCH
+        start_time=start_time, end_time=end_time, strategy=strategy_obj, benchmark=BENCH,
+        exchange_kwargs=exchange_kwargs,
     )
 
     analysis_df = get_portfolio_analysis(report_normal)

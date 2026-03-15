@@ -229,6 +229,9 @@ def evaluate_factor():
     label = data.get("label", "close_return")
     use_cache = data.get("use_cache", True)
     fast = data.get("fast", True)
+    forward_n = max(1, int(data.get("forward_n", 1)))
+    topk = max(1, int(data.get("topk", 50)))
+    n_drop = max(0, int(data.get("n_drop", 5)))
 
     try:
         # Client returns a list — extract first item
@@ -240,6 +243,9 @@ def evaluate_factor():
             label=label,
             use_cache=use_cache,
             fast=fast,
+            forward_n=forward_n,
+            topk=topk,
+            n_drop=n_drop,
         )
         result = results[0] if isinstance(results, list) and results else results
 
@@ -291,6 +297,7 @@ def batch_evaluate_factor():
     label = data.get("label", "close_return")
     use_cache = data.get("use_cache", True)
     timeout = int(data.get("timeout", 600))
+    forward_n = max(1, int(data.get("forward_n", 1)))
 
     if not expressions:
         return jsonify({"success": False, "message": "No expressions provided"})
@@ -307,6 +314,7 @@ def batch_evaluate_factor():
                 "fast": True,
                 "use_cache": use_cache,
                 "timeout": timeout,
+                "forward_n": forward_n,
             },
             timeout=timeout + 30,
         )
@@ -372,6 +380,8 @@ def run_portfolio_backtest():
     start_date = data.get("start_date", "2023-01-01")
     end_date = data.get("end_date", "2024-01-01")
     label = data.get("label", "close_return")
+    topk = max(1, int(data.get("topk", 50)))
+    n_drop = max(0, int(data.get("n_drop", 5)))
 
     try:
         # Call backend with fast=False to trigger portfolio backtest
@@ -383,6 +393,8 @@ def run_portfolio_backtest():
             label=label,
             use_cache=True,
             fast=False,
+            topk=topk,
+            n_drop=n_drop,
         )
         result = results[0] if isinstance(results, list) and results else results
 

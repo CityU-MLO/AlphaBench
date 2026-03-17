@@ -47,6 +47,7 @@ evaluation:
   timeout_check: 120          # syntax check timeout (seconds)
   timeout_batch: 600          # batch evaluation timeout (seconds)
   n_jobs_backtest: 4          # parallel jobs for portfolio backtest
+  workers_per_region: 4       # qlib worker processes per region (CN/US) for parallel backtest
 
 # ── Cache Settings ──────────────────────────────────────────
 cache:

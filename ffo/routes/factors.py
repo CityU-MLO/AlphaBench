@@ -73,7 +73,8 @@ def _build_worker_pool() -> QlibWorkerPool:
         r = mcfg["region"]
         if r not in region_configs:
             region_configs[r] = {"data_path": mcfg["data_path"], "region": r}
-    return QlibWorkerPool(region_configs)
+    workers_per_region = int(cfg.get("evaluation.workers_per_region", 4))
+    return QlibWorkerPool(region_configs, workers_per_region=workers_per_region)
 
 
 WORKER_POOL = _build_worker_pool()

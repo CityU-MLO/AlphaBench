@@ -2,15 +2,18 @@
 Persistent Qlib Worker Pool — N processes per region (CN, US).
 
 Each worker process calls qlib.init() once and loops forever, preserving
-qlib's in-memory data cache (H) across requests.  A router dispatches
-backtest jobs to the correct worker based on region.  Multiple workers per
-region enables true parallel backtest execution.
+qlib's in-memory data cache (H) across requests.  Multiple workers per
+region pull from a shared job_queue for true parallel backtest execution.
+
+A dispatcher thread in the main process reads the shared result_queue and
+routes results back to callers via threading Events — no Queue pickling.
 
 Architecture:
     Main Process
+        ├── Dispatcher thread (reads result_queue → wakes callers)
         └── QlibWorkerPool (router)
-                ├── CN Workers (N Processes)  — qlib.init(cn_data)
-                └── US Workers (N Processes)  — qlib.init(us_data)
+                ├── CN Workers (N Processes)  ← shared job_queue / result_queue
+                └── US Workers (N Processes)  ← shared job_queue / result_queue
 """
 
 from __future__ import annotations
@@ -48,7 +51,6 @@ def _worker_loop(
     Initialises qlib once, then processes jobs from job_queue forever.
     Sends results (or errors) back via result_queue keyed by job_id.
     """
-    # Heavy imports inside the worker process only
     import qlib
     from backtest.qlib.single_alpha_backtest import (
         backtest_by_scores,
@@ -69,7 +71,6 @@ def _worker_loop(
         except Exception:
             break
 
-        # Sentinel: None → graceful shutdown
         if job is None:
             logger.info("Worker [%s] shutting down", tag)
             break
@@ -77,9 +78,6 @@ def _worker_loop(
         job_id = job.get("job_id", "?")
         job_type = job.get("type", "")
         kwargs = job.get("kwargs", {})
-        reply_queue: Optional[Queue] = job.get("reply_queue")
-
-        out_queue = reply_queue if reply_queue is not None else result_queue
 
         try:
             if job_type == "backtest_by_scores":
@@ -89,12 +87,12 @@ def _worker_loop(
             else:
                 raise ValueError(f"Unknown job type: {job_type}")
 
-            out_queue.put({"job_id": job_id, "ok": True, "result": result, "error": None})
+            result_queue.put({"job_id": job_id, "ok": True, "result": result, "error": None})
 
         except Exception as e:
             tb = traceback.format_exc()
             logger.warning("Worker [%s] job %s failed: %s", tag, job_id, e)
-            out_queue.put({"job_id": job_id, "ok": False, "result": None, "error": f"{type(e).__name__}: {e}\n{tb}"})
+            result_queue.put({"job_id": job_id, "ok": False, "result": None, "error": f"{type(e).__name__}: {e}\n{tb}"})
 
 
 # ---------------------------------------------------------------------------
@@ -105,9 +103,10 @@ class _RegionWorkerGroup:
     """
     Manages N persistent worker processes for a single region.
 
-    All workers share a single job_queue so jobs are distributed to whichever
-    worker is free first.  Each submitted job gets its own reply_queue so
-    callers never steal each other's results.
+    All N workers share a single job_queue (for automatic load balancing)
+    and a single result_queue.  A dispatcher thread reads result_queue and
+    routes results to callers via a pending-jobs dict keyed by job_id.
+    Each caller waits on its own threading.Event — no cross-talk.
     """
 
     def __init__(self, data_path: str, region: str, n_workers: int = 1):
@@ -116,32 +115,47 @@ class _RegionWorkerGroup:
         self.n_workers = max(1, n_workers)
 
         self.job_queue: Optional[Queue] = None
+        self.result_queue: Optional[Queue] = None
         self._processes: List[Optional[Process]] = []
         self._lock = threading.Lock()
+
+        # Pending jobs: job_id → {"event": Event, "msg": result_dict | None}
+        self._pending: Dict[str, dict] = {}
+        self._pending_lock = threading.Lock()
+
+        self._dispatcher_thread: Optional[threading.Thread] = None
+        self._shutdown_flag = threading.Event()
 
         self._start_all()
 
     # -- lifecycle -----------------------------------------------------------
 
     def _start_all(self):
-        """Spawn all worker processes."""
+        """Spawn all worker processes and the dispatcher thread."""
         self.job_queue = Queue()
+        self.result_queue = Queue()
         self._processes = []
+        self._shutdown_flag.clear()
+
         for i in range(self.n_workers):
             self._spawn_worker(i)
+
+        self._dispatcher_thread = threading.Thread(
+            target=self._dispatch_loop, daemon=True,
+            name=f"dispatcher-{self.region}",
+        )
+        self._dispatcher_thread.start()
+
         logger.info(
-            "RegionWorkerGroup [%s] started %d workers", self.region, self.n_workers,
+            "RegionWorkerGroup [%s] started %d workers + dispatcher",
+            self.region, self.n_workers,
         )
 
     def _spawn_worker(self, idx: int) -> Process:
         """Spawn a single worker at the given index."""
-        # Each worker shares the job_queue; reply_queue is per-job (sent in the job dict)
-        # We still create a dummy result_queue for the worker_loop signature,
-        # but it won't be used because every job carries its own reply_queue.
-        dummy_result_queue = Queue()
         p = Process(
             target=_worker_loop,
-            args=(self.data_path, self.region, idx, self.job_queue, dummy_result_queue),
+            args=(self.data_path, self.region, idx, self.job_queue, self.result_queue),
             daemon=True,
             name=f"qlib-worker-{self.region}-{idx}",
         )
@@ -154,72 +168,82 @@ class _RegionWorkerGroup:
         return p
 
     def _ensure_workers_alive(self):
-        """Restart any dead workers."""
+        """Restart any dead workers (must hold self._lock)."""
         for i, p in enumerate(self._processes):
             if p is None or not p.is_alive():
                 logger.warning("Worker [%s#%d] is dead, restarting…", self.region, i)
                 self._spawn_worker(i)
 
+    # -- dispatcher thread ---------------------------------------------------
+
+    def _dispatch_loop(self):
+        """
+        Runs in a daemon thread.  Reads results from the shared result_queue
+        and wakes up the caller that is waiting for each job_id.
+        """
+        while not self._shutdown_flag.is_set():
+            try:
+                msg = self.result_queue.get(timeout=1.0)
+            except (queue.Empty, OSError):
+                continue
+
+            job_id = msg.get("job_id")
+            if job_id is None:
+                continue
+
+            with self._pending_lock:
+                slot = self._pending.get(job_id)
+
+            if slot is not None:
+                slot["msg"] = msg
+                slot["event"].set()
+            else:
+                logger.warning(
+                    "Dispatcher [%s]: no pending caller for job %s (timed out?)",
+                    self.region, job_id[:8],
+                )
+
     # -- job submission ------------------------------------------------------
 
     def submit(self, job_type: str, kwargs: dict, timeout: float = 300) -> Any:
         """
-        Submit a job and wait for the result.
+        Submit a job and block until the result arrives.
 
-        Each call gets a dedicated reply_queue, so concurrent callers are
-        completely isolated — no cross-talk or lost results.
+        Thread-safe: multiple callers can submit concurrently.  Each gets
+        its own Event so there is no cross-talk.
         """
         with self._lock:
             self._ensure_workers_alive()
 
         job_id = str(uuid.uuid4())
-        reply_queue: Queue = Queue()
+        event = threading.Event()
 
-        self.job_queue.put({
-            "job_id": job_id,
-            "type": job_type,
-            "kwargs": kwargs,
-            "reply_queue": reply_queue,
-        })
+        slot = {"event": event, "msg": None}
+        with self._pending_lock:
+            self._pending[job_id] = slot
 
-        start_t = time.monotonic()
-        while True:
-            elapsed = time.monotonic() - start_t
-            remaining = timeout - elapsed
-            if remaining <= 0:
+        try:
+            self.job_queue.put({
+                "job_id": job_id,
+                "type": job_type,
+                "kwargs": kwargs,
+            })
+
+            if not event.wait(timeout=timeout):
                 logger.warning(
                     "Region [%s] timed out on job %s after %ds",
                     self.region, job_id[:8], timeout,
                 )
                 raise TimeoutError(f"Backtest timed out after {timeout}s")
 
-            try:
-                msg = reply_queue.get(timeout=min(remaining, 5.0))
-            except queue.Empty:
-                # Check that at least one worker is alive
-                alive = any(p and p.is_alive() for p in self._processes)
-                if not alive:
-                    with self._lock:
-                        self._ensure_workers_alive()
-                    # Re-submit the job since all workers died
-                    self.job_queue.put({
-                        "job_id": job_id,
-                        "type": job_type,
-                        "kwargs": kwargs,
-                        "reply_queue": reply_queue,
-                    })
-                continue
-
-            if msg.get("job_id") == job_id:
-                if msg["ok"]:
-                    return msg["result"]
-                else:
-                    raise RuntimeError(msg["error"])
-            # Shouldn't happen with per-job queues, but be safe
-            logger.warning(
-                "Got unexpected result for job %s on queue for %s",
-                msg.get("job_id", "?")[:8], job_id[:8],
-            )
+            msg = slot["msg"]
+            if msg["ok"]:
+                return msg["result"]
+            else:
+                raise RuntimeError(msg["error"])
+        finally:
+            with self._pending_lock:
+                self._pending.pop(job_id, None)
 
     # -- alive / health ------------------------------------------------------
 
@@ -233,12 +257,16 @@ class _RegionWorkerGroup:
 
     def shutdown(self):
         """Graceful shutdown: send sentinels, wait, then cleanup."""
+        self._shutdown_flag.set()
+
+        # Send one sentinel per worker
         if self.job_queue is not None:
             for _ in self._processes:
                 try:
-                    self.job_queue.put(None)  # sentinel per worker
+                    self.job_queue.put(None)
                 except Exception:
                     pass
+
         for p in self._processes:
             if p is not None:
                 p.join(timeout=10)
@@ -246,12 +274,27 @@ class _RegionWorkerGroup:
                     p.terminate()
                     p.join(timeout=5)
         self._processes.clear()
-        if self.job_queue is not None:
-            try:
-                self.job_queue.close()
-            except Exception:
-                pass
-            self.job_queue = None
+
+        if self._dispatcher_thread is not None:
+            self._dispatcher_thread.join(timeout=5)
+            self._dispatcher_thread = None
+
+        for q in (self.job_queue, self.result_queue):
+            if q is not None:
+                try:
+                    q.close()
+                except Exception:
+                    pass
+        self.job_queue = None
+        self.result_queue = None
+
+        # Wake any callers still blocked
+        with self._pending_lock:
+            for slot in self._pending.values():
+                if slot["msg"] is None:
+                    slot["msg"] = {"job_id": "?", "ok": False, "result": None, "error": "Worker pool shut down"}
+                slot["event"].set()
+            self._pending.clear()
 
 
 # ---------------------------------------------------------------------------

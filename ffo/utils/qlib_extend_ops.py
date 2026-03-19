@@ -17,41 +17,41 @@ from qlib.data.ops import OpsList
 np.seterr(invalid="ignore")
 
 
-class CSRank(NpElemOperator):
-    """Cross-sectional Rank (Percentile) at each time t across instruments.
+# class CSRank(NpElemOperator):
+#     """Cross-sectional Rank (Percentile) at each time t across instruments.
 
-    Notes
-    -----
-    This operator must see multiple instruments at once.
-    """
+#     Notes
+#     -----
+#     This operator must see multiple instruments at once.
+#     """
 
-    def __init__(self, feature):
-        self.feature = feature
-        self.name = "csrank"
+#     def __init__(self, feature):
+#         self.feature = feature
+#         self.name = "csrank"
 
-    def _load_internal(self, instruments, start_index, end_index, *args):
-        # import pdb; pdb.set_trace()
-        # print(instruments)
-        # instruments MUST be a list/tuple of instrument ids
-        if not isinstance(instruments, (list, tuple, pd.Index, np.ndarray)):
-            raise ValueError(
-                "CSRank needs a universe (list of instruments). "
-                "Cross-sectional rank cannot be computed from a single instrument series."
-            )
+#     def _load_internal(self, instruments, start_index, end_index, *args):
+#         # import pdb; pdb.set_trace()
+#         # print(instruments)
+#         # instruments MUST be a list/tuple of instrument ids
+#         if not isinstance(instruments, (list, tuple, pd.Index, np.ndarray)):
+#             raise ValueError(
+#                 "CSRank needs a universe (list of instruments). "
+#                 "Cross-sectional rank cannot be computed from a single instrument series."
+#             )
 
-        cols = []
-        for inst in instruments:
-            s = self.feature.load(inst, start_index, end_index, *args)
-            cols.append(s.rename(inst))
+#         cols = []
+#         for inst in instruments:
+#             s = self.feature.load(inst, start_index, end_index, *args)
+#             cols.append(s.rename(inst))
 
-        df = pd.concat(cols, axis=1)  # index: datetime, columns: instrument
+#         df = pd.concat(cols, axis=1)  # index: datetime, columns: instrument
 
-        # cross-sectional rank each day (row-wise)
-        ranked = df.rank(axis=1, pct=True)
+#         # cross-sectional rank each day (row-wise)
+#         ranked = df.rank(axis=1, pct=True)
 
-        # return in the same 'stacked' style if your framework expects Series
-        # MultiIndex: (datetime, instrument)
-        return ranked.stack()
+#         # return in the same 'stacked' style if your framework expects Series
+#         # MultiIndex: (datetime, instrument)
+#         return ranked.stack()
 
 
 class Sqrt(NpElemOperator):
@@ -295,7 +295,7 @@ class Clip(ElemOperator):
         return np.clip(series, self.a_min, self.a_max)
 
 
-Ext_OpsList = [Sqrt, Exp, Square, Sin, Cos, Tan, Tanh, Reciprocal, Clip, CSRank]
+Ext_OpsList = [Sqrt, Exp, Square, Sin, Cos, Tan, Tanh, Reciprocal, Clip]
 
 
 def register():

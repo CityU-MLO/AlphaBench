@@ -12,6 +12,7 @@ FFO (Formulaic Factor Optimization) provides a comprehensive REST API for evalua
 - [API Endpoints](#api-endpoints)
   - [Health Check](#health-check)
   - [Factor Evaluation](#factor-evaluation)
+  - [Portfolio Combine (No-Train)](#portfolio-combine-no-train)
   - [Factor Combination](#factor-combination)
 - [Python Client](#python-client)
 - [Request/Response Examples](#requestresponse-examples)
@@ -248,6 +249,124 @@ Evaluate multiple factors in a single request.
     "metrics": {...}
   }
 ]
+```
+
+---
+
+### Portfolio Combine (No-Train)
+
+#### Combine Multiple Factors
+
+**POST** `/factors/portfolio`
+
+Combine multiple factor expressions into a single trading signal using z-score normalization and equal-weight averaging. No model training required — each factor is cross-sectionally z-score normalized per date, then averaged. Returns IC/RankIC/ICIR for both the combined signal and each individual factor.
+
+**Request:**
+```json
+{
+  "expression": [
+    "Rank($close, 20)",
+    "Mean($volume, 5) / Mean($volume, 20)",
+    "Corr($close, $volume, 10)",
+    "Std($close / Delay($close, 1) - 1, 20)",
+    "($close - $vwap) / $vwap"
+  ],
+  "start": "2023-01-01",
+  "end": "2024-01-01",
+  "market": "csi300",
+  "label": "close_return",
+  "fast": true,
+  "topk": 50,
+  "n_drop": 5,
+  "timeout": 600,
+  "forward_n": 1
+}
+```
+
+**Parameters:**
+- `expression` (list|dict): Factor expressions to combine (>= 2 required)
+- `start` (string): Start date (YYYY-MM-DD)
+- `end` (string): End date (YYYY-MM-DD)
+- `market` (string): Market identifier (default: `csi300`)
+- `label` (string): Label for IC calculation (default: `close_return`)
+- `fast` (boolean): If true, skip portfolio backtest (default: true)
+- `topk` (integer): Top K stocks for portfolio (default: 50, used when fast=false)
+- `n_drop` (integer): Stocks to drop (default: 5, used when fast=false)
+- `timeout` (integer): Timeout in seconds (default: 600)
+- `forward_n` (integer): Multi-horizon IC days (default: 1)
+
+**Response:**
+```json
+{
+  "success": true,
+  "n_factors": 5,
+  "n_valid_factors": 5,
+  "combined_metrics": {
+    "ic": 0.0312,
+    "rank_ic": 0.0425,
+    "icir": 0.6823,
+    "rank_icir": 0.7534,
+    "n_dates": 245
+  },
+  "combined_daily_metrics": [
+    {"date": "2023-01-03", "ic": 0.045, "rank_ic": 0.052},
+    {"date": "2023-01-04", "ic": 0.031, "rank_ic": 0.038}
+  ],
+  "per_factor_results": [
+    {
+      "name": "",
+      "expression": "Rank($close, 20)",
+      "success": true,
+      "metrics": {
+        "ic": 0.0234,
+        "rank_ic": 0.0312,
+        "icir": 0.4521,
+        "rank_icir": 0.5123,
+        "n_dates": 245
+      }
+    }
+  ],
+  "portfolio_metrics": {
+    "excess_return_without_cost": {
+      "annualized_return": 12.5,
+      "information_ratio": 1.8,
+      "max_drawdown": -8.3
+    }
+  },
+  "portfolio_details": {
+    "daily_summary": [],
+    "holdings": {},
+    "actions": []
+  },
+  "market": "csi300",
+  "start_date": "2023-01-01",
+  "end_date": "2024-01-01",
+  "timestamp": "2024-01-01T12:00:00Z"
+}
+```
+
+> **Note:** `portfolio_metrics` and `portfolio_details` are only present when `fast=false`.
+
+**Python API:**
+```python
+from ffo.api import combine_factors
+
+result = combine_factors(
+    expressions=[
+        "Rank($close, 20)",
+        "Mean($volume, 5) / Mean($volume, 20)",
+        "Corr($close, $volume, 10)",
+    ],
+    market="csi300",
+    start="2023-01-01",
+    end="2024-01-01",
+    fast=True,
+)
+if result.success:
+    print(f"Combined IC: {result.combined_metrics.ic:.4f}")
+    print(f"Combined ICIR: {result.combined_metrics.icir:.4f}")
+    for r in result.per_factor_results:
+        print(f"  {r.expression:40s}  IC={r.metrics.ic:.4f}")
 ```
 
 ---

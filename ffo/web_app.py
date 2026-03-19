@@ -2101,14 +2101,36 @@ def run_backtest_from_weights():
         )
 
 
-if __name__ == "__main__":
-    # Eagerly spawn qlib worker pool so workers are warm at startup
+def _get_backtest_pool():
+    """Lazily import and return the qlib worker pool (only when backtest is needed)."""
     from routes.factors import _get_worker_pool
-    _get_worker_pool()
+    return _get_worker_pool()
 
+
+if __name__ == "__main__":
     web_cfg = get_config()
+    port = web_cfg.get("server.web.port", 19787)
+    host = web_cfg.get("server.web.host", "0.0.0.0")
+
+    # Check if something is already listening on localhost:port
+    # (catches VSCode port forwarding, stale processes, etc.)
+    import socket
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    try:
+        probe.settimeout(1)
+        probe.connect(("127.0.0.1", port))
+        probe.close()
+        # Connection succeeded → something is already listening
+        print(f"\nERROR: Port {port} is already in use on localhost.")
+        print(f"  To find the process:  lsof -i :{port}")
+        print(f"  To use another port:  FFO_WEB_PORT=<port> python web_app.py")
+        print(f"  If VSCode is forwarding this port, stop it in the Ports panel.\n")
+        sys.exit(1)
+    except (ConnectionRefusedError, OSError):
+        pass  # Port is free
+
     app.run(
         debug=web_cfg.get("server.web.debug", False),
-        host=web_cfg.get("server.web.host", "0.0.0.0"),
-        port=web_cfg.get("server.web.port", 19787),
+        host=host,
+        port=port,
     )

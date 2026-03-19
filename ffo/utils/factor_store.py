@@ -91,12 +91,18 @@ class FactorStore:
                     date        TEXT    NOT NULL,
                     ic          REAL,
                     rank_ic     REAL,
+                    turnover    REAL,
                     PRIMARY KEY (expr_hash, market, label, date)
                 );
 
                 CREATE INDEX IF NOT EXISTS idx_daily_ic_range
                     ON daily_ic(expr_hash, market, label, date);
             """)
+            # Migration: add turnover column if missing (existing DBs)
+            try:
+                conn.execute("SELECT turnover FROM daily_ic LIMIT 1")
+            except sqlite3.OperationalError:
+                conn.execute("ALTER TABLE daily_ic ADD COLUMN turnover REAL")
 
     def _connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), timeout=30)
@@ -174,15 +180,16 @@ class FactorStore:
         self, expr_hash: str, market: str, label: str, start: str, end: str
     ) -> List[Dict[str, Any]]:
         """
-        Retrieve daily IC and RankIC values for [start, end].
+        Retrieve daily IC, RankIC, and turnover values for [start, end].
 
         Returns:
-            List of {"date": str, "ic": float, "rank_ic": float} sorted by date.
+            List of {"date": str, "ic": float, "rank_ic": float, "turnover": float}
+            sorted by date.
         """
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT date, ic, rank_ic
+                SELECT date, ic, rank_ic, turnover
                 FROM daily_ic
                 WHERE expr_hash = ? AND market = ? AND label = ?
                   AND date BETWEEN ? AND ?
@@ -191,7 +198,7 @@ class FactorStore:
                 (expr_hash, market, label, start, end),
             ).fetchall()
         return [
-            {"date": r[0], "ic": r[1], "rank_ic": r[2]}
+            {"date": r[0], "ic": r[1], "rank_ic": r[2], "turnover": r[3]}
             for r in rows
         ]
 
@@ -203,10 +210,11 @@ class FactorStore:
         daily_data: List[Dict[str, Any]],
     ) -> int:
         """
-        Insert or replace daily IC/RankIC values.
+        Insert or replace daily IC/RankIC/turnover values.
 
         Args:
-            daily_data: List of {"date": str, "ic": float, "rank_ic": float}.
+            daily_data: List of {"date": str, "ic": float, "rank_ic": float,
+                         "turnover": float}.
 
         Returns:
             Number of rows inserted/updated.
@@ -215,15 +223,16 @@ class FactorStore:
             return 0
 
         rows = [
-            (expr_hash, market, label, d["date"], d.get("ic"), d.get("rank_ic"))
+            (expr_hash, market, label, d["date"], d.get("ic"), d.get("rank_ic"),
+             d.get("turnover"))
             for d in daily_data
         ]
         with self._connect() as conn:
             conn.executemany(
                 """
                 INSERT OR REPLACE INTO daily_ic
-                    (expr_hash, market, label, date, ic, rank_ic)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (expr_hash, market, label, date, ic, rank_ic, turnover)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 rows,
             )
@@ -326,10 +335,11 @@ class FactorStore:
     @staticmethod
     def compute_summary(daily_data: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
-        Compute summary metrics from daily IC/RankIC values.
+        Compute summary metrics from daily IC/RankIC/turnover values.
 
         Args:
-            daily_data: List of {"date": str, "ic": float, "rank_ic": float}.
+            daily_data: List of {"date": str, "ic": float, "rank_ic": float,
+                         "turnover": float}.
 
         Returns:
             {"ic", "icir", "rank_ic", "rank_icir", "n_dates", "turnover"}
@@ -343,10 +353,12 @@ class FactorStore:
 
         ics = np.array([d["ic"] for d in daily_data if d["ic"] is not None], dtype=float)
         rics = np.array([d["rank_ic"] for d in daily_data if d["rank_ic"] is not None], dtype=float)
+        tvs = np.array([d["turnover"] for d in daily_data if d.get("turnover") is not None], dtype=float)
 
         # Filter NaN
         ics = ics[~np.isnan(ics)]
         rics = rics[~np.isnan(rics)]
+        tvs = tvs[~np.isnan(tvs)]
 
         def _ir(vals):
             if len(vals) < 2:
@@ -361,7 +373,7 @@ class FactorStore:
             "ir": _ir(ics),  # backward-compatible alias
             "rank_ic": float(np.mean(rics)) if len(rics) else 0.0,
             "rank_icir": _ir(rics),
-            "turnover": 0.0,
+            "turnover": float(np.mean(tvs)) if len(tvs) else 0.0,
             "n_dates": len(ics),
         }
 

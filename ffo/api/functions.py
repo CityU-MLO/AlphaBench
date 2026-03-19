@@ -58,14 +58,15 @@ class FactorMetrics:
         icir:       IC Information Ratio = ic / std(daily_ic). Measures consistency.
                     Value > 0.5 is considered good.
         rank_icir:  Rank IC Information Ratio.
-        turnover:   Average daily portfolio turnover [0, 1]. Lower is cheaper.
+        turnover:   Rank-based turnover = 1 - Spearman(f_t, f_{t-1}) [0, 2].
+                    Lower means more stable factor rankings over time.
         n_dates:    Number of trading days evaluated.
     """
     ic: float = 0.0
     rank_ic: float = 0.0
     icir: float = 0.0
     rank_icir: float = 0.0
-    turnover: float = 1.0
+    turnover: float = 0.0
     n_dates: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
@@ -109,7 +110,7 @@ class FactorResult:
             rank_ic=float(metrics_raw.get("rank_ic", 0.0)),
             icir=float(metrics_raw.get("icir") or metrics_raw.get("ir", 0.0)),
             rank_icir=float(metrics_raw.get("rank_icir", 0.0)),
-            turnover=float(metrics_raw.get("turnover", 1.0)),
+            turnover=float(metrics_raw.get("turnover", 0.0)),
             n_dates=int(metrics_raw.get("n_dates", 0)),
         )
         return cls(
@@ -669,3 +670,168 @@ def server_health() -> ServerHealth:
             status="unreachable",
             error=str(e),
         )
+
+
+# ── Portfolio Combine ────────────────────────────────────────────────────────
+
+
+@dataclass
+class CombineResult:
+    """
+    Result of combining multiple factor expressions into a single signal.
+
+    The combination uses z-score normalization (per date, cross-sectional)
+    followed by equal-weight averaging — no model training required.
+
+    Attributes:
+        success:             True if combination succeeded.
+        n_factors:           Number of input factor expressions.
+        combined_metrics:    IC/RankIC metrics of the combined signal.
+        per_factor_results:  Per-factor metrics for each input expression.
+        portfolio_metrics:   Portfolio backtest metrics (when fast=False).
+        portfolio_details:   Daily portfolio details (when fast=False).
+        combined_daily_metrics: Daily IC/RankIC of the combined signal.
+        error:               Error message if failed.
+        market:              Market universe used.
+        start:               Evaluation start date.
+        end:                 Evaluation end date.
+    """
+    success: bool
+    n_factors: int = 0
+    combined_metrics: FactorMetrics = field(default_factory=FactorMetrics)
+    per_factor_results: List[FactorResult] = field(default_factory=list)
+    portfolio_metrics: Optional[Dict[str, Any]] = None
+    portfolio_details: Optional[Dict[str, Any]] = None
+    combined_daily_metrics: List[Dict[str, Any]] = field(default_factory=list)
+    error: Optional[str] = None
+    market: str = "csi300"
+    start: str = ""
+    end: str = ""
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_api_response(cls, raw: Dict[str, Any]) -> "CombineResult":
+        """Build a CombineResult from a raw API response dict."""
+        if not raw.get("success"):
+            return cls(
+                success=False,
+                error=raw.get("error", "Unknown error"),
+                market=raw.get("market", ""),
+                start=raw.get("start_date", ""),
+                end=raw.get("end_date", ""),
+            )
+
+        # Parse combined metrics
+        cm_raw = raw.get("combined_metrics") or {}
+        combined_metrics = FactorMetrics(
+            ic=float(cm_raw.get("ic", 0.0)),
+            rank_ic=float(cm_raw.get("rank_ic", 0.0)),
+            icir=float(cm_raw.get("icir", 0.0)),
+            rank_icir=float(cm_raw.get("rank_icir", 0.0)),
+            n_dates=int(cm_raw.get("n_dates", 0)),
+        )
+
+        # Parse per-factor results
+        per_factor = []
+        for item in raw.get("per_factor_results", []):
+            per_factor.append(FactorResult.from_api_response(item))
+
+        return cls(
+            success=True,
+            n_factors=int(raw.get("n_factors", 0)),
+            combined_metrics=combined_metrics,
+            per_factor_results=per_factor,
+            portfolio_metrics=raw.get("portfolio_metrics"),
+            portfolio_details=raw.get("portfolio_details"),
+            combined_daily_metrics=raw.get("combined_daily_metrics", []),
+            market=raw.get("market", ""),
+            start=raw.get("start_date", ""),
+            end=raw.get("end_date", ""),
+        )
+
+
+def combine_factors(
+    expressions: List[str],
+    market: str = "csi300",
+    start: str = "2023-01-01",
+    end: str = "2024-01-01",
+    label: str = "close_return",
+    fast: bool = True,
+    topk: int = 50,
+    n_drop: int = 5,
+    timeout: int = 600,
+    forward_n: int = 1,
+) -> CombineResult:
+    """
+    Combine multiple factor expressions into a single trading signal
+    without model training (no-train portfolio combine).
+
+    Each factor is z-score normalized cross-sectionally per date,
+    then averaged with equal weights. The combined signal's IC/RankIC
+    is computed against the specified return label. Optionally runs a
+    portfolio backtest (TopkDropout) on the combined signal.
+
+    Args:
+        expressions: List of Qlib-style factor expressions (>= 2).
+                     Examples: ["Rank($close, 20)", "Mean($volume, 5)"]
+        market:      Market universe. Default: "csi300".
+        start:       Start date (YYYY-MM-DD). Default: "2023-01-01".
+        end:         End date (YYYY-MM-DD). Default: "2024-01-01".
+        label:       Return label. Default: "close_return".
+        fast:        If True, skip portfolio backtest. Default: True.
+        topk:        Top-K stocks for portfolio. Default: 50.
+        n_drop:      Rebalance drop count. Default: 5.
+        timeout:     Timeout in seconds. Default: 600.
+        forward_n:   Multi-horizon IC days. Default: 1.
+
+    Returns:
+        CombineResult with combined metrics, per-factor metrics,
+        and optional portfolio backtest results.
+
+    Example::
+
+        result = combine_factors(
+            ["Rank($close, 20)", "Mean($volume, 5)", "Corr($close, $volume, 10)"],
+            market="csi300",
+            start="2023-01-01",
+            end="2024-01-01",
+            fast=True,
+        )
+        if result.success:
+            print(f"Combined IC = {result.combined_metrics.ic:.4f}")
+            print(f"Combined ICIR = {result.combined_metrics.icir:.4f}")
+            for r in result.per_factor_results:
+                print(f"  {r.expression[:40]:40s}  IC={r.metrics.ic:.4f}")
+    """
+    if len(expressions) < 2:
+        return CombineResult(
+            success=False,
+            error="Portfolio combine requires at least 2 factor expressions",
+        )
+
+    payload = {
+        "expression": expressions,
+        "market": market,
+        "start": start,
+        "end": end,
+        "label": label,
+        "fast": fast,
+        "topk": topk,
+        "n_drop": n_drop,
+        "timeout": timeout,
+        "forward_n": forward_n,
+    }
+    raw = _post("/factors/portfolio", payload, timeout=timeout + 60)
+
+    if raw is None:
+        return CombineResult(
+            success=False,
+            error="No response from FFO backend. Is it running? Try: ppo start backend",
+        )
+
+    if isinstance(raw, list):
+        raw = raw[0] if raw else {}
+
+    return CombineResult.from_api_response(raw)

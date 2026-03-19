@@ -61,6 +61,38 @@ def summarize_ic_rankic(
     }
 
 
+def _daily_turnover(feature_s: pd.Series) -> pd.Series:
+    """
+    Compute rank-based turnover between consecutive dates.
+
+    Turnover_t = 1 - spearman_corr(f_t, f_{t-1})
+
+    Operates directly on the factor score series (MultiIndex: datetime, instrument).
+    Uses aligned asset universes at t and t-1, handles missing values.
+    """
+    groups = feature_s.dropna().groupby(level="datetime")
+    dates = sorted(groups.groups.keys())
+
+    turnovers = {}
+    prev_scores = None
+
+    for date in dates:
+        curr_scores = groups.get_group(date).droplevel("datetime")
+
+        if prev_scores is not None:
+            common_idx = curr_scores.index.intersection(prev_scores.index)
+            if len(common_idx) >= 5:
+                c = curr_scores.loc[common_idx]
+                p = prev_scores.loc[common_idx]
+                rho = c.rank().corr(p.rank())
+                if np.isfinite(rho):
+                    turnovers[date] = 1.0 - rho
+
+        prev_scores = curr_scores
+
+    return pd.Series(turnovers, dtype=float)
+
+
 def _calc_ic_rankic_for_group(group):
     f, y = group["f"], group["y"]
     ic = f.corr(y)
@@ -213,6 +245,10 @@ def performance_single_alpha(
     ic_d, rankic_d = _daily_ic_rankic(f_s, y_s, num_worker=num_worker)
     metrics = summarize_ic_rankic(ic_d, rankic_d)
 
+    # Compute rank-based turnover from factor scores
+    turnover_d = _daily_turnover(f_s)
+    mean_turnover = float(turnover_d.mean()) if len(turnover_d) else 0.0
+
     return {
         "success": True,
         "expression": expr,
@@ -225,11 +261,11 @@ def performance_single_alpha(
             "ir": metrics["icir"],  # backward compatible alias
             "icir": metrics["icir"],
             "rank_icir": metrics["rank_icir"],
-            "turnover": 0.0,
+            "turnover": mean_turnover,
             "n_dates": metrics["n_dates"],
         },
         "timestamp": pd.Timestamp.utcnow().isoformat(),
-        "raw": {"ic_daily": ic_d, "rankic_daily": rankic_d},
+        "raw": {"ic_daily": ic_d, "rankic_daily": rankic_d, "turnover_daily": turnover_d},
     }
 
 

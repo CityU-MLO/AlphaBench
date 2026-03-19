@@ -16,11 +16,8 @@ import logging
 from datetime import datetime, timezone
 from urllib.parse import unquote
 
-# import agent.qlib_contrib.qlib_extend_ops
-
 from flask_cors import CORS
 from utils.utils import PersistentCache
-import utils.qlib_extend_ops as qlib_extend_ops
 from flask import Blueprint, request, jsonify
 
 bp = Blueprint("combinations", __name__, url_prefix="/combination")

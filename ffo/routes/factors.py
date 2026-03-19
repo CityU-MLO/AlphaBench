@@ -19,7 +19,7 @@ from flask import Blueprint, request, jsonify
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from flask_cors import CORS
-import utils.qlib_extend_ops as qlib_extend_ops
+
 
 from utils.utils import (
     PersistentCache,
@@ -30,6 +30,7 @@ from utils.utils import (
     run_check_with_timeout,
     run_batch_with_timeout,
     run_batch_check_with_timeout,
+    run_portfolio_combine_with_timeout,
     DEFAULT_INSTRUMENTS,
 )
 from utils.factor_store import FactorStore
@@ -102,7 +103,7 @@ def _fail_result(expr: str, market: str, start: str, end: str, msg: str):
             "ir": 0.0,
             "icir": 0.0,
             "rank_icir": 0.0,
-            "turnover": 1.0,
+            "turnover": 0.0,
             "n_dates": 0,
         },
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -733,3 +734,183 @@ def eval_once():
             ),
             500,
         )
+
+
+@bp.route("/portfolio", methods=["POST"])
+def portfolio_combine():
+    """
+    No-train portfolio combine: z-score normalize + equal-weight average.
+
+    Accepts a list of factor expressions, z-score normalizes each per date
+    (cross-sectional), averages them into a combined signal, and computes
+    IC/RankIC/ICIR for both per-factor and combined signals. Optionally
+    runs a portfolio backtest (TopkDropout) on the combined signal.
+
+    POST JSON:
+      {
+        "expression": ["Rank($close, 20)", "Mean($volume, 5)", ...],
+        "market": "csi300",
+        "start": "2023-01-01",
+        "end": "2024-01-01",
+        "label": "close_return",
+        "fast": true,
+        "topk": 50,
+        "n_drop": 5,
+        "timeout": 600,
+        "forward_n": 1
+      }
+
+    Response:
+      {
+        "success": true,
+        "n_factors": 3,
+        "combined_metrics": {"ic": ..., "rank_ic": ..., "icir": ..., "rank_icir": ..., "n_dates": ...},
+        "combined_daily_metrics": [{"date": ..., "ic": ..., "rank_ic": ...}, ...],
+        "per_factor_results": [{"name": ..., "expression": ..., "metrics": {...}}, ...],
+        "portfolio_metrics": {...},       // when fast=false
+        "portfolio_details": {...},       // when fast=false
+        "timestamp": "..."
+      }
+    """
+    try:
+        data = request.get_json(force=True, silent=True) or {}
+
+        factors, err = normalize_factors_from_expression_field(data)
+        if err:
+            msg, etype = err
+            return jsonify({
+                "success": False, "error": msg, "error_type": etype,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }), 400
+
+        if len(factors) < 2:
+            return jsonify({
+                "success": False,
+                "error": "Portfolio combine requires at least 2 factor expressions",
+                "error_type": "INSUFFICIENT_FACTORS",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }), 400
+
+        start = data.get("start", DEFAULTS["start"])
+        end = data.get("end", DEFAULTS["end"])
+        market = (data.get("market", DEFAULTS["market"]) or DEFAULTS["market"]).lower()
+        label = data.get("label", DEFAULTS["label"])
+        timeout = int(data.get("timeout", DEFAULTS["timeout_batch"]))
+        topk = int(data.get("topk", 50))
+        n_drop = int(data.get("n_drop", 5))
+        forward_n = max(1, int(data.get("forward_n", 1)))
+        fast = bool(data.get("fast", True))
+        n_jobs_backtest = int(data.get("n_jobs_backtest", 4))
+
+        # Resolve market config
+        mcfg = get_config().get_market_config(market)
+        data_path = mcfg["data_path"]
+        region = mcfg["region"]
+        benchmark = mcfg.get("benchmark", "SH000300")
+        instruments = mcfg.get("instruments", market)
+
+        exchange_kwargs = {
+            "freq": "day",
+            "deal_price": "close",
+            "limit_threshold": mcfg.get("limit_threshold", 0.095 if region == "cn" else None),
+            "open_cost": mcfg.get("open_cost", 0.0005 if region == "cn" else 0.0001),
+            "close_cost": mcfg.get("close_cost", 0.0015 if region == "cn" else 0.0001),
+            "min_cost": mcfg.get("min_cost", 5 if region == "cn" else 0),
+        }
+
+        # Build factor defs and combined hash
+        import hashlib
+        factor_defs = []
+        sorted_hashes = []
+        for i, f in enumerate(factors):
+            name = f.get("name", "") or f"__combine_{i}__"
+            factor_defs.append({"name": name, "expression": f["expression"]})
+            sorted_hashes.append(expr_hash(_normalize_expr(f["expression"])))
+        sorted_hashes.sort()
+        combined_hash = hashlib.blake2b(
+            "|".join(sorted_hashes).encode(), digest_size=16
+        ).hexdigest()
+
+        scores_dir = str(FACTOR_STORE.scores_dir)
+
+        logger.info(
+            "Portfolio combine: %d factors (market=%s, %s→%s, fast=%s)",
+            len(factors), market, start, end, fast,
+        )
+
+        res = run_portfolio_combine_with_timeout(
+            factor_defs, market, start, end, label, timeout,
+            scores_save_dir=scores_dir,
+            combined_hash=combined_hash,
+            data_path=data_path, region=region,
+            forward_n=forward_n,
+        )
+
+        if not res.ok:
+            return jsonify({
+                "success": False,
+                "error": f"{res.error_type}: {res.payload}",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }), 200
+
+        payload = res.payload
+        if not isinstance(payload, dict) or not payload.get("success"):
+            return jsonify({
+                "success": False,
+                "error": str(payload),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+            }), 200
+
+        result = {
+            "success": True,
+            "n_factors": payload.get("n_factors", len(factors)),
+            "n_valid_factors": payload.get("n_valid_factors", 0),
+            "combined_metrics": payload.get("combined_metrics", {}),
+            "combined_daily_metrics": payload.get("combined_daily_metrics", []),
+            "per_factor_results": payload.get("per_factor_results", []),
+            "market": market,
+            "start_date": start,
+            "end_date": end,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+
+        # Portfolio backtest on combined signal
+        if not fast:
+            try:
+                combined_scores = FACTOR_STORE.load_scores(
+                    combined_hash, market, start, end
+                )
+                if combined_scores is not None:
+                    pool = _get_worker_pool()
+                    analysis_df, report_normal, positions_normal = pool.submit_backtest(
+                        region=region,
+                        job_type="backtest_by_scores",
+                        kwargs=dict(
+                            factor_scores=combined_scores,
+                            topk=topk, n_drop=n_drop,
+                            start_time=start, end_time=end,
+                            data_path=data_path, region=region,
+                            BENCH=benchmark,
+                            exchange_kwargs=exchange_kwargs,
+                        ),
+                    )
+                    pm = _extract_portfolio_metrics(analysis_df)
+                    if pm:
+                        result["portfolio_metrics"] = pm
+                    details = _extract_portfolio_details(report_normal, positions_normal)
+                    if details:
+                        result["portfolio_details"] = details
+                else:
+                    logger.warning("No combined scores on disk for backtest")
+            except Exception as e:
+                logger.warning("Portfolio backtest failed: %s", e)
+
+        return jsonify(result), 200
+
+    except Exception as e:
+        logger.exception("portfolio combine error")
+        return jsonify({
+            "success": False,
+            "error": f"{type(e).__name__}: {e}",
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }), 500

@@ -14,7 +14,6 @@ Key features:
 from __future__ import annotations
 import re
 
-# import agent.qlib_contrib.qlib_extend_ops
 import os
 import json
 import time
@@ -449,6 +448,39 @@ def _daily_ic_rankic(
     return ic_daily, rankic_daily
 
 
+def _daily_turnover(feature_s: pd.Series) -> pd.Series:
+    """
+    Compute rank-based turnover between consecutive dates.
+
+    Turnover_t = 1 - spearman_corr(f_t, f_{t-1})
+
+    Operates directly on the factor score series (MultiIndex: datetime, instrument).
+    Uses aligned asset universes at t and t-1, handles missing values.
+    """
+    groups = feature_s.dropna().groupby(level="datetime")
+    dates = sorted(groups.groups.keys())
+
+    turnovers = {}
+    prev_scores = None
+
+    for date in dates:
+        curr_scores = groups.get_group(date).droplevel("datetime")
+
+        if prev_scores is not None:
+            common_idx = curr_scores.index.intersection(prev_scores.index)
+            if len(common_idx) >= 5:
+                c = curr_scores.loc[common_idx]
+                p = prev_scores.loc[common_idx]
+                # Spearman = Pearson correlation on ranks
+                rho = c.rank().corr(p.rank())
+                if np.isfinite(rho):
+                    turnovers[date] = 1.0 - rho
+
+        prev_scores = curr_scores
+
+    return pd.Series(turnovers, dtype=float)
+
+
 def _ir(mean_val: float, std_val: float) -> float:
     if std_val is None or not np.isfinite(std_val) or std_val <= 0:
         return float(0)
@@ -508,7 +540,6 @@ def _child_eval_expr(
 
     logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
     qlib.init(provider_uri=provider_uri, region=qlib_region)
-    import utils.qlib_extend_ops as _ext_ops; _ext_ops.register()  # re-register after qlib.init() reset
 
     # Build label spec(s) depending on forward_n
     _empty_result = {
@@ -604,6 +635,10 @@ def _child_eval_expr(
 
     metrics = summarize_ic_rankic(ic_d, rankic_d)
 
+    # Compute rank-based turnover from factor scores
+    turnover_d = _daily_turnover(f_s)
+    mean_turnover = float(turnover_d.mean()) if len(turnover_d) else 0.0
+
     # Format daily metrics for response
     daily_metrics = []
     if not ic_d.empty and not rankic_d.empty:
@@ -625,6 +660,11 @@ def _child_eval_expr(
                         if date_val in rankic_d.index
                         else 0.0
                     ),
+                    "turnover": (
+                        float(turnover_d.get(date_val, 0.0))
+                        if date_val in turnover_d.index
+                        else 0.0
+                    ),
                 }
             )
 
@@ -640,7 +680,7 @@ def _child_eval_expr(
             "ir": metrics["icir"],  # backward compatible alias
             "icir": metrics["icir"],
             "rank_icir": metrics["rank_icir"],
-            "turnover": 0.0,
+            "turnover": mean_turnover,
             "n_dates": metrics["n_dates"],
         },
         "daily_metrics": daily_metrics,
@@ -701,7 +741,6 @@ def _child_check_expr(
 
     logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
     qlib.init(provider_uri=provider_uri, region=qlib_region)
-    import utils.qlib_extend_ops as _ext_ops; _ext_ops.register()  # re-register after qlib.init() reset
 
     cfg = {"feature": ([expr], ["test_expr"])}
     dl = QlibDataLoader(config=cfg)
@@ -796,7 +835,6 @@ def _child_batch_check(
 
     logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
     qlib.init(provider_uri=provider_uri, region=qlib_region)
-    import utils.qlib_extend_ops as _ext_ops; _ext_ops.register()  # re-register after qlib.init() reset
 
     names = [f["name"] for f in factors]
     fields = [f["expression"] for f in factors]
@@ -925,7 +963,6 @@ def _child_batch_eval(
 
     logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
     qlib.init(provider_uri=provider_uri, region=qlib_region)
-    import utils.qlib_extend_ops as _ext_ops; _ext_ops.register()  # re-register after qlib.init() reset
 
     names = [f["name"] for f in factors]
     fields = [f["expression"] for f in factors]
@@ -988,6 +1025,12 @@ def _child_batch_eval(
                     if _os.path.exists(tmp_path):
                         _os.unlink(tmp_path)
                     raise
+
+    # Compute per-factor rank-based turnover BEFORE dropna alignment with labels
+    # (turnover is a property of the factor scores alone, not dependent on labels)
+    turnover_per_factor: Dict[str, pd.Series] = {}
+    for nm in X.columns:
+        turnover_per_factor[nm] = _daily_turnover(X[nm])
 
     # Align features with all label columns and drop NA
     df = X.join(Y, how="inner").dropna()
@@ -1058,6 +1101,10 @@ def _child_batch_eval(
         ric_mean = float(ric_series.mean()) if len(ric_series) else float(0)
         ric_std = float(ric_series.std(ddof=1)) if len(ric_series) > 1 else float(0)
 
+        # Turnover summary
+        t_series = turnover_per_factor.get(nm, pd.Series(dtype=float))
+        mean_turnover = float(t_series.mean()) if len(t_series) else 0.0
+
         # find expression
         expr = next((f["expression"] for f in factors if f["name"] == nm), "")
 
@@ -1076,7 +1123,7 @@ def _child_batch_eval(
                     "icir": _ir(ic_mean, ic_std),
                     "rank_ic": ric_mean,
                     "rank_icir": _ir(ric_mean, ric_std),
-                    "turnover": 0.0,
+                    "turnover": mean_turnover,
                     "n_dates": int(len(ic_series.index)),
                 },
             }
@@ -1088,7 +1135,8 @@ def _child_batch_eval(
             d_ts = uniq_dates[i]
             ic_val = float(ic_table.iloc[i][nm]) if d_ts in ic_series.index else 0.0
             ric_val = float(ric_table.iloc[i][nm]) if d_ts in ric_series.index else 0.0
-            factor_daily.append({"date": d_str, "ic": ic_val, "rank_ic": ric_val})
+            t_val = float(t_series.get(d_ts, 0.0)) if d_ts in t_series.index else 0.0
+            factor_daily.append({"date": d_str, "ic": ic_val, "rank_ic": ric_val, "turnover": t_val})
         daily_metrics_per_factor[nm] = factor_daily
 
     return {
@@ -1096,6 +1144,281 @@ def _child_batch_eval(
         "count": len(results),
         "results": results,
         "daily_metrics_per_factor": daily_metrics_per_factor,
+        "timestamp": pd.Timestamp.utcnow().isoformat(),
+    }
+
+
+def _child_portfolio_combine(
+    factors: List[Dict[str, str]],
+    instruments: str,
+    start: str,
+    end: str,
+    label_spec: str,
+    scores_save_dir: str = None,
+    combined_hash: str = None,
+    data_path: str = None,
+    region: str = None,
+    forward_n: int = 1,
+) -> Dict[str, Any]:
+    """
+    No-train portfolio combine: z-score normalize each factor per date,
+    average them into a combined signal, compute IC/RankIC for both
+    per-factor and combined signals.
+
+    Runs inside a child process (safe to kill on timeout).
+
+    Args:
+        factors: List of {"name": str, "expression": str}.
+        instruments: Market universe (e.g. "csi300").
+        start/end: Date range.
+        label_spec: Label key from _LABEL_MAP.
+        scores_save_dir: Directory to save combined scores pickle.
+        combined_hash: Hash key for the combined signal (for scores filename).
+        data_path/region: Qlib data config.
+        forward_n: Multi-horizon IC averaging.
+    """
+    import os as _os
+    import tempfile as _tmpfile
+    import qlib
+    from qlib.data.dataset.loader import QlibDataLoader
+    import logging
+
+    provider_uri = data_path or DEFAULT_PROVIDER_URI
+    qlib_region = region or DEFAULT_REGION
+
+    logging.getLogger("qlib.Initialization").setLevel(logging.WARNING)
+    qlib.init(provider_uri=provider_uri, region=qlib_region)
+
+    names = [f["name"] for f in factors]
+    fields = [f["expression"] for f in factors]
+
+    # Build label expressions
+    if forward_n <= 1:
+        label_expr = _LABEL_MAP.get(label_spec)
+        if label_expr is None:
+            raise ValueError(f"Unsupported label: {label_spec}. Supported: {list(_LABEL_MAP.keys())}")
+        label_fields = [label_expr]
+        label_names = ["RET"]
+    else:
+        fwd_labels = _build_forward_label_exprs(forward_n)
+        label_names = [nm for nm, _ in fwd_labels]
+        label_fields = [ex for _, ex in fwd_labels]
+
+    cfg = {"feature": (fields, names), "label": (label_fields, label_names)}
+    dl = QlibDataLoader(config=cfg)
+    data = dl.load(instruments=instruments, start_time=start, end_time=end)
+
+    if "feature" not in data or "label" not in data or data["feature"].empty:
+        raise RuntimeError("Missing data for portfolio combine")
+
+    X = data["feature"]  # MultiIndex (datetime, instrument), columns per factor
+    Y = data["label"]
+
+    # --- Per-factor: fill NaN and z-score normalize per date ---
+    groups = X.index.get_level_values("datetime")
+
+    # Fill minor NaN with 0 (per factor)
+    X_filled = X.copy()
+    for col in X_filled.columns:
+        nan_ratio = float(X_filled[col].isna().mean())
+        if nan_ratio <= 0.5:
+            X_filled[col] = X_filled[col].fillna(0.0)
+
+    # Z-score normalize per date (cross-sectional)
+    X_zscore = X_filled.copy()
+    for col in X_zscore.columns:
+        g = X_zscore.groupby(level="datetime")[col]
+        mean = g.transform("mean")
+        std = g.transform("std")
+        X_zscore[col] = (X_zscore[col] - mean) / (std + 1e-12)
+
+    # Combined signal: equal-weight average of z-scored factors
+    combined_score = X_zscore.mean(axis=1)
+    combined_score.name = "score"
+
+    # --- Compute per-factor turnover and combined turnover ---
+    turnover_per_factor: Dict[str, pd.Series] = {}
+    for col in X.columns:
+        turnover_per_factor[col] = _daily_turnover(X_filled[col])
+    combined_turnover_d = _daily_turnover(combined_score)
+
+    # --- Compute per-factor IC/RankIC and combined IC/RankIC ---
+    # Align with labels and drop NA
+    df_all = X.join(Y, how="inner")
+    # For combined score, join separately
+    combined_df = pd.concat({"combined": combined_score}, axis=1).join(Y, how="inner")
+
+    uniq_dates = np.unique(groups)
+
+    # Per-factor IC/RankIC (same as _child_batch_eval)
+    ic_rows = []
+    ric_rows = []
+    combined_ic_list = []
+    combined_ric_list = []
+
+    for d in uniq_dates:
+        mask = groups == d
+        Xd = X_filled.loc[mask].copy()
+        Yd_full = Y.loc[mask] if d in Y.index.get_level_values("datetime") else None
+        if Yd_full is None or Yd_full.empty:
+            continue
+
+        # Z-score Xd for combined per this date
+        Xd_z = Xd.copy()
+        for col in Xd_z.columns:
+            s = Xd_z[col]
+            m, st = s.mean(), s.std()
+            Xd_z[col] = (s - m) / (st + 1e-12) if st > 1e-12 else 0.0
+
+        comb_d = Xd_z.mean(axis=1)
+
+        # Drop rows with NaN in any label or features
+        valid_idx = Xd.dropna().index.intersection(Yd_full.dropna().index)
+        if len(valid_idx) < 5:
+            continue
+
+        Xd = Xd.loc[valid_idx]
+        Yd_full = Yd_full.loc[valid_idx]
+        comb_d = comb_d.loc[valid_idx]
+
+        if forward_n <= 1:
+            yd = Yd_full.iloc[:, 0]
+            ic = Xd.corrwith(yd, axis=0)
+            Xr = Xd.rank(method="average")
+            yr = yd.rank(method="average")
+            ric = Xr.corrwith(yr, axis=0)
+            # Combined
+            c_ic = comb_d.corr(yd)
+            c_ric = comb_d.rank(method="average").corr(yr)
+        else:
+            ic_mats = []
+            ric_mats = []
+            c_ic_vals = []
+            c_ric_vals = []
+            Xr = Xd.rank(method="average")
+            comb_r = comb_d.rank(method="average")
+            for col in Yd_full.columns:
+                yd_k = Yd_full[col]
+                ic_mats.append(Xd.corrwith(yd_k, axis=0))
+                yr_k = yd_k.rank(method="average")
+                ric_mats.append(Xr.corrwith(yr_k, axis=0))
+                c_ic_vals.append(comb_d.corr(yd_k))
+                c_ric_vals.append(comb_r.corr(yr_k))
+            ic = pd.concat(ic_mats, axis=1).mean(axis=1)
+            ric = pd.concat(ric_mats, axis=1).mean(axis=1)
+            c_ic = float(np.mean(c_ic_vals))
+            c_ric = float(np.mean(c_ric_vals))
+
+        ic.index.name = "factor"
+        ric.index.name = "factor"
+        ic_rows.append(ic)
+        ric_rows.append(ric)
+        combined_ic_list.append(c_ic)
+        combined_ric_list.append(c_ric)
+
+    if not ic_rows:
+        raise RuntimeError("No valid dates for portfolio combine")
+
+    ic_table = pd.concat(ic_rows, axis=1).T
+    ric_table = pd.concat(ric_rows, axis=1).T
+    valid_dates = [d for d in uniq_dates if d in Y.index.get_level_values("datetime")][:len(ic_rows)]
+    date_strs = [
+        d.strftime("%Y-%m-%d") if hasattr(d, "strftime") else str(d)
+        for d in valid_dates
+    ]
+
+    # Per-factor summaries
+    per_factor_results = []
+    for nm in X.columns:
+        ic_series = ic_table[nm].dropna() if nm in ic_table.columns else pd.Series(dtype=float)
+        ric_series = ric_table[nm].dropna() if nm in ric_table.columns else pd.Series(dtype=float)
+        ic_mean = float(ic_series.mean()) if len(ic_series) else 0.0
+        ic_std = float(ic_series.std(ddof=1)) if len(ic_series) > 1 else 0.0
+        ric_mean = float(ric_series.mean()) if len(ric_series) else 0.0
+        ric_std = float(ric_series.std(ddof=1)) if len(ric_series) > 1 else 0.0
+        t_series = turnover_per_factor.get(nm, pd.Series(dtype=float))
+        mean_turnover = float(t_series.mean()) if len(t_series) else 0.0
+        expr = next((f["expression"] for f in factors if f["name"] == nm), "")
+        per_factor_results.append({
+            "name": nm,
+            "expression": expr,
+            "success": True,
+            "metrics": {
+                "ic": ic_mean,
+                "icir": _ir(ic_mean, ic_std),
+                "rank_ic": ric_mean,
+                "rank_icir": _ir(ric_mean, ric_std),
+                "turnover": mean_turnover,
+                "n_dates": int(len(ic_series)),
+            },
+        })
+
+    # Combined signal summaries
+    comb_ic_arr = np.array(combined_ic_list, dtype=float)
+    comb_ric_arr = np.array(combined_ric_list, dtype=float)
+    comb_ic_arr = comb_ic_arr[~np.isnan(comb_ic_arr)]
+    comb_ric_arr = comb_ric_arr[~np.isnan(comb_ric_arr)]
+    comb_ic_mean = float(comb_ic_arr.mean()) if len(comb_ic_arr) else 0.0
+    comb_ic_std = float(comb_ic_arr.std(ddof=1)) if len(comb_ic_arr) > 1 else 0.0
+    comb_ric_mean = float(comb_ric_arr.mean()) if len(comb_ric_arr) else 0.0
+    comb_ric_std = float(comb_ric_arr.std(ddof=1)) if len(comb_ric_arr) > 1 else 0.0
+
+    comb_mean_turnover = float(combined_turnover_d.mean()) if len(combined_turnover_d) else 0.0
+
+    combined_metrics = {
+        "ic": comb_ic_mean,
+        "icir": _ir(comb_ic_mean, comb_ic_std),
+        "rank_ic": comb_ric_mean,
+        "rank_icir": _ir(comb_ric_mean, comb_ric_std),
+        "turnover": comb_mean_turnover,
+        "n_dates": int(len(comb_ic_arr)),
+    }
+
+    # Combined daily metrics
+    combined_daily_metrics = []
+    for i, d_str in enumerate(date_strs):
+        combined_daily_metrics.append({
+            "date": d_str,
+            "ic": float(combined_ic_list[i]) if i < len(combined_ic_list) else 0.0,
+            "rank_ic": float(combined_ric_list[i]) if i < len(combined_ric_list) else 0.0,
+        })
+
+    # Save combined scores to disk
+    if scores_save_dir and combined_hash:
+        scores_df = combined_score.to_frame("score")
+        score_dir = _os.path.join(scores_save_dir, combined_hash)
+        _os.makedirs(score_dir, exist_ok=True)
+        score_path = _os.path.join(score_dir, f"{instruments}.pkl")
+
+        if _os.path.exists(score_path):
+            try:
+                existing = pd.read_pickle(score_path)
+                scores_df = pd.concat([existing, scores_df])
+                scores_df = scores_df[~scores_df.index.duplicated(keep="last")]
+                scores_df = scores_df.sort_index()
+            except Exception:
+                pass
+
+        fd, tmp_path = _tmpfile.mkstemp(dir=score_dir, suffix=".pkl.tmp")
+        try:
+            _os.close(fd)
+            scores_df.to_pickle(tmp_path)
+            _os.replace(tmp_path, score_path)
+        except Exception:
+            if _os.path.exists(tmp_path):
+                _os.unlink(tmp_path)
+            raise
+
+    return {
+        "success": True,
+        "n_factors": len(factors),
+        "n_valid_factors": sum(1 for r in per_factor_results if r["success"]),
+        "combined_metrics": combined_metrics,
+        "combined_daily_metrics": combined_daily_metrics,
+        "per_factor_results": per_factor_results,
+        "market": instruments,
+        "start_date": start,
+        "end_date": end,
         "timestamp": pd.Timestamp.utcnow().isoformat(),
     }
 
@@ -1159,6 +1482,24 @@ def run_batch_with_timeout(
     )
 
 
+def run_portfolio_combine_with_timeout(
+    factors: List[Dict[str, str]],
+    instruments: str,
+    start: str,
+    end: str,
+    label_spec: str,
+    timeout: int,
+    scores_save_dir: str = None,
+    combined_hash: str = None,
+    data_path: str = None, region: str = None,
+    forward_n: int = 1,
+) -> SubprocessResult:
+    return _spawn_and_run(
+        _child_portfolio_combine,
+        (factors, instruments, start, end, label_spec, scores_save_dir,
+         combined_hash, data_path, region, forward_n),
+        timeout,
+    )
 
 
 def normalize_factors_from_expression_field(data: dict):

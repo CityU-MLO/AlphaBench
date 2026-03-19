@@ -27,11 +27,13 @@ from .functions import (
     SyntaxCheckResult,
     CacheStats,
     ServerHealth,
+    CombineResult,
     # Core functions
     evaluate_factor,
     batch_evaluate_factors,
     check_factor,
     batch_check_factors,
+    combine_factors,
     # Cache management
     get_cache_stats,
     clear_cache,
@@ -46,11 +48,13 @@ __all__ = [
     "SyntaxCheckResult",
     "CacheStats",
     "ServerHealth",
+    "CombineResult",
     # Functions
     "evaluate_factor",
     "batch_evaluate_factors",
     "check_factor",
     "batch_check_factors",
+    "combine_factors",
     "get_cache_stats",
     "clear_cache",
     "server_health",

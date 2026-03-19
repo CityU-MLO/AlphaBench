@@ -16,11 +16,9 @@ import logging
 from datetime import datetime, timezone
 from urllib.parse import unquote
 
-# import agent.qlib_contrib.qlib_extend_ops
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from utils.utils import PersistentCache
-import utils.qlib_extend_ops as qlib_extend_ops
 
 # Load routes
 from routes.combinations import bp as combinations_bp

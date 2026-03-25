@@ -204,11 +204,46 @@ class CoTSearcher:
 
         if save_pickle:
             tag = self._safe_tag(run_name or seed["name"]) or "cot"
+            # Pickle (full)
             out_path = os.path.join(save_dir, f"CoT_single_{tag}.pkl")
             with open(out_path, "wb") as fh:
                 pickle.dump(summary, fh)
             summary["save_path"] = out_path
             self._log(f"  Saved: {out_path}")
+
+            # JSON (human-readable: all factors, expressions, metrics per round)
+            json_summary = {
+                "seed": {"name": seed["name"], "expression": seed["expression"]},
+                "seed_metrics": seed_metrics,
+                "best": {
+                    "name": best_name,
+                    "expression": best_expr,
+                    "metrics": best_metrics,
+                },
+                "chain": [],
+            }
+            for rec in chain:
+                chain_rec = {
+                    "round": rec.get("round"),
+                    "name": rec.get("name", ""),
+                    "expression": rec.get("expression", ""),
+                    "metrics": rec.get("metrics", {}),
+                    "elapsed_time": rec.get("elapsed_time"),
+                }
+                gen = rec.get("generated")
+                if gen and isinstance(gen, dict):
+                    chain_rec["generated"] = {
+                        "name": gen.get("name", ""),
+                        "expression": gen.get("expression", ""),
+                        "reason": gen.get("reason", ""),
+                        "metrics": gen.get("metrics", {}),
+                        "promoted": gen.get("promoted", False),
+                    }
+                json_summary["chain"].append(chain_rec)
+
+            json_path = os.path.join(save_dir, f"CoT_single_{tag}.json")
+            with open(json_path, "w", encoding="utf-8") as fh:
+                json.dump(json_summary, fh, indent=2, ensure_ascii=False, default=str)
 
         return summary
 
@@ -378,9 +413,13 @@ class CoTAlgo(BaseAlgo):
     """
     CoT BaseAlgo adapter.
 
-    Runs CoTSearcher on the top seed (by IC) from the seed pool.
+    Runs CoTSearcher on seeds from the pool. When workers > 1, runs
+    multiple independent search chains in parallel, each starting from
+    a different seed. Results are merged at the end.
+
     Config keys (under searching.algo.param):
       rounds:        number of refinement rounds (default: 10)
+      workers:       number of parallel search chains (default: 1)
       model:         LLM model name
       temperature:   sampling temperature (default: 1.75)
       enable_reason: include chain-of-thought reasoning (default: True)
@@ -390,51 +429,97 @@ class CoTAlgo(BaseAlgo):
 
     def run(self, seeds: List[Dict[str, Any]], save_dir: str) -> Dict[str, Any]:
         rounds           = self.config.get("rounds", 10)
+        workers          = int(self.config.get("workers", 1))
         model            = self.config.get("model", "deepseek-chat")
         temperature      = float(self.config.get("temperature", 1.75))
         enable_reason    = bool(self.config.get("enable_reason", True))
         accept_threshold = float(self.config.get("accept_threshold", 0.0))
 
-        searcher = CoTSearcher(
-            evaluate_fn=self.evaluate_fn,
-            search_fn=self.search_fn,
-            batch_evaluate_fn=self.batch_evaluate_fn,
-            model=model,
-            temperature=temperature,
-            enable_reason=enable_reason,
-            save_dir=save_dir,
-            accept_threshold=accept_threshold,
-            logger=self.logger,
-        )
-
-        # Pick the best seed by IC
+        # Select top-W seeds (one per worker)
         valid_seeds = [s for s in seeds if s.get("metrics")]
         if not valid_seeds:
             valid_seeds = seeds
-        top_seed = max(
+        ranked_seeds = sorted(
             valid_seeds,
             key=lambda s: s.get("metrics", {}).get("ic", float("-inf")),
+            reverse=True,
         )
+        selected_seeds = ranked_seeds[:max(1, workers)]
 
-        seed_input = {"name": top_seed["name"], "expression": top_seed["expression"]}
-        summary = searcher.search_single_factor(
-            seed=seed_input,
-            rounds=rounds,
-            save_dir=save_dir,
-        )
+        def _run_chain(seed_item, worker_id):
+            worker_dir = os.path.join(save_dir, f"worker_{worker_id}")
+            os.makedirs(worker_dir, exist_ok=True)
+            searcher = CoTSearcher(
+                evaluate_fn=self.evaluate_fn,
+                search_fn=self.search_fn,
+                batch_evaluate_fn=self.batch_evaluate_fn,
+                model=model,
+                temperature=temperature,
+                enable_reason=enable_reason,
+                save_dir=worker_dir,
+                accept_threshold=accept_threshold,
+                logger=self.logger,
+            )
+            seed_input = {"name": seed_item["name"], "expression": seed_item["expression"]}
+            return searcher.search_single_factor(
+                seed=seed_input,
+                rounds=rounds,
+                run_name=f"worker{worker_id}_{seed_item['name']}",
+                save_dir=worker_dir,
+            )
 
-        # Normalise return format
-        chain_factors = []
-        for rec in summary.get("chain", []):
-            if rec.get("expression"):
-                chain_factors.append({
-                    "name":       rec.get("name", ""),
-                    "expression": rec["expression"],
-                    "metrics":    rec.get("metrics", {}),
-                })
+        if len(selected_seeds) == 1:
+            summaries = [_run_chain(selected_seeds[0], 0)]
+        else:
+            self._log(f"Running {len(selected_seeds)} CoT workers in parallel …")
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            summaries = [None] * len(selected_seeds)
+            with ThreadPoolExecutor(max_workers=len(selected_seeds)) as ex:
+                futs = {
+                    ex.submit(_run_chain, seed, i): i
+                    for i, seed in enumerate(selected_seeds)
+                }
+                for fut in as_completed(futs):
+                    idx = futs[fut]
+                    try:
+                        summaries[idx] = fut.result()
+                    except Exception as e:
+                        self._log(f"Worker {idx} failed: {e}", "warning")
+            summaries = [s for s in summaries if s is not None]
+
+        # Merge results from all workers
+        all_chain_factors = []
+        all_history = []
+        best_global = {}
+        for summary in summaries:
+            for rec in summary.get("chain", []):
+                if rec.get("expression"):
+                    all_chain_factors.append({
+                        "name":       rec.get("name", ""),
+                        "expression": rec["expression"],
+                        "metrics":    rec.get("metrics", {}),
+                    })
+            all_history.extend(summary.get("chain", []))
+            candidate = summary.get("best", {})
+            if not best_global or self._is_better(best_global, candidate):
+                best_global = candidate
 
         return {
-            "best":       summary.get("best", {}),
-            "history":    summary.get("chain", []),
-            "final_pool": chain_factors,
+            "best":       best_global,
+            "history":    all_history,
+            "final_pool": all_chain_factors,
         }
+
+    @staticmethod
+    def _is_better(curr, cand):
+        c_m = curr.get("metrics", {})
+        n_m = cand.get("metrics", {})
+        c_r = c_m.get("rank_ic", float("-inf"))
+        n_r = n_m.get("rank_ic", float("-inf"))
+        if n_r != c_r:
+            return n_r > c_r
+        return n_m.get("ic", float("-inf")) > c_m.get("ic", float("-inf"))
+
+    def _log(self, msg, level="info"):
+        if self.logger:
+            getattr(self.logger, level)(msg)

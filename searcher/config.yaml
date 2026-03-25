@@ -41,6 +41,7 @@ searching:
     # For local vLLM: set local: true and local_port in the benchmark config, or
     # pass --local / --local_port flags to start_search.py.
     name: "gpt-4.1-mini"
+
     temperature: 0.5
 
 # ── Backtesting (FFO server) ─────────────────────────────────────────────────
@@ -48,11 +49,11 @@ backtesting:
   ffo_server: "127.0.0.1:19777"
   market: "csi300"
   benchmark: "SH000300"
-  period_start: "2022-01-01"
-  period_end: "2023-01-01"
+  search_start: "2016-01-01"
+  search_end: "2021-01-01"
 
-  top_k: 30
-  n_drop: 5
+  top_k: 30               # only used if not fast
+  n_drop: 1
 
   fast: true    # true = IC metrics only (~1-2 s/factor, recommended)
                 # false = full portfolio backtest (~10-30 s/factor)
@@ -61,3 +62,19 @@ backtesting:
 
   accept_threshold: 0.0   # minimum RankIC to accept a factor into the pool
                           # set to -1.0 to disable filtering
+
+# ── Verification / Validation ────────────────────────────────────────────────
+# During searching, factors are evaluated on BOTH search and val periods.
+# Only search-period metrics are used for algorithm decisions (no data leakage).
+# Val-period metrics are saved alongside for out-of-sample analysis.
+# After searching, use run_test_backtest.py to evaluate on the test period.
+verification:
+  enabled: true
+  auto_verify: true
+  search_start: "2016-01-01"
+  search_end: "2021-01-01"
+  val_start: "2021-01-01"
+  val_end: "2022-01-01"
+  test_start: "2022-01-01"
+  test_end: "2025-01-01"
+  verification_forward_n: 1

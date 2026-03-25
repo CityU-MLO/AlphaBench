@@ -1,0 +1,47 @@
+# ============================================================================
+# AlphaBench Searcher — CoT (Chain-of-Thought) Configuration
+# ============================================================================
+# Cold start: LLM generates initial factors, then each worker picks a
+# different seed and refines it via chain-of-thought.
+
+savedir: "./results/cot_search"
+
+searching:
+  algo:
+    name: cot
+    seed_file: ""         # empty = cold start (LLM proposes initial factors)
+
+    param:
+      rounds: 10            # number of refinement rounds per worker
+      workers: 4            # number of parallel search chains (each from a different seed)
+      enable_reason: true
+
+  model:
+    name: "deepseek-chat"
+    base_url: "https://api.deepseek.com"
+    key: "${DEEPSEEK_API_KEY}"
+    temperature: 1.75       # CoT benefits from higher temperature for exploration
+
+backtesting:
+  ffo_server: "127.0.0.1:19777"
+  market: "csi300"
+  benchmark: "SH000300"
+  search_start: "2016-01-01"
+  search_end: "2021-01-01"
+  top_k: 30
+  n_drop: 1
+  fast: true
+  n_jobs: 4
+  timeout: 120
+  accept_threshold: 0.0
+
+verification:
+  enabled: true
+  auto_verify: true
+  search_start: "2016-01-01"
+  search_end: "2021-01-01"
+  val_start: "2021-01-01"
+  val_end: "2022-01-01"
+  test_start: "2022-01-01"
+  test_end: "2025-01-01"
+  verification_forward_n: 1

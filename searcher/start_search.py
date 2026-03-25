@@ -35,19 +35,24 @@ YAML config format
 
     model:
       name: deepseek-chat
-      base_url: https://api.deepseek.com/v1
-      key: ${DEEPSEEK_API_KEY}
       temperature: 0.7
 
   backtesting:
     ffo_server: "127.0.0.1:19777"
     market: csi300
     benchmark: SH000300
-    period_start: "2022-01-01"
-    period_end: "2023-01-01"
+    search_start: "2016-01-01"
+    search_end: "2021-01-01"
     top_k: 30
-    n_drop: 5
+    n_drop: 1
     fast: true
+
+  verification:
+    enabled: true
+    val_start: "2021-01-01"
+    val_end: "2022-01-01"
+    test_start: "2022-01-01"
+    test_end: "2025-01-01"
 
   savedir: "./results"
 """

@@ -7,7 +7,6 @@ searching:
   algo:
     name: ea          # "ea" | "cot" | "tot"
     param:
-      # algo-specific params (passed directly to the algo)
       rounds: 10
       N: 30
       mutation_rate: 0.4
@@ -17,18 +16,29 @@ searching:
   model:
     name: deepseek-chat
     base_url: https://api.deepseek.com/v1
-    key: ${DEEPSEEK_API_KEY}   # or literal key
+    key: ${DEEPSEEK_API_KEY}
     temperature: 0.7
 
 backtesting:
   ffo_server: "127.0.0.1:19777"
   market: csi300
   benchmark: SH000300
-  period_start: "2022-01-01"
-  period_end: "2023-01-01"
+  search_start: "2016-01-01"
+  search_end: "2021-01-01"
   top_k: 30
-  n_drop: 5
+  n_drop: 1
   fast: true
+
+verification:
+  enabled: true
+  auto_verify: true
+  search_start: "2016-01-01"
+  search_end: "2021-01-01"
+  val_start: "2021-01-01"
+  val_end: "2022-01-01"
+  test_start: "2022-01-01"
+  test_end: "2025-01-01"
+  verification_forward_n: 1
 
 savedir: "./results"
 """
@@ -97,9 +107,10 @@ class BacktestConfig:
         ffo_server:    FFO API server address ("host:port").
         market:        Market universe identifier (e.g. "csi300", "csi500").
         benchmark:     Benchmark index for portfolio comparison (e.g. "SH000300").
-        period_start:  Backtest start date ("YYYY-MM-DD").
-        period_end:    Backtest end date ("YYYY-MM-DD").
+        search_start:  Search period start date ("YYYY-MM-DD").
+        search_end:    Search period end date ("YYYY-MM-DD").
         top_k:         Long-only portfolio size (top-K factors/stocks selected).
+                       Only used when fast=False.
         n_drop:        Number of positions dropped per rebalance.
         fast:          Fast mode — compute IC metrics only (True) or full portfolio
                        backtest (False).  Fast mode is ~5-10x quicker.
@@ -113,10 +124,10 @@ class BacktestConfig:
     ffo_server: str = "127.0.0.1:19777"
     market: str = "csi300"
     benchmark: str = "SH000300"
-    period_start: str = "2022-01-01"
-    period_end: str = "2023-01-01"
+    search_start: str = "2016-01-01"
+    search_end: str = "2021-01-01"
     top_k: int = 30
-    n_drop: int = 5
+    n_drop: int = 1
     fast: bool = True
     n_jobs: int = 4
     timeout: int = 120
@@ -128,6 +139,40 @@ class BacktestConfig:
         if not server.startswith("http"):
             server = f"http://{server}"
         return server
+
+
+@dataclass
+class VerificationConfig:
+    """
+    Verification / validation configuration for out-of-sample evaluation.
+
+    During searching, factors are evaluated on both the search period and
+    the validation period. Only search-period metrics are used for algorithm
+    decisions (no data leakage). Val-period metrics are saved for analysis only.
+
+    After searching completes, a separate script evaluates the final portfolio
+    on the test period.
+
+    Attributes:
+        enabled:       Whether to run validation evaluation during search.
+        auto_verify:   Automatically run validation after each round.
+        search_start:  Search period start (same as backtesting for reference).
+        search_end:    Search period end.
+        val_start:     Validation period start date.
+        val_end:       Validation period end date.
+        test_start:    Test period start date (used by test script only).
+        test_end:      Test period end date (used by test script only).
+        verification_forward_n: Number of forward periods for verification.
+    """
+    enabled: bool = True
+    auto_verify: bool = True
+    search_start: str = "2016-01-01"
+    search_end: str = "2021-01-01"
+    val_start: str = "2021-01-01"
+    val_end: str = "2022-01-01"
+    test_start: str = "2022-01-01"
+    test_end: str = "2025-01-01"
+    verification_forward_n: int = 1
 
 
 @dataclass
@@ -149,12 +194,14 @@ class FullConfig:
     Complete configuration for a search run.
 
     Attributes:
-        searching:   Search algorithm and model settings.
-        backtesting: FFO backtesting settings.
-        savedir:     Directory to save results.
+        searching:    Search algorithm and model settings.
+        backtesting:  FFO backtesting settings.
+        verification: Verification / validation settings.
+        savedir:      Directory to save results.
     """
     searching: SearchingConfig = field(default_factory=SearchingConfig)
     backtesting: BacktestConfig = field(default_factory=BacktestConfig)
+    verification: VerificationConfig = field(default_factory=VerificationConfig)
     savedir: str = "./results"
 
 
@@ -214,14 +261,28 @@ def load_config_from_dict(data: Dict[str, Any]) -> FullConfig:
         ffo_server=bt_data.get("ffo_server", "127.0.0.1:19777"),
         market=bt_data.get("market", "csi300"),
         benchmark=bt_data.get("benchmark", "SH000300"),
-        period_start=bt_data.get("period_start", "2022-01-01"),
-        period_end=bt_data.get("period_end", "2023-01-01"),
+        search_start=bt_data.get("search_start", bt_data.get("period_start", "2016-01-01")),
+        search_end=bt_data.get("search_end", bt_data.get("period_end", "2021-01-01")),
         top_k=int(bt_data.get("top_k", 30)),
-        n_drop=int(bt_data.get("n_drop", 5)),
+        n_drop=int(bt_data.get("n_drop", 1)),
         fast=bool(bt_data.get("fast", True)),
         n_jobs=int(bt_data.get("n_jobs", 4)),
         timeout=int(bt_data.get("timeout", 120)),
         accept_threshold=float(bt_data.get("accept_threshold", 0.0)),
+    )
+
+    # ── verification ──────────────────────────────────────────────────
+    ver_data = data.get("verification", {})
+    verification_config = VerificationConfig(
+        enabled=bool(ver_data.get("enabled", True)),
+        auto_verify=bool(ver_data.get("auto_verify", True)),
+        search_start=ver_data.get("search_start", backtest_config.search_start),
+        search_end=ver_data.get("search_end", backtest_config.search_end),
+        val_start=ver_data.get("val_start", "2021-01-01"),
+        val_end=ver_data.get("val_end", "2022-01-01"),
+        test_start=ver_data.get("test_start", "2022-01-01"),
+        test_end=ver_data.get("test_end", "2025-01-01"),
+        verification_forward_n=int(ver_data.get("verification_forward_n", 1)),
     )
 
     savedir = data.get("savedir", "./results")
@@ -229,5 +290,6 @@ def load_config_from_dict(data: Dict[str, Any]) -> FullConfig:
     return FullConfig(
         searching=searching_config,
         backtesting=backtest_config,
+        verification=verification_config,
         savedir=savedir,
     )

@@ -1,0 +1,49 @@
+# ============================================================================
+# AlphaBench Searcher — EA (Evolutionary Algorithm) Configuration
+# ============================================================================
+
+savedir: "./results/ea_search"
+
+searching:
+  algo:
+    name: ea
+    seed_file: "searcher/seed_factors.json"
+
+    param:
+      rounds: 10            # number of generations
+      N: 20                 # new candidates per round (split between mutation + crossover)
+      mutation_rate: 0.5    # fraction of N for mutation
+      crossover_rate: 0.5   # fraction of N for crossover
+      pool_size: 30         # max factors kept in pool
+      seeds_top_k: 12       # top seeds shown to LLM each round
+      enable_reason: true
+
+  model:
+    name: "deepseek-chat"
+    base_url: "https://api.deepseek.com"
+    key: "${DEEPSEEK_API_KEY}"
+    temperature: 0.7
+
+backtesting:
+  ffo_server: "127.0.0.1:19777"
+  market: "csi300"
+  benchmark: "SH000300"
+  search_start: "2016-01-01"
+  search_end: "2021-01-01"
+  top_k: 30
+  n_drop: 1
+  fast: true
+  n_jobs: 4
+  timeout: 120
+  accept_threshold: 0.0
+
+verification:
+  enabled: true
+  auto_verify: true
+  search_start: "2016-01-01"
+  search_end: "2021-01-01"
+  val_start: "2021-01-01"
+  val_end: "2022-01-01"
+  test_start: "2022-01-01"
+  test_end: "2025-01-01"
+  verification_forward_n: 1

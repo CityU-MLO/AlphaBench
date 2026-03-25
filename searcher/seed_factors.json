@@ -1,0 +1,627 @@
+[
+    {
+        "name": "KMID",
+        "expression": "($close - $open) / $open",
+        "type": "origin"
+    },
+    {
+        "name": "KLEN",
+        "expression": "($high - $low) / $open",
+        "type": "origin"
+    },
+    {
+        "name": "KMID2",
+        "expression": "($close - $open) / ($high - $low + 1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "KUP",
+        "expression": "($high - Greater($open, $close)) / $open",
+        "type": "origin"
+    },
+    {
+        "name": "KUP2",
+        "expression": "($high - Greater($open, $close)) / ($high - $low + 1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "KLOW",
+        "expression": "(Less($open, $close) - $low) / $open",
+        "type": "origin"
+    },
+    {
+        "name": "KLOW2",
+        "expression": "(Less($open, $close) - $low) / ($high - $low + 1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "KSFT",
+        "expression": "(2 * $close - $high - $low) / $open",
+        "type": "origin"
+    },
+    {
+        "name": "KSFT2",
+        "expression": "(2 * $close - $high - $low) / ($high - $low + 1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "ROC_5",
+        "expression": "Ref($close, 5) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "ROC_10",
+        "expression": "Ref($close, 10) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "ROC_20",
+        "expression": "Ref($close, 20) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "ROC_60",
+        "expression": "Ref($close, 60) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "MA_5",
+        "expression": "Mean($close, 5) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "MA_10",
+        "expression": "Mean($close, 10) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "MA_20",
+        "expression": "Mean($close, 20) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "MA_60",
+        "expression": "Mean($close, 60) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "STD_5",
+        "expression": "Std($close, 5) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "STD_10",
+        "expression": "Std($close, 10) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "STD_20",
+        "expression": "Std($close, 20) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "STD_60",
+        "expression": "Std($close, 60) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "BETA_5",
+        "expression": "Slope($close, 5) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "BETA_10",
+        "expression": "Slope($close, 10) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "BETA_20",
+        "expression": "Slope($close, 20) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "BETA_60",
+        "expression": "Slope($close, 60) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "RSQR_5",
+        "expression": "Rsquare($close, 5)",
+        "type": "origin"
+    },
+    {
+        "name": "RSQR_10",
+        "expression": "Rsquare($close, 10)",
+        "type": "origin"
+    },
+    {
+        "name": "RSQR_20",
+        "expression": "Rsquare($close, 20)",
+        "type": "origin"
+    },
+    {
+        "name": "RSQR_60",
+        "expression": "Rsquare($close, 60)",
+        "type": "origin"
+    },
+    {
+        "name": "RESI_5",
+        "expression": "Resi($close, 5) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "RESI_10",
+        "expression": "Resi($close, 10) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "RESI_20",
+        "expression": "Resi($close, 20) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "RESI_60",
+        "expression": "Resi($close, 60) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "MAX_5",
+        "expression": "Max($high, 5) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "MAX_10",
+        "expression": "Max($high, 10) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "MAX_20",
+        "expression": "Max($high, 20) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "MAX_60",
+        "expression": "Max($high, 60) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "LOW_5",
+        "expression": "Min($low, 5) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "LOW_10",
+        "expression": "Min($low, 10) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "LOW_20",
+        "expression": "Min($low, 20) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "LOW_60",
+        "expression": "Min($low, 60) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "QTLU_5",
+        "expression": "Quantile($close, 5, 0.8) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "QTLU_10",
+        "expression": "Quantile($close, 10, 0.8) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "QTLU_20",
+        "expression": "Quantile($close, 20, 0.8) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "QTLU_60",
+        "expression": "Quantile($close, 60, 0.8) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "QTLD_5",
+        "expression": "Quantile($close, 5, 0.2) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "QTLD_10",
+        "expression": "Quantile($close, 10, 0.2) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "QTLD_20",
+        "expression": "Quantile($close, 20, 0.2) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "QTLD_60",
+        "expression": "Quantile($close, 60, 0.2) / $close",
+        "type": "origin"
+    },
+    {
+        "name": "RANK_5",
+        "expression": "Rank($close, 5)",
+        "type": "origin"
+    },
+    {
+        "name": "RANK_10",
+        "expression": "Rank($close, 10)",
+        "type": "origin"
+    },
+    {
+        "name": "RANK_20",
+        "expression": "Rank($close, 20)",
+        "type": "origin"
+    },
+    {
+        "name": "RANK_60",
+        "expression": "Rank($close, 60)",
+        "type": "origin"
+    },
+    {
+        "name": "RSV_5",
+        "expression": "($close - Min($low, 5)) / (Max($high, 5) - Min($low, 5) + 1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "RSV_10",
+        "expression": "($close - Min($low, 10)) / (Max($high, 10) - Min($low, 10) + 1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "RSV_20",
+        "expression": "($close - Min($low, 20)) / (Max($high, 20) - Min($low, 20) + 1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "RSV_60",
+        "expression": "($close - Min($low, 60)) / (Max($high, 60) - Min($low, 60) + 1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "IMAX_5",
+        "expression": "IdxMax($high, 5) / 5",
+        "type": "origin"
+    },
+    {
+        "name": "IMAX_10",
+        "expression": "IdxMax($high, 10) / 10",
+        "type": "origin"
+    },
+    {
+        "name": "IMAX_20",
+        "expression": "IdxMax($high, 20) / 20",
+        "type": "origin"
+    },
+    {
+        "name": "IMAX_60",
+        "expression": "IdxMax($high, 60) / 60",
+        "type": "origin"
+    },
+    {
+        "name": "IMIN_5",
+        "expression": "IdxMin($low, 5) / 5",
+        "type": "origin"
+    },
+    {
+        "name": "IMIN_10",
+        "expression": "IdxMin($low, 10) / 10",
+        "type": "origin"
+    },
+    {
+        "name": "IMIN_20",
+        "expression": "IdxMin($low, 20) / 20",
+        "type": "origin"
+    },
+    {
+        "name": "IMIN_60",
+        "expression": "IdxMin($low, 60) / 60",
+        "type": "origin"
+    },
+    {
+        "name": "IMXD_5",
+        "expression": "(IdxMax($high, 5) - IdxMin($low, 5)) / 5",
+        "type": "origin"
+    },
+    {
+        "name": "IMXD_10",
+        "expression": "(IdxMax($high, 10) - IdxMin($low, 10)) / 10",
+        "type": "origin"
+    },
+    {
+        "name": "IMXD_20",
+        "expression": "(IdxMax($high, 20) - IdxMin($low, 20)) / 20",
+        "type": "origin"
+    },
+    {
+        "name": "IMXD_60",
+        "expression": "(IdxMax($high, 60) - IdxMin($low, 60)) / 60",
+        "type": "origin"
+    },
+    {
+        "name": "CORR_5",
+        "expression": "Corr($close, Log($volume+1), 5)",
+        "type": "origin"
+    },
+    {
+        "name": "CORR_10",
+        "expression": "Corr($close, Log($volume+1), 10)",
+        "type": "origin"
+    },
+    {
+        "name": "CORR_20",
+        "expression": "Corr($close, Log($volume+1), 20)",
+        "type": "origin"
+    },
+    {
+        "name": "CORR_60",
+        "expression": "Corr($close, Log($volume+1), 60)",
+        "type": "origin"
+    },
+    {
+        "name": "CORD_5",
+        "expression": "Corr($close/Ref($close,1), Log($volume/Ref($volume,1)+1), 5)",
+        "type": "origin"
+    },
+    {
+        "name": "CORD_10",
+        "expression": "Corr($close/Ref($close,1), Log($volume/Ref($volume,1)+1), 10)",
+        "type": "origin"
+    },
+    {
+        "name": "CORD_20",
+        "expression": "Corr($close/Ref($close,1), Log($volume/Ref($volume,1)+1), 20)",
+        "type": "origin"
+    },
+    {
+        "name": "CORD_60",
+        "expression": "Corr($close/Ref($close,1), Log($volume/Ref($volume,1)+1), 60)",
+        "type": "origin"
+    },
+    {
+        "name": "CNTP_5",
+        "expression": "Mean($close>Ref($close,1), 5)",
+        "type": "origin"
+    },
+    {
+        "name": "CNTP_10",
+        "expression": "Mean($close>Ref($close,1), 10)",
+        "type": "origin"
+    },
+    {
+        "name": "CNTP_20",
+        "expression": "Mean($close>Ref($close,1), 20)",
+        "type": "origin"
+    },
+    {
+        "name": "CNTP_60",
+        "expression": "Mean($close>Ref($close,1), 60)",
+        "type": "origin"
+    },
+    {
+        "name": "CNTN_5",
+        "expression": "Mean($close<Ref($close,1), 5)",
+        "type": "origin"
+    },
+    {
+        "name": "CNTN_10",
+        "expression": "Mean($close<Ref($close,1), 10)",
+        "type": "origin"
+    },
+    {
+        "name": "CNTN_20",
+        "expression": "Mean($close<Ref($close,1), 20)",
+        "type": "origin"
+    },
+    {
+        "name": "CNTN_60",
+        "expression": "Mean($close<Ref($close,1), 60)",
+        "type": "origin"
+    },
+    {
+        "name": "CNTD_5",
+        "expression": "Mean($close>Ref($close,1), 5)-Mean($close<Ref($close,1), 5)",
+        "type": "origin"
+    },
+    {
+        "name": "CNTD_10",
+        "expression": "Mean($close>Ref($close,1), 10)-Mean($close<Ref($close,1), 10)",
+        "type": "origin"
+    },
+    {
+        "name": "CNTD_20",
+        "expression": "Mean($close>Ref($close,1), 20)-Mean($close<Ref($close,1), 20)",
+        "type": "origin"
+    },
+    {
+        "name": "CNTD_60",
+        "expression": "Mean($close>Ref($close,1), 60)-Mean($close<Ref($close,1), 60)",
+        "type": "origin"
+    },
+    {
+        "name": "SUMP_5",
+        "expression": "Sum(Greater($close-Ref($close,1),0), 5)/(Sum(Abs($close-Ref($close,1)), 5)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "SUMP_10",
+        "expression": "Sum(Greater($close-Ref($close,1),0), 10)/(Sum(Abs($close-Ref($close,1)), 10)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "SUMP_20",
+        "expression": "Sum(Greater($close-Ref($close,1),0), 20)/(Sum(Abs($close-Ref($close,1)), 20)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "SUMP_60",
+        "expression": "Sum(Greater($close-Ref($close,1),0), 60)/(Sum(Abs($close-Ref($close,1)), 60)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "SUMN_5",
+        "expression": "Sum(Greater(Ref($close,1)-$close,0), 5)/(Sum(Abs($close-Ref($close,1)), 5)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "SUMN_10",
+        "expression": "Sum(Greater(Ref($close,1)-$close,0), 10)/(Sum(Abs($close-Ref($close,1)), 10)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "SUMN_20",
+        "expression": "Sum(Greater(Ref($close,1)-$close,0), 20)/(Sum(Abs($close-Ref($close,1)), 20)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "SUMN_60",
+        "expression": "Sum(Greater(Ref($close,1)-$close,0), 60)/(Sum(Abs($close-Ref($close,1)), 60)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "SUMD_5",
+        "expression": "(Sum(Greater($close-Ref($close,1),0), 5)-Sum(Greater(Ref($close,1)-$close,0), 5))/(Sum(Abs($close-Ref($close,1)), 5)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "SUMD_10",
+        "expression": "(Sum(Greater($close-Ref($close,1),0), 10)-Sum(Greater(Ref($close,1)-$close,0), 10))/(Sum(Abs($close-Ref($close,1)), 10)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "SUMD_20",
+        "expression": "(Sum(Greater($close-Ref($close,1),0), 20)-Sum(Greater(Ref($close,1)-$close,0), 20))/(Sum(Abs($close-Ref($close,1)), 20)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "SUMD_60",
+        "expression": "(Sum(Greater($close-Ref($close,1),0), 60)-Sum(Greater(Ref($close,1)-$close,0), 60))/(Sum(Abs($close-Ref($close,1)), 60)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VMA_5",
+        "expression": "Mean($volume, 5)/($volume+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VMA_10",
+        "expression": "Mean($volume, 10)/($volume+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VMA_20",
+        "expression": "Mean($volume, 20)/($volume+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VMA_60",
+        "expression": "Mean($volume, 60)/($volume+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VSTD_5",
+        "expression": "Std($volume, 5)/($volume+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VSTD_10",
+        "expression": "Std($volume, 10)/($volume+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VSTD_20",
+        "expression": "Std($volume, 20)/($volume+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VSTD_60",
+        "expression": "Std($volume, 60)/($volume+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "WVMA_5",
+        "expression": "Std(Abs($close/Ref($close,1)-1)*$volume, 5)/(Mean(Abs($close/Ref($close,1)-1)*$volume, 5)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "WVMA_10",
+        "expression": "Std(Abs($close/Ref($close,1)-1)*$volume, 10)/(Mean(Abs($close/Ref($close,1)-1)*$volume, 10)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "WVMA_20",
+        "expression": "Std(Abs($close/Ref($close,1)-1)*$volume, 20)/(Mean(Abs($close/Ref($close,1)-1)*$volume, 20)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "WVMA_60",
+        "expression": "Std(Abs($close/Ref($close,1)-1)*$volume, 60)/(Mean(Abs($close/Ref($close,1)-1)*$volume, 60)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VSUMP_5",
+        "expression": "Sum(Greater($volume-Ref($volume,1),0), 5)/(Sum(Abs($volume-Ref($volume,1)), 5)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VSUMP_10",
+        "expression": "Sum(Greater($volume-Ref($volume,1),0), 10)/(Sum(Abs($volume-Ref($volume,1)), 10)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VSUMP_20",
+        "expression": "Sum(Greater($volume-Ref($volume,1),0), 20)/(Sum(Abs($volume-Ref($volume,1)), 20)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VSUMP_60",
+        "expression": "Sum(Greater($volume-Ref($volume,1),0), 60)/(Sum(Abs($volume-Ref($volume,1)), 60)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VSUMN_5",
+        "expression": "Sum(Greater(Ref($volume,1)-$volume,0), 5)/(Sum(Abs($volume-Ref($volume,1)), 5)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VSUMN_10",
+        "expression": "Sum(Greater(Ref($volume,1)-$volume,0), 10)/(Sum(Abs($volume-Ref($volume,1)), 10)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VSUMN_20",
+        "expression": "Sum(Greater(Ref($volume,1)-$volume,0), 20)/(Sum(Abs($volume-Ref($volume,1)), 20)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VSUMN_60",
+        "expression": "Sum(Greater(Ref($volume,1)-$volume,0), 60)/(Sum(Abs($volume-Ref($volume,1)), 60)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VSUMD_5",
+        "expression": "(Sum(Greater($volume-Ref($volume,1),0), 5)-Sum(Greater(Ref($volume,1)-$volume,0), 5))/(Sum(Abs($volume-Ref($volume,1)), 5)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VSUMD_10",
+        "expression": "(Sum(Greater($volume-Ref($volume,1),0), 10)-Sum(Greater(Ref($volume,1)-$volume,0), 10))/(Sum(Abs($volume-Ref($volume,1)), 10)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VSUMD_20",
+        "expression": "(Sum(Greater($volume-Ref($volume,1),0), 20)-Sum(Greater(Ref($volume,1)-$volume,0), 20))/(Sum(Abs($volume-Ref($volume,1)), 20)+1e-12)",
+        "type": "origin"
+    },
+    {
+        "name": "VSUMD_60",
+        "expression": "(Sum(Greater($volume-Ref($volume,1),0), 60)-Sum(Greater(Ref($volume,1)-$volume,0), 60))/(Sum(Abs($volume-Ref($volume,1)), 60)+1e-12)",
+        "type": "origin"
+    }
+]

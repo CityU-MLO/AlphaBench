@@ -239,6 +239,7 @@ class FactorEvalClient:
         fast: bool = False,
         n_jobs_backtest: int = 4,
         forward_n: int = 1,
+        exchange_kwargs: dict = None,
     ) -> List[Dict]:
         """
         POST /factors/eval
@@ -258,6 +259,8 @@ class FactorEvalClient:
             "n_jobs_backtest": int(n_jobs_backtest),
             "forward_n": int(forward_n),
         }
+        if exchange_kwargs:
+            payload["exchange_kwargs"] = exchange_kwargs
 
         result = self._make_request("POST", "/factors/eval", json=payload)
         if result is None:

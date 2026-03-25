@@ -293,12 +293,54 @@ class ToTSearcher:
 
         if save_pickle:
             tag   = run_name or self._safe_tag(seed.get("name", "seed"))
-            fname = f"tot_search_{tag}.pkl"
-            path  = os.path.join(save_dir, fname)
-            with open(path, "wb") as fh:
+            # Pickle (full)
+            pkl_fname = f"tot_search_{tag}.pkl"
+            pkl_path  = os.path.join(save_dir, pkl_fname)
+            with open(pkl_path, "wb") as fh:
                 pickle.dump(summary, fh)
-            summary["save_path"] = path
-            self._log(f"  Saved: {path}")
+            summary["save_path"] = pkl_path
+            self._log(f"  Saved: {pkl_path}")
+
+            # JSON (human-readable: all candidates, expressions, metrics per depth)
+            json_summary = {
+                "seed": {"name": seed["name"], "expression": seed["expression"]},
+                "seed_metrics": seed_metrics,
+                "best": {
+                    "name": best_global.get("name", ""),
+                    "expression": best_global.get("expression", ""),
+                    "metrics": best_global.get("metrics", {}),
+                },
+                "elapsed_sec": summary["elapsed_sec"],
+                "depths": [],
+            }
+            for rec in history:
+                depth_rec = {
+                    "depth": rec.get("depth"),
+                    "parent": {
+                        "name": (rec.get("parent") or {}).get("name", ""),
+                        "expression": (rec.get("parent") or {}).get("expression", ""),
+                    } if rec.get("parent") else None,
+                    "elapsed_expand": rec.get("elapsed_expand"),
+                    "candidates": [
+                        {
+                            "name": c.get("name", ""),
+                            "expression": c.get("expression", ""),
+                            "reason": c.get("reason", ""),
+                            "metrics": rec.get("evaluations", {}).get(c.get("name", ""), {}),
+                        }
+                        for c in rec.get("candidates", [])
+                    ],
+                    "survivors": [
+                        {"name": s[0], "metrics": s[1]} if isinstance(s, (list, tuple))
+                        else {"name": s.get("name", ""), "metrics": s.get("metrics", {})}
+                        for s in rec.get("survivors", [])
+                    ],
+                }
+                json_summary["depths"].append(depth_rec)
+
+            json_path = os.path.join(save_dir, f"tot_search_{tag}.json")
+            with open(json_path, "w", encoding="utf-8") as fh:
+                json.dump(json_summary, fh, indent=2, ensure_ascii=False, default=str)
 
         return summary
 
@@ -473,11 +515,15 @@ class ToTAlgo(BaseAlgo):
     """
     ToT BaseAlgo adapter.
 
-    Runs ToTSearcher on the top seed (by IC) from the seed pool.
+    Runs ToTSearcher on seeds from the pool. When workers > 1, runs
+    multiple independent tree searches in parallel, each starting from
+    a different seed. Results are merged at the end.
+
     Config keys (under searching.algo.param):
       rounds:        max tree depth (default: 3)
       N:             candidates per node per depth (default: 6)
       top_k:         max survivors per node (default: 3)
+      workers:       number of parallel search trees (default: 1)
       model:         LLM model name
       temperature:   sampling temperature (default: 1.0)
       enable_reason: include reasoning (default: True)
@@ -489,56 +535,103 @@ class ToTAlgo(BaseAlgo):
         rounds           = int(self.config.get("rounds", 3))
         N                = int(self.config.get("N", 6))
         top_k            = int(self.config.get("top_k", 3))
+        workers          = int(self.config.get("workers", 1))
         model            = self.config.get("model", "deepseek-chat")
         temperature      = float(self.config.get("temperature", 1.0))
         enable_reason    = bool(self.config.get("enable_reason", True))
         accept_threshold = float(self.config.get("accept_threshold", 0.0))
 
-        searcher = ToTSearcher(
-            evaluate_fn=self.evaluate_fn,
-            batch_evaluate_fn=self.batch_evaluate_fn_dict,
-            search_fn=self.search_fn,
-            model=model,
-            temperature=temperature,
-            enable_reason=enable_reason,
-            save_dir=save_dir,
-            top_k=top_k,
-            accept_threshold=accept_threshold,
-            logger=self.logger,
-        )
-
+        # Select top-W seeds (one per worker)
         valid_seeds = [s for s in seeds if s.get("metrics")]
         if not valid_seeds:
             valid_seeds = seeds
-        top_seed = max(
+        ranked_seeds = sorted(
             valid_seeds,
             key=lambda s: s.get("metrics", {}).get("ic", float("-inf")),
+            reverse=True,
         )
+        selected_seeds = ranked_seeds[:max(1, workers)]
 
-        seed_input = {"name": top_seed["name"], "expression": top_seed["expression"]}
-        summary = searcher.search_single_factor(
-            seed=seed_input,
-            rounds=rounds,
-            N=N,
-            save_dir=save_dir,
-        )
+        def _run_tree(seed_item, worker_id):
+            worker_dir = os.path.join(save_dir, f"worker_{worker_id}")
+            os.makedirs(worker_dir, exist_ok=True)
+            searcher = ToTSearcher(
+                evaluate_fn=self.evaluate_fn,
+                batch_evaluate_fn=self.batch_evaluate_fn_dict,
+                search_fn=self.search_fn,
+                model=model,
+                temperature=temperature,
+                enable_reason=enable_reason,
+                save_dir=worker_dir,
+                top_k=top_k,
+                accept_threshold=accept_threshold,
+                logger=self.logger,
+            )
+            seed_input = {"name": seed_item["name"], "expression": seed_item["expression"]}
+            return searcher.search_single_factor(
+                seed=seed_input,
+                rounds=rounds,
+                N=N,
+                run_name=f"worker{worker_id}_{seed_item['name']}",
+                save_dir=worker_dir,
+            )
 
-        # Collect all candidates from history into final_pool
+        if len(selected_seeds) == 1:
+            summaries = [_run_tree(selected_seeds[0], 0)]
+        else:
+            self._log(f"Running {len(selected_seeds)} ToT workers in parallel …")
+            summaries = [None] * len(selected_seeds)
+            with ThreadPoolExecutor(max_workers=len(selected_seeds)) as ex:
+                futs = {
+                    ex.submit(_run_tree, seed, i): i
+                    for i, seed in enumerate(selected_seeds)
+                }
+                for fut in as_completed(futs):
+                    idx = futs[fut]
+                    try:
+                        summaries[idx] = fut.result()
+                    except Exception as e:
+                        self._log(f"Worker {idx} failed: {e}", "warning")
+            summaries = [s for s in summaries if s is not None]
+
+        # Merge results from all workers
+        all_history = []
         final_pool: List[Dict] = []
         seen = set()
-        for rec in summary.get("history", []):
-            for c in rec.get("candidates", []):
-                expr = c.get("expression", "")
-                if expr and expr not in seen:
-                    seen.add(expr)
-                    final_pool.append({
-                        "name":       c.get("name", ""),
-                        "expression": expr,
-                        "metrics":    rec.get("evaluations", {}).get(c.get("name", ""), {}),
-                    })
+        best_global = {}
+
+        for summary in summaries:
+            all_history.extend(summary.get("history", []))
+            for rec in summary.get("history", []):
+                for c in rec.get("candidates", []):
+                    expr = c.get("expression", "")
+                    if expr and expr not in seen:
+                        seen.add(expr)
+                        final_pool.append({
+                            "name":       c.get("name", ""),
+                            "expression": expr,
+                            "metrics":    rec.get("evaluations", {}).get(c.get("name", ""), {}),
+                        })
+            candidate = summary.get("best", {})
+            if not best_global or self._is_better_static(best_global, candidate):
+                best_global = candidate
 
         return {
-            "best":       summary.get("best", {}),
-            "history":    summary.get("history", []),
+            "best":       best_global,
+            "history":    all_history,
             "final_pool": final_pool,
         }
+
+    @staticmethod
+    def _is_better_static(curr, cand):
+        c_m = curr.get("metrics", {})
+        n_m = cand.get("metrics", {})
+        c_r = c_m.get("rank_ic", float("-inf"))
+        n_r = n_m.get("rank_ic", float("-inf"))
+        if n_r != c_r:
+            return n_r > c_r
+        return n_m.get("ic", float("-inf")) > c_m.get("ic", float("-inf"))
+
+    def _log(self, msg, level="info"):
+        if self.logger:
+            getattr(self.logger, level)(msg)

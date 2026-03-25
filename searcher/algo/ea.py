@@ -64,6 +64,17 @@ def _get_unique_set(factor_pool: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return unique
 
 
+def _json_safe_factor(f: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract JSON-serialisable fields from a factor dict."""
+    return {
+        "name": f.get("name", ""),
+        "expression": f.get("expression", ""),
+        "reason": f.get("reason", ""),
+        "provenance": f.get("provenance", ""),
+        "metrics": f.get("metrics", {}),
+    }
+
+
 # ---------------------------------------------------------------------------
 # EA_Searcher — core implementation
 # ---------------------------------------------------------------------------
@@ -267,10 +278,33 @@ class EA_Searcher:
         }
 
         if save_pickle:
-            fname = os.path.join(self.save_dir, f"ea_search_{int(time.time())}.pkl")
-            with open(fname, "wb") as fh:
+            ts = int(time.time())
+            # Pickle (full, including non-serialisable objects)
+            pkl_path = os.path.join(self.save_dir, f"ea_search_{ts}.pkl")
+            with open(pkl_path, "wb") as fh:
                 pickle.dump(summary, fh)
-            summary["save_path"] = fname
+            summary["save_path"] = pkl_path
+
+            # JSON (human-readable, all factors/expressions/metrics per round)
+            json_summary = {
+                "baseline_rank_ic": baseline_rank_ic,
+                "best": _json_safe_factor(current_pool[0]) if current_pool else {},
+                "final_pool": [_json_safe_factor(f) for f in current_pool],
+                "rounds": [],
+            }
+            for rec in history:
+                round_rec = {
+                    "round": rec.get("round"),
+                    "llm_elapsed": rec.get("llm_elapsed"),
+                    "eval_elapsed": rec.get("eval_elapsed"),
+                    "mutation_candidates": [_json_safe_factor(c) for c in rec.get("mutation_candidates", [])],
+                    "crossover_candidates": [_json_safe_factor(c) for c in rec.get("crossover_candidates", [])],
+                    "unique_candidates": [_json_safe_factor(c) for c in rec.get("unique_candidates", [])],
+                }
+                json_summary["rounds"].append(round_rec)
+            json_path = os.path.join(self.save_dir, f"ea_search_{ts}.json")
+            with open(json_path, "w", encoding="utf-8") as fh:
+                json.dump(json_summary, fh, indent=2, ensure_ascii=False, default=str)
 
         return summary
 

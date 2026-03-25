@@ -504,6 +504,14 @@ def eval_once():
             "min_cost": mcfg.get("min_cost", 5 if region == "cn" else 0),
         }
 
+        # Apply optional frontend overrides for exchange kwargs
+        ek_overrides = data.get("exchange_kwargs")
+        if isinstance(ek_overrides, dict):
+            for key in ("open_cost", "close_cost", "min_cost", "limit_threshold"):
+                if key in ek_overrides:
+                    val = ek_overrides[key]
+                    exchange_kwargs[key] = float(val) if val is not None else None
+
         logger.info(
             "Evaluating %d expr(s) (market=%s, %s→%s, label=%s, fast=%s)",
             len(factors), market, start, end, label, fast,
@@ -817,6 +825,14 @@ def portfolio_combine():
             "close_cost": mcfg.get("close_cost", 0.0015 if region == "cn" else 0.0001),
             "min_cost": mcfg.get("min_cost", 5 if region == "cn" else 0),
         }
+
+        # Apply optional frontend overrides for exchange kwargs
+        ek_overrides = data.get("exchange_kwargs")
+        if isinstance(ek_overrides, dict):
+            for key in ("open_cost", "close_cost", "min_cost", "limit_threshold"):
+                if key in ek_overrides:
+                    val = ek_overrides[key]
+                    exchange_kwargs[key] = float(val) if val is not None else None
 
         # Build factor defs and combined hash
         import hashlib

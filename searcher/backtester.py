@@ -38,29 +38,31 @@ class Backtester:
         self,
         ffo_url: str = "http://127.0.0.1:19777",
         market: str = "csi300",
-        period_start: str = "2022-01-01",
-        period_end: str = "2023-01-01",
+        start_date: str = "2016-01-01",
+        end_date: str = "2021-01-01",
         top_k: int = 30,
-        n_drop: int = 5,
+        n_drop: int = 1,
         fast: bool = True,
         n_jobs: int = 4,
         timeout: int = 120,
         logger=None,
+        label: str = "search",
     ):
         self.ffo_url = ffo_url
         self.market = market
-        self.period_start = period_start
-        self.period_end = period_end
+        self.start_date = start_date
+        self.end_date = end_date
         self.top_k = top_k
         self.n_drop = n_drop
         self.fast = fast
         self.n_jobs = n_jobs
         self.timeout = timeout
         self.logger = logger
+        self.label = label
         self._client = FactorEvalClient(base_url=ffo_url, timeout=timeout)
 
     # ------------------------------------------------------------------ #
-    # Factory
+    # Factories
     # ------------------------------------------------------------------ #
 
     @classmethod
@@ -75,14 +77,70 @@ class Backtester:
         return cls(
             ffo_url=config.get_api_url(),
             market=config.market,
-            period_start=config.period_start,
-            period_end=config.period_end,
+            start_date=config.search_start,
+            end_date=config.search_end,
             top_k=config.top_k,
             n_drop=config.n_drop,
             fast=config.fast,
             n_jobs=config.n_jobs,
             timeout=getattr(config, "timeout", 120),
             logger=logger,
+            label="search",
+        )
+
+    @classmethod
+    def for_validation(cls, backtest_config, verification_config, logger=None) -> "Backtester":
+        """
+        Create a Backtester for the validation period.
+
+        Uses the FFO server and market from backtest_config,
+        but dates from verification_config.val_start/val_end.
+        Always uses fast=True for validation (IC metrics only).
+        """
+        return cls(
+            ffo_url=backtest_config.get_api_url(),
+            market=backtest_config.market,
+            start_date=verification_config.val_start,
+            end_date=verification_config.val_end,
+            top_k=backtest_config.top_k,
+            n_drop=backtest_config.n_drop,
+            fast=True,
+            n_jobs=backtest_config.n_jobs,
+            timeout=getattr(backtest_config, "timeout", 120),
+            logger=logger,
+            label="val",
+        )
+
+    @classmethod
+    def for_test(
+        cls,
+        backtest_config,
+        verification_config,
+        *,
+        top_k: int = 50,
+        n_drop: int = 5,
+        n_jobs: int = 4,
+        fast: bool = False,
+        logger=None,
+    ) -> "Backtester":
+        """
+        Create a Backtester for the test period (full portfolio backtest).
+
+        Uses dates from verification_config.test_start/test_end.
+        Defaults to full backtest (fast=False) with test-specific portfolio params.
+        """
+        return cls(
+            ffo_url=backtest_config.get_api_url(),
+            market=backtest_config.market,
+            start_date=verification_config.test_start,
+            end_date=verification_config.test_end,
+            top_k=top_k,
+            n_drop=n_drop,
+            fast=fast,
+            n_jobs=n_jobs,
+            timeout=getattr(backtest_config, "timeout", 120),
+            logger=logger,
+            label="test",
         )
 
     # ------------------------------------------------------------------ #
@@ -100,8 +158,8 @@ class Backtester:
             results = self._client.evaluate_factor(
                 expression=expression,
                 market=self.market,
-                start_date=self.period_start,
-                end_date=self.period_end,
+                start_date=self.start_date,
+                end_date=self.end_date,
                 fast=self.fast,
                 topk=self.top_k,
                 n_drop=self.n_drop,
@@ -211,7 +269,7 @@ class Backtester:
     def __repr__(self) -> str:
         return (
             f"Backtester(url={self.ffo_url}, market={self.market}, "
-            f"{self.period_start}~{self.period_end}, fast={self.fast})"
+            f"{self.start_date}~{self.end_date}, fast={self.fast}, label={self.label})"
         )
 
     # ------------------------------------------------------------------ #

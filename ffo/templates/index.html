@@ -238,6 +238,27 @@
             right: 20px;
             z-index: 1000;
         }
+
+        .tooltip-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #dee2e6;
+            color: #495057;
+            font-size: 11px;
+            font-weight: 700;
+            cursor: help;
+            line-height: 1;
+            flex-shrink: 0;
+            transition: background 0.15s;
+        }
+        .tooltip-icon:hover {
+            background: #667eea;
+            color: #fff;
+        }
     </style>
 </head>
 <body>
@@ -342,7 +363,56 @@
                                 </div>
                             </div>
 
-                            <div class="row mt-2">
+                            <!-- Transaction Cost & Threshold Settings -->
+                            <div class="row mt-3">
+                                <div class="col-md-12">
+                                    <div class="d-flex align-items-center mb-2">
+                                        <span class="fw-bold text-muted" style="font-size:0.85rem;">Transaction Cost Settings</span>
+                                        <span class="tooltip-icon ms-1" data-bs-toggle="tooltip" data-bs-placement="right"
+                                              title="Transaction costs applied during portfolio backtesting. Auto-filled from market defaults; you can override manually.">?</span>
+                                        <span class="text-muted ms-2" style="font-size:0.78rem;" id="costSourceHint">(auto-filled from market defaults)</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row">
+                                <div class="col-md-3">
+                                    <label for="openCost" class="form-label">
+                                        Open Cost
+                                        <span class="tooltip-icon" data-bs-toggle="tooltip" data-bs-placement="top"
+                                              title="Buy-side cost as a fraction (e.g. 0.0005 = 0.05%). Broker commission on buy orders.">?</span>
+                                    </label>
+                                    <input type="number" class="form-control" id="openCost" value="0.0005" min="0" max="0.1" step="0.0001">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="closeCost" class="form-label">
+                                        Close Cost
+                                        <span class="tooltip-icon" data-bs-toggle="tooltip" data-bs-placement="top"
+                                              title="Sell-side cost as a fraction (e.g. 0.0015 = 0.15%). Includes commission + stamp duty (CN) on sell orders.">?</span>
+                                    </label>
+                                    <input type="number" class="form-control" id="closeCost" value="0.0015" min="0" max="0.1" step="0.0001">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="minCost" class="form-label">
+                                        Min Cost
+                                        <span class="tooltip-icon" data-bs-toggle="tooltip" data-bs-placement="top"
+                                              title="Minimum cost per trade in local currency (e.g. 5 RMB for CN, 0 for US).">?</span>
+                                    </label>
+                                    <input type="number" class="form-control" id="minCost" value="5" min="0" max="100" step="1">
+                                </div>
+                                <div class="col-md-3">
+                                    <label for="limitThreshold" class="form-label d-flex align-items-center">
+                                        <div class="form-check form-switch me-2 mb-0" style="min-height:auto;">
+                                            <input class="form-check-input" type="checkbox" id="limitThresholdToggle" checked onchange="toggleLimitThreshold()">
+                                        </div>
+                                        Return Threshold
+                                        <span class="tooltip-icon ms-1" data-bs-toggle="tooltip" data-bs-placement="top"
+                                              title="Daily return limit threshold. Stocks exceeding this are treated as hitting the price limit and cannot be traded. CN: 10% limit (0.095). US: no limit — disable this toggle for US markets.">?</span>
+                                    </label>
+                                    <input type="number" class="form-control" id="limitThreshold" value="0.095" min="0" max="1" step="0.001">
+                                </div>
+                            </div>
+
+                            <div class="row mt-3">
                                 <div class="col-md-12">
                                     <label class="form-label">&nbsp;</label>
                                     <div>
@@ -355,10 +425,10 @@
 
                             <div class="mt-3">
                                 <button type="button" class="btn btn-success" onclick="evaluateFactor()">
-                                    <i class="fas fa-play"></i> Evaluate New
+                                    <i class="fas fa-chart-line"></i> Evaluate
                                 </button>
-                                <button type="button" class="btn btn-info ms-2 text-white" id="portfolioBacktestBtn" onclick="runPortfolioBacktest()" style="display: none;">
-                                    <i class="fas fa-wallet"></i> Run Portfolio Backtest
+                                <button type="button" class="btn btn-info ms-2 text-white" onclick="runFullBacktest()">
+                                    <i class="fas fa-wallet"></i> Backtesting
                                 </button>
                                 <button type="button" class="btn btn-warning ms-2" onclick="exportCurrentData()">
                                     <i class="fas fa-download"></i> Export Data
@@ -465,6 +535,16 @@
                             </div>
                         </div>
 
+                        <!-- Turnover & Activity Timeline Chart -->
+                        <div class="card mb-3">
+                            <div class="card-header">
+                                <h5 class="mb-0"><i class="fas fa-exchange-alt"></i> Turnover & Trading Activity</h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="turnoverTimelineChart" style="min-height: 350px;"></div>
+                            </div>
+                        </div>
+
                         <!-- Holdings Table -->
                         <div class="card mb-3">
                             <div class="card-header d-flex justify-content-between align-items-center">
@@ -484,8 +564,9 @@
 
                         <!-- Actions Table -->
                         <div class="card mb-3">
-                            <div class="card-header">
-                                <h5><i class="fas fa-exchange-alt"></i> Trading Actions</h5>
+                            <div class="card-header d-flex justify-content-between align-items-center">
+                                <h5 class="mb-0"><i class="fas fa-history"></i> Trading Actions</h5>
+                                <span class="badge bg-secondary" id="actionsCount"></span>
                             </div>
                             <div class="card-body" style="max-height: 400px; overflow-y: auto;">
                                 <table class="table table-sm table-striped" id="actionsTable">
@@ -1161,16 +1242,76 @@
         let currentFixedResults = null; // Store fixed optimization results
         let loadedWeightsData = null; // Store loaded weights for Category C backtest
         let currentBacktestResults = null; // Store current backtest results for export
-        
+
+        // Market default transaction cost settings (mirrors ffo.yaml)
+        const MARKET_DEFAULTS = {
+            csi300:   { open_cost: 0.0005, close_cost: 0.0015, min_cost: 5, limit_threshold: 0.095, has_limit: true },
+            csi500:   { open_cost: 0.0005, close_cost: 0.0015, min_cost: 5, limit_threshold: 0.095, has_limit: true },
+            csi1000:  { open_cost: 0.0005, close_cost: 0.0015, min_cost: 5, limit_threshold: 0.095, has_limit: true },
+            sp500:    { open_cost: 0.0001, close_cost: 0.0001, min_cost: 0, limit_threshold: null,  has_limit: false },
+            nasdaq100:{ open_cost: 0.0001, close_cost: 0.0001, min_cost: 0, limit_threshold: null,  has_limit: false },
+        };
+
+        // Auto-fill transaction costs when market changes
+        function applyMarketDefaults() {
+            const market = document.getElementById('market').value;
+            const defaults = MARKET_DEFAULTS[market];
+            if (!defaults) return;
+            document.getElementById('openCost').value = defaults.open_cost;
+            document.getElementById('closeCost').value = defaults.close_cost;
+            document.getElementById('minCost').value = defaults.min_cost;
+            const toggle = document.getElementById('limitThresholdToggle');
+            const input = document.getElementById('limitThreshold');
+            toggle.checked = defaults.has_limit;
+            if (defaults.has_limit) {
+                input.value = defaults.limit_threshold;
+                input.disabled = false;
+            } else {
+                input.value = '';
+                input.disabled = true;
+            }
+            document.getElementById('costSourceHint').textContent = '(auto-filled from market defaults)';
+        }
+
+        // Toggle limit threshold field
+        function toggleLimitThreshold() {
+            const toggle = document.getElementById('limitThresholdToggle');
+            const input = document.getElementById('limitThreshold');
+            if (toggle.checked) {
+                input.disabled = false;
+                if (!input.value) input.value = '0.095';
+            } else {
+                input.disabled = true;
+            }
+        }
+
+        // Collect exchange kwargs from form
+        function getExchangeKwargs() {
+            const toggle = document.getElementById('limitThresholdToggle');
+            return {
+                open_cost: parseFloat(document.getElementById('openCost').value) || 0,
+                close_cost: parseFloat(document.getElementById('closeCost').value) || 0,
+                min_cost: parseFloat(document.getElementById('minCost').value) || 0,
+                limit_threshold: toggle.checked ? (parseFloat(document.getElementById('limitThreshold').value) || null) : null,
+            };
+        }
+
         // Initialize
         document.addEventListener('DOMContentLoaded', function() {
             // Note: Cache stats are loaded when the Performance Dashboard tab is opened
-            
+
             // Set up form submission
             document.getElementById('queryForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
                 await searchCache();
             });
+
+            // Auto-fill costs on market change
+            document.getElementById('market').addEventListener('change', applyMarketDefaults);
+
+            // Initialize Bootstrap tooltips
+            var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+            tooltipTriggerList.map(function (el) { return new bootstrap.Tooltip(el); });
             
             // Recent Activity search with debounce
             const searchInput = document.getElementById('recentActivitySearch');
@@ -1254,7 +1395,6 @@
             document.getElementById('portfolioMetricsCard').style.display = 'none';
             document.getElementById('chartsSection').style.display = 'none';
             document.getElementById('cachedExpressionsCard').style.display = 'none';
-            document.getElementById('portfolioBacktestBtn').style.display = 'none';
             document.getElementById('portfolioDetailsSection').style.display = 'none';
             currentPortfolioDetails = null;
         }
@@ -1293,17 +1433,17 @@
             }
         }
         
-        // Evaluate factor
+        // Evaluate factor (fast mode — IC metrics only, no portfolio backtest)
         async function evaluateFactor() {
             const expression = document.getElementById('expression').value.trim();
             if (!expression) {
                 alert('Please enter a factor expression');
                 return;
             }
-            
+
             showLoading(true);
             hideAllResults();
-            
+
             try {
                 const response = await axios.post('/api/evaluate_factor', {
                     expression: expression,
@@ -1313,9 +1453,11 @@
                     forward_n: parseInt(document.getElementById('forwardN').value) || 1,
                     topk: parseInt(document.getElementById('topK').value) || 50,
                     n_drop: parseInt(document.getElementById('nDrop').value) || 5,
-                    use_cache: true
+                    use_cache: true,
+                    fast: true,
+                    ...getExchangeKwargs()
                 });
-                
+
                 if (response.data.success) {
                     currentFactorData = response.data.data;
                     displayResults(response.data.data);
@@ -1328,8 +1470,47 @@
                 showLoading(false);
             }
         }
-        
-        // Run portfolio backtest for current factor
+
+        // Full backtesting — runs both factor metrics AND portfolio backtest (fast=false)
+        async function runFullBacktest() {
+            const expression = document.getElementById('expression').value.trim();
+            if (!expression) {
+                alert('Please enter a factor expression');
+                return;
+            }
+
+            showLoading(true);
+            hideAllResults();
+
+            try {
+                const response = await axios.post('/api/evaluate_factor', {
+                    expression: expression,
+                    market: document.getElementById('market').value,
+                    start_date: document.getElementById('startDate').value,
+                    end_date: document.getElementById('endDate').value,
+                    forward_n: parseInt(document.getElementById('forwardN').value) || 1,
+                    topk: parseInt(document.getElementById('topK').value) || 50,
+                    n_drop: parseInt(document.getElementById('nDrop').value) || 5,
+                    use_cache: true,
+                    fast: false,
+                    ...getExchangeKwargs()
+                });
+
+                if (response.data.success) {
+                    currentFactorData = response.data.data;
+                    displayResults(response.data.data);
+                    showNotification('Factor evaluation and portfolio backtest completed!', 'success');
+                } else {
+                    alert('Backtesting failed: ' + response.data.message);
+                }
+            } catch (error) {
+                alert('Error running backtest: ' + error.message);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Run portfolio backtest for current factor (standalone, after evaluate)
         async function runPortfolioBacktest() {
             const expression = document.getElementById('expression').value.trim();
             if (!expression) {
@@ -1347,6 +1528,7 @@
                     end_date: document.getElementById('endDate').value,
                     topk: parseInt(document.getElementById('topK').value) || 50,
                     n_drop: parseInt(document.getElementById('nDrop').value) || 5,
+                    ...getExchangeKwargs()
                 });
 
                 if (response.data.success) {
@@ -1391,13 +1573,8 @@
                 }
                 showNotification('Factor evaluation and portfolio backtest completed!', 'success');
             } else {
-                // Portfolio metrics not available — show the backtest button
+                // Portfolio metrics not available (fast mode)
                 document.getElementById('portfolioMetricsCard').style.display = 'none';
-            }
-
-            // Show portfolio backtest button when we have successful evaluation results
-            if (data.success !== false && data.expression) {
-                document.getElementById('portfolioBacktestBtn').style.display = 'inline-block';
             }
         }
         
@@ -1449,13 +1626,23 @@
                 const icValues = data.daily_metrics.map(d => d.ic);
                 const rankIcValues = data.daily_metrics.map(d => d.rank_ic);
                 
+                // Compute positive/negative ratio
+                const icPos = icValues.filter(v => v > 0).length;
+                const icNeg = icValues.filter(v => v < 0).length;
+                const icTotal = icValues.filter(v => v !== null && !isNaN(v)).length;
+                const icPosRatio = icTotal > 0 ? (icPos / icTotal * 100).toFixed(1) : '0.0';
+                const rankIcPos = rankIcValues.filter(v => v > 0).length;
+                const rankIcNeg = rankIcValues.filter(v => v < 0).length;
+                const rankIcTotal = rankIcValues.filter(v => v !== null && !isNaN(v)).length;
+                const rankIcPosRatio = rankIcTotal > 0 ? (rankIcPos / rankIcTotal * 100).toFixed(1) : '0.0';
+
                 // Create traces
                 const traces = [
                     {
                         x: dates,
                         y: icValues,
                         mode: 'lines+markers',
-                        name: 'IC',
+                        name: `IC  (${icPosRatio}% pos, ${icPos}/${icTotal})`,
                         line: { color: 'blue', width: 2 },
                         marker: { size: 4 }
                     },
@@ -1463,12 +1650,12 @@
                         x: dates,
                         y: rankIcValues,
                         mode: 'lines+markers',
-                        name: 'Rank IC',
+                        name: `Rank IC  (${rankIcPosRatio}% pos, ${rankIcPos}/${rankIcTotal})`,
                         line: { color: 'red', width: 2 },
                         marker: { size: 4 }
                     }
                 ];
-                
+
                 // Create layout
                 const layout = {
                     title: `Daily IC and Rank IC - ${data.market ? data.market.toUpperCase() : ''}`,
@@ -1507,6 +1694,15 @@
         // Display distribution chart - REMOVED (not needed)
         // function displayDistributionChart(data) { ... }
         
+        // --- Helper: make stock ticker a clickable link for CN market ---
+        function tickerLink(stock) {
+            // CN tickers: SZ000001, SH600000 → link to xueqiu
+            if (/^(SZ|SH)\d{6}$/i.test(stock)) {
+                return `<a href="https://xueqiu.com/S/${stock.toUpperCase()}" target="_blank" rel="noopener" title="View on xueqiu">${stock}</a>`;
+            }
+            return stock;
+        }
+
         // Portfolio details display functions
         let currentPortfolioDetails = null;
         let portfolioChartData = null;  // cached chart data for switching
@@ -1530,6 +1726,67 @@
                 switchValueChart('total');
             }
 
+            // --- Turnover & Trading Activity Timeline ---
+            if (details.daily_summary && details.daily_summary.length > 1) {
+                const summary = details.daily_summary.slice(1);
+                const tDates = summary.map(d => d.date);
+                const turnover = summary.map(d => d.turnover || 0);
+                const cost = summary.map(d => d.cost || 0);
+
+                // Count buys and sells per date from actions
+                const buyCountMap = {}, sellCountMap = {};
+                if (details.actions) {
+                    details.actions.forEach(a => {
+                        if (a.type === 'buy') buyCountMap[a.date] = (buyCountMap[a.date] || 0) + 1;
+                        else sellCountMap[a.date] = (sellCountMap[a.date] || 0) + 1;
+                    });
+                }
+                const buyCounts = tDates.map(d => buyCountMap[d] || 0);
+                const sellCounts = tDates.map(d => -(sellCountMap[d] || 0));  // negative for visual
+
+                // Number of unique holdings per date
+                const holdingCounts = tDates.map(d => {
+                    const h = details.holdings && details.holdings[d];
+                    return h ? h.length : 0;
+                });
+
+                const traces = [
+                    {
+                        x: tDates, y: turnover, type: 'bar', name: 'Turnover',
+                        marker: { color: 'rgba(102,126,234,0.5)' }, yaxis: 'y'
+                    },
+                    {
+                        x: tDates, y: buyCounts, type: 'bar', name: 'Buys',
+                        marker: { color: 'rgba(40,167,69,0.7)' }, yaxis: 'y2'
+                    },
+                    {
+                        x: tDates, y: sellCounts, type: 'bar', name: 'Sells',
+                        marker: { color: 'rgba(220,53,69,0.7)' }, yaxis: 'y2'
+                    },
+                    {
+                        x: tDates, y: holdingCounts, type: 'scatter', mode: 'lines',
+                        name: 'Holdings Count', line: { color: '#ffc107', width: 2 }, yaxis: 'y2'
+                    }
+                ];
+                const layout = {
+                    title: 'Daily Turnover & Trading Activity',
+                    barmode: 'overlay',
+                    xaxis: { title: 'Date' },
+                    yaxis: { title: 'Turnover', side: 'left', rangemode: 'tozero' },
+                    yaxis2: { title: 'Trade Count / Holdings', overlaying: 'y', side: 'right' },
+                    hovermode: 'x unified',
+                    template: 'plotly_white',
+                    height: 350,
+                    legend: { orientation: 'h', y: -0.2 },
+                };
+                if (isDarkMode) {
+                    layout.plot_bgcolor = '#1a1a2e';
+                    layout.paper_bgcolor = '#1a1a2e';
+                    layout.font = { color: '#e0e0e0' };
+                }
+                Plotly.newPlot('turnoverTimelineChart', traces, layout);
+            }
+
             // Populate holdings date input
             if (details.holdings) {
                 const dateInput = document.getElementById('holdingsDateInput');
@@ -1548,6 +1805,10 @@
             if (details.actions && details.actions.length > 0) {
                 const tbody = document.querySelector('#actionsTable tbody');
                 tbody.innerHTML = '';
+                const countEl = document.getElementById('actionsCount');
+                const buyTotal = details.actions.filter(a => a.type === 'buy').length;
+                const sellTotal = details.actions.filter(a => a.type === 'sell').length;
+                if (countEl) countEl.textContent = `${buyTotal} buys / ${sellTotal} sells`;
                 // Show most recent first
                 const sortedActions = [...details.actions].sort((a, b) => b.date.localeCompare(a.date));
                 sortedActions.forEach(a => {
@@ -1556,7 +1817,7 @@
                     const actionIcon = a.type === 'buy' ? 'fa-arrow-up' : 'fa-arrow-down';
                     tr.innerHTML = `
                         <td>${a.date}</td>
-                        <td><code>${a.stock}</code></td>
+                        <td><code>${tickerLink(a.stock)}</code></td>
                         <td class="${actionClass}"><i class="fas ${actionIcon}"></i> ${a.type.toUpperCase()}</td>
                         <td>${a.amount.toLocaleString()}</td>
                     `;
@@ -1622,7 +1883,7 @@
             holdings.forEach(h => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td><code>${h.stock}</code></td>
+                    <td><code>${tickerLink(h.stock)}</code></td>
                     <td>${h.amount.toLocaleString()}</td>
                     <td>${h.weight.toFixed(2)}%</td>
                 `;
@@ -2353,21 +2614,29 @@
             }
             
             const metricItems = [
-                { label: 'Mean Return', value: metrics.mean_return, format: 6, icon: 'fa-chart-line', suffix: '' },
-                { label: 'Volatility (Std)', value: metrics.std, format: 6, icon: 'fa-wave-square', suffix: '' },
-                { label: 'Annualized Return', value: metrics.annualized_return, format: 4, icon: 'fa-calendar', suffix: '' },
-                { label: 'Information Ratio', value: metrics.information_ratio, format: 4, icon: 'fa-star', suffix: '' },
-                { label: 'Max Drawdown', value: metrics.max_drawdown, format: 4, icon: 'fa-arrow-down', suffix: '' }
+                { label: 'Mean Return', value: metrics.mean_return, format: 6, icon: 'fa-chart-line', suffix: '', invertColor: false },
+                { label: 'Volatility (Std)', value: metrics.std, format: 6, icon: 'fa-wave-square', suffix: '', invertColor: false },
+                { label: 'Annualized Return', value: metrics.annualized_return, format: 4, icon: 'fa-calendar', suffix: '', invertColor: false },
+                { label: 'Information Ratio', value: metrics.information_ratio, format: 4, icon: 'fa-star', suffix: '', invertColor: false },
+                { label: 'Max Drawdown', value: metrics.max_drawdown, format: 4, icon: 'fa-arrow-down', suffix: '', invertColor: true }
             ];
-            
+
             metricItems.forEach(item => {
                 const col = document.createElement('div');
                 col.className = 'col-md-2 col-sm-4 col-6 mb-3';
-                
-                const valueClass = item.value > 0 ? 'positive' : (item.value < 0 ? 'negative' : '');
-                const displayValue = typeof item.value === 'number' ? 
+
+                let valueClass;
+                if (item.invertColor) {
+                    // For MDD: closer to 0 is better (positive=green), deeper negative=worse (red)
+                    // Show absolute value with minus sign, color by magnitude comparison
+                    const absVal = Math.abs(item.value || 0);
+                    valueClass = absVal < 10 ? 'positive' : (absVal < 20 ? '' : 'negative');
+                } else {
+                    valueClass = item.value > 0 ? 'positive' : (item.value < 0 ? 'negative' : '');
+                }
+                const displayValue = typeof item.value === 'number' ?
                     item.value.toFixed(item.format) + '%' : 'N/A';
-                
+
                 col.innerHTML = `
                     <div class="metric-card">
                         <i class="fas ${item.icon} fa-2x mb-3 text-primary"></i>
@@ -4013,8 +4282,9 @@
             document.getElementById('backtestSharpe').textContent = sharpe.toFixed(3);
             document.getElementById('backtestSharpe').className = sharpe > 0 ? 'metric-value positive' : 'metric-value negative';
             
-            document.getElementById('backtestMaxDD').textContent = (Math.abs(maxDD) * 100).toFixed(2) + '%';
-            document.getElementById('backtestMaxDD').className = 'metric-value negative';
+            const maxDDpct = Math.abs(maxDD) * 100;
+            document.getElementById('backtestMaxDD').textContent = '-' + maxDDpct.toFixed(2) + '%';
+            document.getElementById('backtestMaxDD').className = maxDDpct < 10 ? 'metric-value positive' : (maxDDpct < 20 ? 'metric-value' : 'metric-value negative');
             
             document.getElementById('backtestWinRate').textContent = (winRate * 100).toFixed(2) + '%';
             document.getElementById('backtestWinRate').className = 'metric-value';

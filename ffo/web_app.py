@@ -233,6 +233,17 @@ def evaluate_factor():
     topk = max(1, int(data.get("topk", 50)))
     n_drop = max(0, int(data.get("n_drop", 5)))
 
+    # Optional exchange kwargs overrides from frontend
+    exchange_overrides = {}
+    if "open_cost" in data:
+        exchange_overrides["open_cost"] = float(data["open_cost"])
+    if "close_cost" in data:
+        exchange_overrides["close_cost"] = float(data["close_cost"])
+    if "min_cost" in data:
+        exchange_overrides["min_cost"] = float(data["min_cost"])
+    if "limit_threshold" in data:
+        exchange_overrides["limit_threshold"] = data["limit_threshold"]
+
     try:
         # Client returns a list — extract first item
         results = api_client.evaluate_factor(
@@ -246,6 +257,7 @@ def evaluate_factor():
             forward_n=forward_n,
             topk=topk,
             n_drop=n_drop,
+            exchange_kwargs=exchange_overrides if exchange_overrides else None,
         )
         result = results[0] if isinstance(results, list) and results else results
 
@@ -383,6 +395,17 @@ def run_portfolio_backtest():
     topk = max(1, int(data.get("topk", 50)))
     n_drop = max(0, int(data.get("n_drop", 5)))
 
+    # Optional exchange kwargs overrides from frontend
+    exchange_overrides = {}
+    if "open_cost" in data:
+        exchange_overrides["open_cost"] = float(data["open_cost"])
+    if "close_cost" in data:
+        exchange_overrides["close_cost"] = float(data["close_cost"])
+    if "min_cost" in data:
+        exchange_overrides["min_cost"] = float(data["min_cost"])
+    if "limit_threshold" in data:
+        exchange_overrides["limit_threshold"] = data["limit_threshold"]
+
     try:
         # Call backend with fast=False to trigger portfolio backtest
         results = api_client.evaluate_factor(
@@ -395,6 +418,7 @@ def run_portfolio_backtest():
             fast=False,
             topk=topk,
             n_drop=n_drop,
+            exchange_kwargs=exchange_overrides if exchange_overrides else None,
         )
         result = results[0] if isinstance(results, list) and results else results
 

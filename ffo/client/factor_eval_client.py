@@ -34,6 +34,7 @@ Usage:
     ...     results = client.evaluate_batch_parallel(expressions)
 """
 
+import os
 import time
 import json
 import logging
@@ -48,6 +49,27 @@ DEFAULT_API_URL = "http://127.0.0.1:19777"
 DEFAULT_TIMEOUT = 120  # seconds
 MAX_RETRIES = 5
 RETRY_DELAY = 1  # seconds
+
+
+def _default_base_url() -> str:
+    """Resolve the backend URL the client should talk to.
+
+    Honors (in order): FFO_BACKEND_URL env, then the FFO config's backend_url
+    (which itself respects FFO_BACKEND_PORT / server.backend.port), then the
+    hardcoded default. This makes the agent/benchmark follow whatever backend
+    the user configured instead of always assuming port 19777.
+    """
+    explicit = os.environ.get("FFO_BACKEND_URL")
+    if explicit:
+        return explicit.rstrip("/")
+    try:
+        try:
+            from config.manager import get_config
+        except ModuleNotFoundError:  # imported as ffo.client.* from repo root
+            from ffo.config.manager import get_config
+        return get_config().backend_url
+    except Exception:
+        return DEFAULT_API_URL
 
 
 ExpressionInput = Union[str, Dict[str, str], List[Union[str, Dict[str, str]]]]
@@ -417,9 +439,11 @@ _global_client: Optional[FactorEvalClient] = None
 
 
 def get_client(
-    base_url: str = DEFAULT_API_URL, timeout: int = DEFAULT_TIMEOUT
+    base_url: Optional[str] = None, timeout: int = DEFAULT_TIMEOUT
 ) -> FactorEvalClient:
     global _global_client
+    if base_url is None:
+        base_url = _default_base_url()
     base_url = base_url.rstrip("/")
     if (
         _global_client is None
@@ -431,7 +455,7 @@ def get_client(
 
 
 def check_factor_via_api(
-    expression: ExpressionInput, api_url: str = DEFAULT_API_URL
+    expression: ExpressionInput, api_url: Optional[str] = None
 ) -> List[Dict]:
     client = get_client(api_url)
     return client.check_factor(expression)
@@ -449,7 +473,7 @@ def evaluate_factor_via_api(
     timeout: int = 120,
     fast: bool = False,
     n_jobs_backtest: int = 4,
-    api_url: str = DEFAULT_API_URL,
+    api_url: Optional[str] = None,
 ) -> List[Dict]:
     client = get_client(api_url)
     return client.evaluate_factor(
@@ -479,7 +503,7 @@ def batch_evaluate_factors_via_api(
     timeout: int = 120,
     fast: bool = False,
     n_jobs_backtest: int = 4,
-    api_url: str = DEFAULT_API_URL,
+    api_url: Optional[str] = None,
     max_workers: int = 8,
 ) -> List[Dict]:
     """Evaluate multiple factor expressions via the FFO API (parallel).

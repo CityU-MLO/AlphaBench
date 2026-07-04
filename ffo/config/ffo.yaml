@@ -60,6 +60,18 @@ qlib:
   region: "cn"
   instruments: "csi300"
 
+# ── Evaluation Engine ───────────────────────────────────────
+# Selects how factors are evaluated:
+#   backend: "qlib"   → native in-process Qlib worker pool (default)
+#   backend: "assay"  → delegate to the Assay backtesting platform (REST API)
+# Override at runtime with FFO_ENGINE=assay (and FFO_ASSAY_URL if needed).
+engine:
+  backend: "qlib"                       # "qlib" | "assay"
+  assay_url: "http://127.0.0.1:8000"    # Assay REST API base url
+  assay_timeout: 180                    # per-request timeout (seconds)
+  assay_execution: null                 # optional Assay fill model, e.g. "close"
+  assay_adj: null                       # optional Assay price adjustment, e.g. "split"
+
 # ── Market Definitions ────────────────────────────────────────
 # Maps market/instrument names to their qlib data source, region,
 # and benchmark. Add new markets here to support them everywhere.
@@ -70,6 +82,7 @@ markets:
     data_path: "~/.qlib/qlib_data/cn_data"
     region: "cn"
     benchmark: "SH000300"
+    assay_universe: "CSI300"  # Assay universe id (engine: assay)
     limit_threshold: 0.095   # CN 10% daily price limit (slightly below to avoid exact limit)
     open_cost: 0.0005        # buy-side cost: 0.05% (commission)
     close_cost: 0.0015       # sell-side cost: 0.05% commission + 0.10% stamp duty
@@ -78,6 +91,7 @@ markets:
     data_path: "~/.qlib/qlib_data/cn_data"
     region: "cn"
     benchmark: "SH000905"
+    assay_universe: "CSI500"
     limit_threshold: 0.095
     open_cost: 0.0005
     close_cost: 0.0015
@@ -86,6 +100,7 @@ markets:
     data_path: "~/.qlib/qlib_data/cn_data"
     region: "cn"
     benchmark: "SH000852"
+    assay_universe: "CSI1000"
     limit_threshold: 0.095
     open_cost: 0.0005
     close_cost: 0.0015
@@ -96,6 +111,7 @@ markets:
     data_path: "~/.qlib/qlib_data/us_data"
     region: "us"
     benchmark: "^gspc"
+    assay_universe: "SP500"
     limit_threshold: null    # no daily price limit in US markets
     open_cost: 0.0001        # 0.01% commission (no stamp duty)
     close_cost: 0.0001       # 0.01% commission (no stamp duty)
@@ -104,6 +120,7 @@ markets:
     data_path: "~/.qlib/qlib_data/us_data"
     region: "us"
     benchmark: "^ixic"
+    assay_universe: "NASDAQ100"
     limit_threshold: null
     open_cost: 0.0001
     close_cost: 0.0001

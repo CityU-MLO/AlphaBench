@@ -6,6 +6,14 @@ AlphaBench assesses how well large language models can generate, evaluate, and r
 
 > Paper: [AlphaBench — ICLR 2026](https://alphabench.cc/) | Website: [alphabench.cc](https://alphabench.cc/)
 
+> **🚀 New — Assay backtesting backend.** Factor evaluation can now be powered by
+> **Assay**, our latest point-in-time-correct backtesting engine, in place of the
+> built-in Qlib evaluator. Flip it on with `FFO_ENGINE=assay` — every component
+> (searcher, agent, benchmark, REST API, `ppo` CLI) keeps working unchanged, and you
+> gain Assay's faster panel engine, a richer operator set, and multi-market
+> (US + A-share) coverage. See **[Backtesting Backend — FFO ⇄ Assay](#backtesting-backend--ffo--assay)**
+> and [ffo/ASSAY_ENGINE.md](ffo/ASSAY_ENGINE.md).
+
 ---
 
 ## What Is AlphaBench?
@@ -28,14 +36,16 @@ The benchmark covers four tasks:
 ```
 AlphaBench/
 │
-├── ffo/                      # Factor Feature Oracle — evaluation engine
+├── ffo/                      # Factor Feature Oracle — evaluation interface
 │   ├── api/                  # Typed Python API (evaluate_factor, batch_evaluate_factors)
 │   ├── cli/                  # `ppo` CLI (start/stop/eval/check/config/cache)
 │   ├── client/               # Low-level HTTP client (FactorEvalClient)
 │   ├── mcp/                  # MCP server for LLM agents (Claude Desktop, etc.)
 │   ├── routes/               # Flask REST endpoints (/factors/eval, /combination/train)
-│   ├── config/               # ffo.yaml — default configuration
+│   ├── config/               # ffo.yaml — default configuration (engine: qlib | assay)
 │   ├── backtest/             # Qlib portfolio backtesting integration
+│   ├── utils/                # Engine adapters — assay_engine.py (Assay backend) + cache/worker pool
+│   ├── ASSAY_ENGINE.md       # Switchable Qlib/Assay backend guide
 │   ├── demos/                # 5 runnable demo scripts
 │   └── tests/                # Test suite
 │
@@ -146,6 +156,56 @@ curl -s -X POST http://127.0.0.1:19777/factors/eval \
   -d '{"expression": "Rank($close, 20)", "market": "csi300", "fast": true}' \
   | python -m json.tool
 ```
+
+---
+
+## Backtesting Backend — FFO ⇄ Assay
+
+FFO exposes a single evaluation contract (`/factors/eval`, `/factors/check`,
+`/factors/portfolio`) backed by a **switchable engine**. The same interface serves
+every AlphaBench component, so you can swap the engine underneath without touching any
+other code:
+
+| Engine | `FFO_ENGINE` | Backtester |
+|--------|--------------|------------|
+| Qlib (default) | `qlib` | Built-in in-process Qlib worker pool |
+| **Assay** ⭐ (latest) | `assay` | Delegates to the **Assay** platform over HTTP |
+
+**Assay** is our latest point-in-time-correct backtesting engine. Turning it on keeps
+the searcher, agent, benchmark, REST API and `ppo` CLI **unchanged** — only the numbers
+underneath now come from Assay:
+
+```bash
+# 1. Start the Assay REST API (runs in its own environment)
+python -m assay.cli serve-api --port 8000
+
+# 2. Start FFO on the Assay engine
+FFO_ENGINE=assay FFO_ASSAY_URL=http://127.0.0.1:8000 ppo start backend
+curl -s http://127.0.0.1:19777/health | python -m json.tool   # -> "engine": "assay"
+
+# 3. Run any task against Assay — e.g. T3 search
+FFO_ENGINE=assay python example/search/run_t3_search.py --config my_search.yaml --model_name gpt-4.1
+```
+
+Or set it once in `ffo/config/ffo.yaml`:
+
+```yaml
+engine:
+  backend: assay                       # qlib | assay
+  assay_url: "http://127.0.0.1:8000"
+```
+
+**Why Assay:**
+- **Point-in-time correct** — corporate actions applied at read time; no look-ahead bias.
+- **Richer operators** — the full `ts_*` / `cs_*` set (`cs_zscore`, `ts_ema`, `ts_rank`, `signed_power`, …) on top of the Qlib operators.
+- **Multi-market** — US (NASDAQ100, SP500) and A-share (CSI300/CSI500/CSI1000) evaluated side by side.
+- **Dual-dialect** — accepts both Qlib-style (`$close`, `Mean(...)`) and Assay-native (`close`, `ts_mean(...)`) expressions, so existing factors run as-is.
+
+When the Assay engine is active, T1 generation and T3 search prompts are automatically
+enriched with the Assay operator set and syntax validation defers to Assay's linter —
+so LLMs can exploit the richer operators while Qlib-style output keeps working.
+
+📖 Full guide: **[ffo/ASSAY_ENGINE.md](ffo/ASSAY_ENGINE.md)**.
 
 ---
 
@@ -370,11 +430,16 @@ Std(Delta(Log($close), 1), 60)               # 60-day realized volatility
 Corr($close, $volume, 10)                    # price-volume correlation
 ```
 
+> **Assay engine.** With `FFO_ENGINE=assay`, Assay-native syntax is also accepted — bare
+> fields (`close`, `volume`) and `ts_*` / `cs_*` operators (`ts_mean`, `ts_corr`,
+> `cs_rank`, `cs_zscore`, `signed_power`, `adv20`, …). Both dialects parse to the same
+> engine; use one style per expression. See [ffo/ASSAY_ENGINE.md](ffo/ASSAY_ENGINE.md).
+
 ---
 
 ## Supported Markets & Metrics
 
-**Markets:** CSI300, CSI500, CSI1000 (Chinese A-shares), SP500 (US)
+**Markets:** CSI300, CSI500, CSI1000 (Chinese A-shares), SP500 (US) — plus **NASDAQ100 (US)** on the Assay engine.
 
 **Evaluation metrics:**
 
@@ -402,6 +467,9 @@ Environment variables are also supported:
 ```bash
 FFO_BACKEND_PORT=19778 ppo start backend
 FFO_EVALUATION_MARKET=csi500 ppo eval "Rank($close, 20)"
+
+# Select the backtesting engine (see "Backtesting Backend — FFO ⇄ Assay")
+FFO_ENGINE=assay FFO_ASSAY_URL=http://127.0.0.1:8000 ppo start backend
 ```
 
 ---
@@ -411,6 +479,7 @@ FFO_EVALUATION_MARKET=csi500 ppo eval "Rank($close, 20)"
 | Document | Contents |
 |----------|----------|
 | [ffo/README.md](ffo/README.md) | FFO CLI, Python API, REST endpoints, configuration |
+| [ffo/ASSAY_ENGINE.md](ffo/ASSAY_ENGINE.md) | **Switchable Qlib/Assay backend** — setup, config, operator mapping |
 | [ffo/README_API.md](ffo/README_API.md) | Full REST API reference |
 | [ffo/README_DESIGN.md](ffo/README_DESIGN.md) | Architecture and design decisions |
 | [searcher/README.md](searcher/README.md) | Search algorithms, pipeline API, custom algo guide |

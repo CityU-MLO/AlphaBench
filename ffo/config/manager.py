@@ -60,6 +60,17 @@ _DEFAULTS: dict[str, Any] = {
         "path": "~/.ppo/factor_cache.sqlite",
         "max_entries": 50000,
     },
+    # Evaluation engine selection. "qlib" uses the in-process Qlib worker pool
+    # (default). "assay" delegates factor evaluation to the Assay backtesting
+    # platform's REST API (reached over HTTP, since Assay runs on its own
+    # Python interpreter). See ffo/utils/assay_engine.py.
+    "engine": {
+        "backend": "qlib",                    # "qlib" | "assay"
+        "assay_url": "http://127.0.0.1:8000",
+        "assay_timeout": 180,
+        "assay_execution": None,              # optional Assay fill model (e.g. "close")
+        "assay_adj": None,                    # optional Assay price adjustment (e.g. "split")
+    },
     "qlib": {
         "data_path": "~/.qlib/qlib_data/cn_data",
         "region": "cn",
@@ -70,6 +81,7 @@ _DEFAULTS: dict[str, Any] = {
             "data_path": "~/.qlib/qlib_data/cn_data",
             "region": "cn",
             "benchmark": "SH000300",
+            "assay_universe": "CSI300",
             "limit_threshold": 0.095,
             "open_cost": 0.0005,
             "close_cost": 0.0015,
@@ -79,6 +91,7 @@ _DEFAULTS: dict[str, Any] = {
             "data_path": "~/.qlib/qlib_data/cn_data",
             "region": "cn",
             "benchmark": "SH000905",
+            "assay_universe": "CSI500",
             "limit_threshold": 0.095,
             "open_cost": 0.0005,
             "close_cost": 0.0015,
@@ -88,6 +101,7 @@ _DEFAULTS: dict[str, Any] = {
             "data_path": "~/.qlib/qlib_data/cn_data",
             "region": "cn",
             "benchmark": "SH000852",
+            "assay_universe": "CSI1000",
             "limit_threshold": 0.095,
             "open_cost": 0.0005,
             "close_cost": 0.0015,
@@ -97,6 +111,7 @@ _DEFAULTS: dict[str, Any] = {
             "data_path": "~/.qlib/qlib_data/us_data_ours",
             "region": "us",
             "benchmark": "^gspc",
+            "assay_universe": "SP500",
             "limit_threshold": None,   # no daily price limit in US
             "open_cost": 0.0001,
             "close_cost": 0.0001,
@@ -106,6 +121,7 @@ _DEFAULTS: dict[str, Any] = {
             "data_path": "~/.qlib/qlib_data/us_data_ours",
             "region": "us",
             "benchmark": "^ixic",
+            "assay_universe": "NASDAQ100",
             "limit_threshold": None,
             "open_cost": 0.0001,
             "close_cost": 0.0001,
@@ -182,6 +198,12 @@ def _apply_env_overrides(cfg: dict) -> dict:
         # cache
         ("FFO_CACHE_PATH",        ["cache", "path"]),
         ("FFO_CACHE_MAX_ENTRIES", ["cache", "max_entries"]),
+        # engine (qlib vs assay backend selection)
+        ("FFO_ENGINE",          ["engine", "backend"]),
+        ("FFO_ASSAY_URL",       ["engine", "assay_url"]),
+        ("FFO_ASSAY_TIMEOUT",   ["engine", "assay_timeout"]),
+        ("FFO_ASSAY_EXECUTION", ["engine", "assay_execution"]),
+        ("FFO_ASSAY_ADJ",       ["engine", "assay_adj"]),
         # qlib
         ("FFO_QLIB_DATA_PATH", ["qlib", "data_path"]),
         ("FFO_QLIB_REGION",    ["qlib", "region"]),

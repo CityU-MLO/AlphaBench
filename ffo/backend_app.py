@@ -19,6 +19,7 @@ from urllib.parse import unquote
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from utils.utils import PersistentCache
+from utils.assay_engine import engine_name, is_assay, health as assay_health
 
 # Load routes
 from routes.combinations import bp as combinations_bp
@@ -85,14 +86,19 @@ def _fail_result(expr: str, market: str, start: str, end: str, msg: str):
 # -----------------------------
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify(
-        {
-            "status": "healthy",
-            "service": "Factor Evaluation API",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "cache": CACHE.stats(),
-        }
-    )
+    info = {
+        "status": "healthy",
+        "service": "Factor Evaluation API",
+        "engine": engine_name(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "cache": CACHE.stats(),
+    }
+    # When running on the Assay engine, surface its reachability so callers
+    # can tell whether the delegated backend is actually up.
+    if is_assay():
+        ok, assay_info = assay_health()
+        info["assay"] = {"reachable": ok, **({"status": assay_info} if ok else {"error": assay_info})}
+    return jsonify(info)
 
 
 # -----------------------------

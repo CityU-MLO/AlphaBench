@@ -17,7 +17,11 @@ from typing import Dict, Any, List, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing as mp
 from factors.lib.alpha158 import load_factors_alpha158
-from agent.prompts_qlib_instruction import QLIB_GENERATE_INSTRUCTION
+from agent.prompts_qlib_instruction import (
+    QLIB_GENERATE_INSTRUCTION,
+    ASSAY_GENERATE_INSTRUCTION,
+)
+from ffo.utils.assay_engine import is_assay
 
 from ffo.client.factor_eval_client import (
     FactorEvalClient,
@@ -134,7 +138,11 @@ def get_system_searcher_prompt(enable_reason) -> str:
         ]
         }}"""
 
-    return SYSTEM_SEARCHER_PROMPT + extra_instruction
+    prompt = SYSTEM_SEARCHER_PROMPT + extra_instruction
+    # On the Assay engine, enrich with Assay-native operators (both dialects accepted).
+    if is_assay():
+        prompt += "\n" + ASSAY_GENERATE_INSTRUCTION
+    return prompt
 
 
 def _extract_expression(payload: Any) -> Optional[str]:
@@ -407,11 +415,18 @@ def call_qlib_search(
             break  # done
 
         # Prepare next self-healing instruction
+        _ops_rule = (
+            "Use Qlib-style (e.g. Mean, Corr, $close) or Assay-native "
+            "(e.g. ts_mean, ts_corr, close) operators — do not mix dialects in one expression."
+            if is_assay()
+            else "Use Qlib-style operators only."
+        )
         instruction = (
             f"Origin instruction: {base_instruction}"
             "Regenerate factors.\n"
-            "Return ONLY JSON (object or list). Allowed vars: $close, $open, $high, $low, $volume. "
-            "Use Qlib-style operators only. If available, include a short 'reason' per factor.\n"
+            "Return ONLY JSON (object or list). Allowed price/volume fields: "
+            "$close,$open,$high,$low,$volume (Qlib) or close,open,high,low,volume (Assay). "
+            f"{_ops_rule} If available, include a short 'reason' per factor.\n"
             f"Target remaining: {max(0, N - len(collected))}.\n"
             f"{_anti_repeat_block()}"
         )

@@ -36,6 +36,15 @@ from utils.utils import (
 from utils.factor_store import FactorStore
 from utils.qlib_worker_pool import QlibWorkerPool
 from config.manager import get_config
+from utils.assay_engine import (
+    engine_name,
+    assay_eval,
+    assay_check,
+    assay_portfolio_combine,
+)
+
+# Active evaluation engine: "qlib" (native worker pool) or "assay" (Assay REST).
+ENGINE = engine_name()
 
 bp = Blueprint("factors", __name__, url_prefix="/factors")
 
@@ -78,11 +87,17 @@ def _build_worker_pool() -> QlibWorkerPool:
     return QlibWorkerPool(region_configs, workers_per_region=workers_per_region)
 
 
-WORKER_POOL = _build_worker_pool()
+# Only build the Qlib worker pool when the qlib engine is active. With the
+# assay engine, evaluation is delegated over HTTP and Qlib data is not needed,
+# so we avoid spinning up (and depending on) the worker processes.
+WORKER_POOL = _build_worker_pool() if ENGINE != "assay" else None
 
 
 def _get_worker_pool() -> QlibWorkerPool:
-    """Return the shared worker pool (for use by web_app.py etc.)."""
+    """Return the shared worker pool, building it lazily on first use."""
+    global WORKER_POOL
+    if WORKER_POOL is None:
+        WORKER_POOL = _build_worker_pool()
     return WORKER_POOL
 
 
@@ -359,6 +374,10 @@ def check():
             400,
         )
 
+    # Assay engine: delegate syntax checking to Assay's lint endpoint.
+    if ENGINE == "assay":
+        return jsonify(assay_check(factors)), 200
+
     instruments = data.get("instruments", DEFAULT_INSTRUMENTS)
     start = data.get("start", DEFAULTS["check_start"])
     end = data.get("end", DEFAULTS["check_end"])
@@ -484,6 +503,13 @@ def eval_once():
 
         fast = bool(data.get("fast", False))
         n_jobs_backtest = int(data.get("n_jobs_backtest", 4))
+
+        # Assay engine: delegate evaluation to Assay's REST API. Returns the
+        # same FFO result shape (metrics + daily_metrics) for single or batch.
+        if ENGINE == "assay":
+            return jsonify(
+                assay_eval(factors, market, start, end, forward_n=forward_n)
+            ), 200
 
         # Resolve market config (data_path, region, benchmark, trade costs)
         mcfg = get_config().get_market_config(market)
@@ -809,6 +835,12 @@ def portfolio_combine():
         forward_n = max(1, int(data.get("forward_n", 1)))
         fast = bool(data.get("fast", True))
         n_jobs_backtest = int(data.get("n_jobs_backtest", 4))
+
+        # Assay engine: equal-weight z-score combine via Assay's REST API.
+        if ENGINE == "assay":
+            return jsonify(
+                assay_portfolio_combine(factors, market, start, end, forward_n=forward_n)
+            ), 200
 
         # Resolve market config
         mcfg = get_config().get_market_config(market)

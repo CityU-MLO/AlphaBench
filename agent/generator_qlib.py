@@ -16,7 +16,11 @@ from typing import Dict, Any, List, Tuple
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import multiprocessing as mp
 
-from agent.prompts_qlib_instruction import QLIB_GENERATE_INSTRUCTION
+from agent.prompts_qlib_instruction import (
+    QLIB_GENERATE_INSTRUCTION,
+    ASSAY_GENERATE_INSTRUCTION,
+)
+from ffo.utils.assay_engine import is_assay
 from ffo.client.factor_eval_client import check_factor_via_api
 from agent.qlib_contrib.qlib_expr_parsing import FactorParser, print_tree
 
@@ -98,6 +102,10 @@ def get_system_prompt(enable_cot=False):
     }}"""
 
     system_prompt = SYSTEM_GENERATOR_PROMPT + output_format
+    # When the Assay engine is active, enrich the prompt with Assay-native
+    # operators (the evaluator accepts both Qlib-style and Assay-native).
+    if is_assay():
+        system_prompt += "\n" + ASSAY_GENERATE_INSTRUCTION
     if enable_cot:
         return (
             system_prompt
@@ -205,19 +213,22 @@ def call_gen_qlib_factors(
             if stack:
                 raise ValidationError("Unmatched opening parenthesis ( in expression")
 
-            # Depth check
-            fs = FactorParser()
-            ast = fs.parse(expr)
-            depth = fs.get_complexity(ast)["depth"]
-            if depth > 5:
-                last_error = f"Too complex factor with depth {depth}"
-                instruction = (
-                    f"Previous output was too complex.\n"
-                    f"Error: {last_error}\nOutput was: {json.dumps(parsed_output, indent=2)}\n\n"
-                    f"Please simplify and regenerate."
-                )
-                error_records.append("COMPLEX")
-                continue
+            # Depth check via the local Qlib AST parser. Skipped on the Assay
+            # engine, whose dialect this parser does not understand — there the
+            # Assay lint (check_factor_via_api below) is the authority.
+            if not is_assay():
+                fs = FactorParser()
+                ast = fs.parse(expr)
+                depth = fs.get_complexity(ast)["depth"]
+                if depth > 5:
+                    last_error = f"Too complex factor with depth {depth}"
+                    instruction = (
+                        f"Previous output was too complex.\n"
+                        f"Error: {last_error}\nOutput was: {json.dumps(parsed_output, indent=2)}\n\n"
+                        f"Please simplify and regenerate."
+                    )
+                    error_records.append("COMPLEX")
+                    continue
 
         except ValidationError as e:
             last_error = f"Schema validation error: {e.message}"

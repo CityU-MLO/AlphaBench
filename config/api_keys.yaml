@@ -71,9 +71,9 @@ local:
 models:
   # ── OpenAI models via All-in-One ──────────────────────────────────────────
   gpt-4.1:
-    all_in_one: false
+    provider: openai
   gpt-4.1-mini:
-    all_in_one: false
+    provider: openai
   gpt-4.1-nano:
     all_in_one: true
   gpt-4o:
@@ -105,7 +105,11 @@ models:
   claude-3-5-sonnet-20241022:
     all_in_one: true
 
-  # ── DeepSeek via direct provider ──────────────────────────────────────────
+  # ── DeepSeek via direct provider (official api.deepseek.com) ──────────────
+  deepseek-v4-flash:
+    provider: deepseek
+  deepseek-v4-pro:
+    provider: deepseek
   deepseek-chat:
     provider: deepseek
   deepseek-reasoner:
